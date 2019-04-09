@@ -120,6 +120,7 @@ public:
   static ChunkGrid* model_coin;
   
   Sprite* player, *player_disp;
+  glm::vec3 curr_player_rope_endpoint = PLAYER_ROPE_ENDPOINT[2];
   float player_x_thrust;
   int   anchor_levels; // 按键层数
   bool is_debug;
@@ -150,7 +151,7 @@ public:
   static const float PLAYER_DISP_DELTAZ; // 显示玩家时的Z平移量
   static const float X_VEL_DAMP;
   static const float Y_VEL_DAMP;
-  static const glm::vec3 RELEASE_THRUST; // 松开绳子时给的向上的冲击
+  static const glm::vec3 RELEASE_THRUST; // 松开绳子时给的向上的冲量
   
   static const float CAM_FOLLOW_DAMP; // 视角跟随的阻尼系数
   static const float BACKGROUND_SCALE; // 背景放大倍数
@@ -158,6 +159,9 @@ public:
   static const int   COUNTDOWN_MILLIS;        // 开始游戏之前的倒计时
   static const int   LEVEL_FINISH_SEQ_MILLIS; // 关卡完成序列的倒计时
   static const int   LEVEL_FINISH_JUMP_PERIOD;
+  
+  static const glm::vec3 PLAYER_ROPE_ENDPOINT[8]; // 手抓绳子的局部坐标，八个方向
+  static const float INVERSE_INERTIA; // 转动惯量的倒数
   
   std::bitset<10> keyflags;
   
@@ -214,7 +218,8 @@ public:
   
   glm::vec3 GetPlayerInitPos();
   glm::vec3 GetPlayerInitVel();
-  glm::vec3 GetPlayerEffectivePos();
+  glm::vec3 GetPlayerEffectivePos();          // 中心
+  glm::vec3 GetPlayerEffectiveRopeEndpoint(); // 头顶
   void SpawnPlayer();
   
   void StartLevel(int levelid);

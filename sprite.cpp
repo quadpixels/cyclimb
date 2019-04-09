@@ -5,6 +5,10 @@
 
 void Sprite::Update(float sec) {
   pos += vel * sec;
+  float rad_sq = glm::dot(omega, omega);
+  if (glm::dot(omega, omega) > 0) {
+    RotateAroundGlobalAxis(glm::normalize(omega), sqrtf(rad_sq)*180/M_PI);
+  }
 }
 
 void ChunkSprite::Init() {
@@ -14,13 +18,13 @@ void ChunkSprite::Init() {
   anchor = chunk->Size() * 0.5f;
 }
 
-void ChunkSprite::RotateAroundGlobalAxis(const glm::vec3& axis, const float deg) {
+void Sprite::RotateAroundGlobalAxis(const glm::vec3& axis, const float deg) {
   glm::mat4 o4(orientation);
   o4 = glm::rotate(o4, deg*3.14159f/180.0f, glm::inverse(orientation)*axis);
   orientation = glm::mat3(o4);
 }
 
-void ChunkSprite::RotateAroundLocalAxis(const glm::vec3& axis, const float deg) {
+void Sprite::RotateAroundLocalAxis(const glm::vec3& axis, const float deg) {
   glm::mat4 o4(orientation);
   o4 = glm::rotate(o4, deg*3.14159f/180.0f, axis);
   orientation = glm::mat3(o4);
@@ -30,14 +34,14 @@ void ChunkSprite::Render() {
   chunk->Render(pos, scale, orientation, anchor);
 }
 
-glm::vec3 ChunkSprite::GetLocalCoord(const glm::vec3& p_world) {
+glm::vec3 Sprite::GetVoxelCoord(const glm::vec3& p_world) {
   glm::vec3 p_local = glm::inverse(orientation) * (p_world - pos);
   glm::vec3 pc = (p_local / scale) + anchor; // pc = point_chunk
   return pc;
 }
 
 bool ChunkSprite::IntersectPoint(const glm::vec3& p_world) {
-  glm::vec3 pc = GetLocalCoord(p_world);
+  glm::vec3 pc = GetVoxelCoord(p_world);
   return (chunk->GetVoxel(unsigned(pc.x), unsigned(pc.y), unsigned(pc.z)) > 0);
 }
 
@@ -59,8 +63,8 @@ bool ChunkSprite::IntersectPoint(const glm::vec3& p_world, int tolerance) {
   return false;
 }
 
-glm::vec3 ChunkSprite::GetWorldCoord(const glm::vec3& p_local) {
-  return pos + orientation * (p_local * scale - anchor);
+glm::vec3 Sprite::GetWorldCoord(const glm::vec3& p_voxel) {
+  return pos + orientation * (p_voxel * scale - anchor);
 }
 
 AABB ChunkSprite::GetAABBInWorld() {

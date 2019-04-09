@@ -57,6 +57,20 @@ const int   ClimbScene::COUNTDOWN_MILLIS = 1000;
 const int   ClimbScene::LEVEL_FINISH_SEQ_MILLIS = 1000;
 const float ClimbScene::X_THRUST = 80.0f;
 const int   ClimbScene::LEVEL_FINISH_JUMP_PERIOD = 500;
+const float ClimbScene::INVERSE_INERTIA = 0.05f;
+
+const glm::vec3 ClimbScene::PLAYER_ROPE_ENDPOINT[8] = 
+  {
+    glm::vec3(-7/1.414f, 7/1.414f, 0.0f), // 左上
+    glm::vec3( 7/1.414f, 7/1.414f, 0.0f), // 右上
+    glm::vec3( 0,        7,        0   ), // 上
+    glm::vec3(-7/1.414f, 7/1.414f, 0.0f), // 左
+    glm::vec3( 7/1.414f, 7/1.414f, 0.0f), // 右
+    glm::vec3(-7/1.414f, 7/1.414f, 0.0f), // 左下
+    glm::vec3( 0,        7,        0   ), // 下
+    glm::vec3( 7/1.414f, 7/1.414f, 0.0f), // 右
+  };
+    
 
 void ClimbScene::InitStatic() {
   model_platforms.push_back(new ChunkGrid("climb/1.vox"));
@@ -85,7 +99,7 @@ void ClimbScene::PrepareSpriteListForRender() {
     const int N = int(rope_segments.size());
     for (int i=0; i<N; i++) {
       const float completion = 1.0f * i / (N-1);
-      glm::vec3 p = GetPlayerEffectivePos() * (1.0f - completion) +
+      glm::vec3 p = GetPlayerEffectiveRopeEndpoint() * (1.0f - completion) +
                     anchor_rope_endpoint * completion;
       rope_segments[i]->pos = p;
       sprite_render_list.push_back(rope_segments[i]);
@@ -163,8 +177,8 @@ void ClimbScene::Update(float secs) {
         if (is_debug) {
           player->pos += debug_vel * (100.0f * secs);
         } else {
-          player->vel += glm::vec3(0, GRAVITY * secs, 0);
-          player->pos += player->vel * secs; 
+          player->vel += glm::vec3(0, GRAVITY * secs, 0); 
+          player->Update(secs);
           player->vel.x += player_x_thrust * secs;
         }
     
@@ -232,15 +246,28 @@ void ClimbScene::Update(float secs) {
         }
         
         if (rope_state == Anchored) {
-          glm::vec3 delta = anchor_rope_endpoint - GetPlayerEffectivePos();
+          glm::vec3 delta = anchor_rope_endpoint - GetPlayerEffectiveRopeEndpoint();
           if (glm::dot(delta, delta) > L0 * L0) {
             const float len = sqrtf(glm::dot(delta, delta)) - L0;
             glm::vec3 pull = glm::normalize(delta);
             glm::vec3 acc = pull * len * SPRING_K;
+            
+            // 计算旋转
+            {
+              // 角速度变化量
+              glm::vec3 local_pull = glm::transpose(player->orientation) * pull;
+              glm::vec3 delta_omega = glm::cross(local_pull, -curr_player_rope_endpoint);
+              player->omega += delta_omega * secs * INVERSE_INERTIA;
+            }
+            
             player->vel += acc * secs;
             player->vel.x *= X_VEL_DAMP;
             player->vel.y *= Y_VEL_DAMP;
           }
+        }
+        
+        {
+          player->omega *= 0.99f;
         }
         
         // Intersect coin
@@ -395,7 +422,11 @@ void ClimbScene::OnKeyPressed(char k) {
     int idx = -999;
     for (int i=0; i<9; i++) {
       if (k == keys[i]) {
-        idx = i; keyflags.set(i); break;
+        idx = i; 
+        keyflags.set(i);
+        if (rope_state != Anchored)
+          curr_player_rope_endpoint = PLAYER_ROPE_ENDPOINT[i];
+        break;
       }
     }
     
@@ -463,6 +494,8 @@ void ClimbScene::OnKeyReleased(char k) {
 void ClimbScene::SpawnPlayer() {
   player->pos = GetPlayerInitPos();
   player->vel = GetPlayerInitVel();
+  player->orientation = glm::mat3(1);
+  player->omega = glm::vec3(0);
   HideRope();
   keyflags.reset();
 }
@@ -477,6 +510,13 @@ glm::vec3 ClimbScene::GetPlayerInitVel() {
 
 glm::vec3 ClimbScene::GetPlayerEffectivePos() {
   glm::vec3 ret = player->pos;
+  ret.z = 0;
+  return ret;
+}
+
+glm::vec3 ClimbScene::GetPlayerEffectiveRopeEndpoint() {
+  glm::vec3 ret = player->GetWorldCoord(
+    curr_player_rope_endpoint + player->anchor * player->scale);
   ret.z = 0;
   return ret;
 }
@@ -730,7 +770,7 @@ void ClimbScene::DamagablePlatform::DoDamage(const glm::vec3& world_x) {
   if (damaged == false) {
     damaged = true;
   }
-  glm::vec3 lx = cs->GetLocalCoord(world_x);
+  glm::vec3 lx = cs->GetVoxelCoord(world_x);
   const int R = 3;
   cs->chunk->SetVoxelSphere(lx, R, 0);
   lx.z = 8;

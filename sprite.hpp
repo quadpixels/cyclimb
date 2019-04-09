@@ -14,15 +14,24 @@ enum SpriteFaction {
   SPRITE_ENEMY,
 };
 
+// 对于一个精灵，有三个常用的坐标系
+// 1. 全局坐标系；每个单位就是世界坐标中的单位长
+// 2. 体素坐标系；以(0, 0, 0)为原点，每个单位为一个scale对应的方向上的体素单位长
+// 3. 局部坐标系；以anchor为原点，每个单位为一个scale对应的方向上的体素单位长
 class Sprite {
 public:
-  glm::vec3 pos, vel;
+  glm::vec3 pos, vel, omega;
   glm::mat3 orientation;
   SpriteFaction faction;
+  glm::vec3 scale, anchor;
   virtual void Render() = 0;
   virtual void Update(float);
   virtual bool IntersectPoint(const glm::vec3& p_world) = 0;
   virtual bool IntersectPoint(const glm::vec3& p_world, int tolerance) = 0;
+  void RotateAroundLocalAxis(const glm::vec3& axis, const float deg);
+  void RotateAroundGlobalAxis(const glm::vec3& axis, const float deg);
+  glm::vec3 GetVoxelCoord(const glm::vec3& p_world);
+  glm::vec3 GetWorldCoord(const glm::vec3& p_local);
   virtual ~Sprite() { }
 };
 
@@ -30,14 +39,9 @@ class ChunkSprite : public Sprite {
 public:
   ChunkSprite(ChunkIndex* _c) : chunk(_c) { Init(); }
   void Init();
-  glm::vec3 GetLocalCoord(const glm::vec3& p_world);
-  glm::vec3 GetWorldCoord(const glm::vec3& p_local);
   virtual bool IntersectPoint(const glm::vec3& p_world);
   virtual bool IntersectPoint(const glm::vec3& p_world, int tolerance);
   ChunkIndex* chunk;
-  glm::vec3 scale, anchor;
-  void RotateAroundLocalAxis(const glm::vec3& axis, const float deg);
-  void RotateAroundGlobalAxis(const glm::vec3& axis, const float deg);
   virtual void Render();
   AABB GetAABBInWorld();
 };
