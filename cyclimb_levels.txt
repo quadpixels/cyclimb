@@ -1,0 +1,43 @@
+level 1
+plat0  40 0
+plat0 -40 0
+plat0  40 70
+plat0 -40 70
+plat0   0 35
+exit    0 105
+coin   40 -15
+coin  -40 -15
+coin  -40  55
+coin   40  55
+coin    0  20
+level 2
+plat0   0   30
+plat0   70  30
+plat0  140  30
+plat0  210  30
+plat0  280  30
+plat0  350  30
+coin    35   0
+coin   105   0
+coin   175   0
+coin   245   0
+coin   315   0
+exit   420  30
+level 3
+plat0  -40 0
+coin   -40 -15
+plat0  -60 30
+plat0  -40 60
+plat0  -60 90
+plat0  -40 120
+coin   -40 105
+damagable0 0 90
+plat0   0  0
+plat0  40 0
+coin   40 -15
+plat0  60 30
+plat0  40 60
+plat0  60 90
+plat0  40 120
+coin   40 105
+exit    0 50
