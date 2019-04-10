@@ -22,6 +22,10 @@
 #include "scene.hpp"
 #include <bitset>
 
+#ifdef WIN32
+#pragma comment(linker, "/SUBSYSTEM:windows /ENTRY:mainCRTStartup")
+#endif
+
 void StartGame();
 
 int WIN_W = 1024, WIN_H = 600;
@@ -507,7 +511,7 @@ void keydown(unsigned char key, int x, int y) {
     case '[': g_testscene->global_xyz->scale *= glm::vec3(0.99f, 0.99f, 0.99f); break;
     case ']': g_testscene->global_xyz->scale *= glm::vec3(1/0.99f, 1/0.99f, 1/0.99f); break;
 
-    case '`': scene_idx = (scene_idx + 1) % 3; break;
+    case '`': scene_idx = (scene_idx + 1) % 2; break;
     default: GetCurrentGameScene()->OnKeyPressed(char(key));
   }
 }
@@ -566,7 +570,7 @@ int main(int argc, char** argv) {
   // OpenGL 3.3 context
   glewExperimental = GL_TRUE;
   glutInit(&argc, argv);
-  glutInitContextVersion(4, 5);
+  glutInitContextVersion(3, 3);
   glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH | GLUT_MULTISAMPLE);
   glutInitWindowSize(WIN_W, WIN_H);
 

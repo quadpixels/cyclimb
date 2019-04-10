@@ -2,6 +2,7 @@
 #include "textrender.hpp"
 #include "game.hpp"
 #include "util.hpp"
+#define _USE_MATH_DEFINES // For MSVC
 #include <math.h>
 #include <assert.h>
 #include <wchar.h>
@@ -75,7 +76,7 @@ const glm::vec3 ClimbScene::PLAYER_ROPE_ENDPOINT[8] =
 void ClimbScene::InitStatic() {
   model_platforms.push_back(new ChunkGrid("climb/1.vox"));
   model_platforms.push_back(new ChunkGrid("climb/2.vox"));
-  model_char = new ChunkGrid("climb/chr_rain.vox");
+  model_char = new ChunkGrid("climb/chr.vox");
   model_anchor = new ChunkGrid("climb/anchor.vox");
   model_backgrounds.push_back(new ChunkGrid("climb/bg1.vox"));
   model_backgrounds.push_back(new ChunkGrid("climb/bg2.vox"));
@@ -348,27 +349,36 @@ void ClimbScene::Update(float secs) {
 void ClimbScene::RenderHUD() {
   glm::mat4 uitransform(1);
   
-  wchar_t buf[20];
+  wchar_t buf[50];
   float width;
   
   // 准备阶段
   if (game_state == ClimbGameStateStartCountdown && g_main_menu_visible == false) {
-    std::wstring text = std::wstring(L"准备… 第") + std::to_wstring(curr_level) + std::wstring(L"关");
+    //std::wstring text = std::wstring(L"准备… 第") + std::to_wstring(curr_level) + std::wstring(L"关");
+    std::wstring text = std::wstring(L"Get ready for level ") + std::to_wstring(curr_level);
     MeasureTextWidth(text, &width);
     RenderText(GetShaderProgram(6), text, WIN_W/2-width/2, WIN_H/2, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
   } else if (game_state == ClimbGameStateLevelEndWaitKey) {
-    std::wstring text = std::wstring(L"通过了第") + std::to_wstring(curr_level) + std::wstring(L"关!");
+    //std::wstring text = std::wstring(L"Level ") + std::to_wstring(curr_level) + std::wstring(L"Completed!");
+    std::wstring text = std::wstring(L"Level ") + std::to_wstring(curr_level) + std::wstring(L" completed!");
     MeasureTextWidth(text, &width);
     RenderText(GetShaderProgram(6), text, WIN_W/2-width/2, WIN_H/2+32, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
-    swprintf(buf, 20, L"过关！");
-    swprintf(buf, 20, L"用时：%.1f秒", curr_level_time);
+    //swprintf(buf, 20, L"过关！");
+    swprintf(buf, 50, L"Time: %.1fs", curr_level_time);
     text = std::wstring(buf);
     MeasureTextWidth(text, &width);
     RenderText(GetShaderProgram(6), text, WIN_W/2-width/2, WIN_H/2+64, 0.8f,
+      glm::vec3(1.0f, 1.0f, 0.2f),
+      uitransform);
+
+    swprintf(buf, 50, L"Press [Space] to continue");
+    text = std::wstring(buf);
+    MeasureTextWidth(text, &width);
+    RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2 + 96, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
   }
@@ -401,7 +411,14 @@ void ClimbScene::OnKeyPressed(char k) {
     if (!is_debug) debug_vel = glm::vec3(0, 0, 0);
   } else if (k >= '1' && k <= '5') {
     StartLevel(k-'0');
-  } else if (k == '0') RevealExit();
+  } //else if (k == '0') RevealExit();
+  else if (k == ' ') {
+    if (game_state == ClimbGameStateLevelEndWaitKey) {
+      curr_level = (curr_level + 1);
+      if (curr_level > 3) curr_level = 1;
+      StartLevel(curr_level);
+    }
+  }
   
   if (is_debug) {
     if      (k == 'w') debug_vel += glm::vec3( 0, 1, 0);
@@ -754,6 +771,8 @@ void ClimbScene::BeginLevelCompleteSequence() {
   countdown_millis = LEVEL_FINISH_SEQ_MILLIS;
   level_finish_state.pos0 = player->pos;
   
+  player->orientation = glm::mat3(1);
+
   // Find pos1
   level_finish_state.pos1 = glm::vec3(0, 0, 0);
   for (Platform* p : platforms) {

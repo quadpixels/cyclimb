@@ -123,7 +123,7 @@ void ChunkGrid::Init(unsigned _xlen, unsigned _ylen, unsigned _zlen) {
 ChunkGrid::ChunkGrid(const char* vox_fn) {
   FILE* f = fopen(vox_fn, "rb");
 
-  ssize_t file_size;
+  long long file_size;
   fseek(f, 0, SEEK_END);
   file_size = ftell(f);
   fseek(f, 0, SEEK_SET);
@@ -197,7 +197,7 @@ ChunkGrid::ChunkGrid(const char* vox_fn) {
 }
 
 bool ChunkGrid::IntersectPoint(const glm::vec3& p) {
-
+  return false;
 }
 
 ChunkGrid::ChunkGrid(const ChunkGrid& other) {

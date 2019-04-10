@@ -31,12 +31,17 @@ void InitTextRender() {
 	if (FT_Init_FreeType(&ft)) {
 		printf("Error: cannot init FreeType library\n");
 	}
-	if (FT_New_Face(ft, 
-	  //"/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-	  "/usr/share/fonts/truetype/arphic/uming.ttc",
-	  0, &g_face)) {
-		printf("Error: cannot load font file\n");
-	}
+  const char* ttfs[] = {
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    "C:\\Windows\\Fonts\\simsun.ttc",
+  };
+  for (int i = 0; i < 2; i++) {
+    if (FT_New_Face(ft,
+      ttfs[i],
+      0, &g_face)) {
+      printf("Error: cannot load font file\n");
+    } else break;
+  }
 	FT_Set_Pixel_Sizes(g_face, 0, g_font_size);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 }

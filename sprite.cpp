@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <assert.h>
 #include "util.hpp"
+#define _USE_MATH_DEFINES
+#include <math.h>
 
 void Sprite::Update(float sec) {
   pos += vel * sec;

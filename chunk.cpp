@@ -64,9 +64,9 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
             if (voxel > 0) voxel |= (light[ix_xyz] << 8);
             if (voxel != 0) {
               if (d==0) {
-                if (not(w==size-1 || block[IX(int(xyz_next.x), int(xyz_next.y), int(xyz_next.z))]==0)) continue;
+                if (!(w==size-1 || block[IX(int(xyz_next.x), int(xyz_next.y), int(xyz_next.z))]==0)) continue;
               } else {
-                if (not(w==0 || block[IX(int(xyz_next.x), int(xyz_next.y), int(xyz_next.z))]==0)) continue;
+                if (!(w==0 || block[IX(int(xyz_next.x), int(xyz_next.y), int(xyz_next.z))]==0)) continue;
               }
             }
             scratch[sidx] = voxel;
@@ -107,9 +107,9 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
                     ao_00 = GetOcclusionFactor(p00.x, p00.y, p00.z, ao_dir, neighbors),
                     ao_11 = GetOcclusionFactor(p11.x, p11.y, p11.z, ao_dir, neighbors);
 
-                if (not (ao_33 == ao_2 && ao_11 == ao_2 && ao_00 == ao_2)) {
+                if (! (ao_33 == ao_2 && ao_11 == ao_2 && ao_00 == ao_2)) {
                   may_extend_u = false;
-                  if (not (du==1 && ddv==1)) break;
+                  if (! (du==1 && ddv==1)) break;
                 }
 
                 ao_0 = ao_00; ao_1 = ao_11; ao_3 = ao_33;
@@ -134,7 +134,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
                     int ao_33 = GetOcclusionFactor(p33.x, p33.y, p33.z, ao_dir, neighbors),
                         ao_00 = GetOcclusionFactor(p00.x, p00.y, p00.z, ao_dir, neighbors),
                         ao_11 = GetOcclusionFactor(p11.x, p11.y, p11.z, ao_dir, neighbors);
-                    if (not (ao_33 == ao_2 && ao_11 == ao_2 && ao_00 == ao_2)) {
+                    if (! (ao_33 == ao_2 && ao_11 == ao_2 && ao_00 == ao_2)) {
                       line_ok = false; break;
                     }
                   }
