@@ -1,9 +1,8 @@
 #ifndef _RENDERTARGET_HPP_
 #define _RENDERTARGET_HPP_
 
-#include <GL/glew.h>
-#include <GL/freeglut.h>
 #define GLM_FORCE_RADIANS
+#include <gl/glew.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 

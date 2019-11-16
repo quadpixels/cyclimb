@@ -1,9 +1,8 @@
 #ifndef SPRITE_H
 #define SPRITE_H
 
-#include <GL/glew.h>
-#include <GL/freeglut.h>
 #define GLM_FORCE_RADIANS
+#include <gl/glew.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include "chunkindex.hpp"
@@ -25,6 +24,7 @@ public:
   SpriteFaction faction;
   glm::vec3 scale, anchor;
   virtual void Render() = 0;
+  virtual void Render_D3D11() = 0;
   virtual void Update(float);
   virtual bool IntersectPoint(const glm::vec3& p_world) = 0;
   virtual bool IntersectPoint(const glm::vec3& p_world, int tolerance) = 0;
@@ -43,6 +43,7 @@ public:
   virtual bool IntersectPoint(const glm::vec3& p_world, int tolerance);
   ChunkIndex* chunk;
   virtual void Render();
+  virtual void Render_D3D11();
   AABB GetAABBInWorld();
 };
 

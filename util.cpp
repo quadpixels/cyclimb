@@ -1,8 +1,18 @@
 #include "util.hpp"
 #include <fstream>
+#include <Windows.h> // GetTickCount
+
+void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m) {
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      out->r[c].m128_f32[r] = m[c][r];
+    }
+  }
+  //out->r[3].m128_f32[2] *= -1;
+}
 
 unsigned GetElapsedMillis() {
-  return glutGet(GLUT_ELAPSED_TIME);
+  return GetTickCount();
 }
 
 void MyCheckGLError(const char* tag) {
@@ -92,6 +102,49 @@ DirectionalLight::DirectionalLight(const glm::vec3& _dir, const glm::vec3& _pos)
   V = glm::lookAt(pos, pos + dir,
       glm::normalize(
           glm::cross(dir, glm::cross(glm::vec3(0.f,1.f,0.f), dir))));
+}
+
+DirectX::XMMATRIX DirectionalLight::GetP_D3D11_DXMath() {
+  DirectX::XMMATRIX P_D3D11 = DirectX::XMMatrixOrthographicOffCenterLH(-500.0f, 500.0f, -500.0f, 500.0f, -500.0f, 500.0f);
+  return P_D3D11;
+}
+
+DirectX::XMMATRIX DirectionalLight::GetP_D3D11_GLM() {
+  //DirectX::XMMATRIX P_D3D11 = DirectX::XMMatrixOrthographicOffCenterLH(-500.0f, 500.0f, -500.0f, 500.0f, -500.0f, 500.0f);
+  //return P_D3D11;
+  glm::mat4 P = glm::ortho(-500.0f, 500.0f, -500.0f, 500.0f, 500.0f, -500.0f);
+  DirectX::XMMATRIX ret;
+  GlmMat4ToDirectXMatrix(&ret, P);
+  return ret;
+}
+
+DirectX::XMMATRIX DirectionalLight::GetV_D3D11() {
+  using namespace DirectX; // For operator+
+  XMVECTOR dir1;
+  dir1.m128_f32[0] = dir.x; dir1.m128_f32[1] = dir.y; dir1.m128_f32[2] = -dir.z;
+  XMVECTOR pos1;
+  pos1.m128_f32[0] = pos.x; pos1.m128_f32[1] = pos.y; pos1.m128_f32[2] = -pos.z;
+  XMVECTOR focus1 = dir1 + pos1;
+
+  XMVECTOR posy1;
+  posy1.m128_f32[0] = 0; posy1.m128_f32[1] = 1; posy1.m128_f32[2] = 0;
+  XMVECTOR up1 = XMVector3Cross(dir1, XMVector3Cross(posy1, dir1));
+  
+  XMMATRIX V_D3D11 = DirectX::XMMatrixLookAtLH(pos1, focus1, up1);
+  return V_D3D11;
+}
+
+DirectX::XMMATRIX DirectionalLight::GetPV_D3D11() {
+  using namespace DirectX;
+  return GetV_D3D11() * GetP_D3D11_GLM(); // Association order ????
+}
+
+DirectX::XMVECTOR DirectionalLight::GetDir_D3D11() {
+  DirectX::XMVECTOR dir1;
+  dir1.m128_f32[0] = dir.x;
+  dir1.m128_f32[1] = dir.y;
+  dir1.m128_f32[2] = -dir.z;
+  return dir1;
 }
 
 void PrintMat4(const glm::mat4& m, const char* tag) {

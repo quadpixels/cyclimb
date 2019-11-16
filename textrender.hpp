@@ -1,10 +1,10 @@
-#include <GL/glew.h>
-#include <GL/freeglut.h>
 #include <map>
 #include <string>
+#include <gl/glew.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <d3d11.h>
 
 struct Character {
 	GLuint textureID;
@@ -12,7 +12,15 @@ struct Character {
 	GLuint advance;
 };
 
+struct Character_D3D11 {
+  ID3D11Texture2D *texture;
+  ID3D11ShaderResourceView *srv;
+  glm::ivec2 size, bearing;
+  GLuint advance;
+};
+
 void InitTextRender();
-void RenderText(GLuint program, std::wstring text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color,
-    glm::mat4 transform);
+void InitTextRender_D3D11();
+void RenderText(GLuint program, std::wstring text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color, glm::mat4 transform);
+void RenderText_D3D11(std::wstring text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform);
 void MeasureTextWidth(std::wstring text, float *w);

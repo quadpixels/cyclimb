@@ -36,6 +36,10 @@ void ChunkSprite::Render() {
   chunk->Render(pos, scale, orientation, anchor);
 }
 
+void ChunkSprite::Render_D3D11() {
+  chunk->Render_D3D11(pos, scale, orientation, anchor);
+}
+
 glm::vec3 Sprite::GetVoxelCoord(const glm::vec3& p_world) {
   glm::vec3 p_local = glm::inverse(orientation) * (p_world - pos);
   glm::vec3 pc = (p_local / scale) + anchor; // pc = point_chunk

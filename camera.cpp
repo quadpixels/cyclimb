@@ -1,13 +1,32 @@
 #include "camera.hpp"
 
 Camera::Camera() {
-  pos = glm::vec3(0.0f,160.0f,32.0f);
+  pos = glm::vec3(0.0f,128.0f,90.0f);
   lookdir = glm::normalize(-pos);
   up  = glm::normalize(glm::vec3(0,10,-50));
 }
 
 glm::mat4 Camera::GetViewMatrix() {
   return glm::lookAt(pos, pos + lookdir, up);
+}
+
+// Will convert world coordinates accordingly
+DirectX::XMMATRIX Camera::GetViewMatrix_D3D11() {
+  DirectX::XMVECTOR eye_d3d, lookdir_d3d, target_d3d, up_d3d;
+  
+  eye_d3d.m128_f32[0] = pos.x;
+  eye_d3d.m128_f32[1] = pos.y;
+  eye_d3d.m128_f32[2] = -pos.z;
+
+  lookdir_d3d.m128_f32[0] = lookdir.x;
+  lookdir_d3d.m128_f32[1] = lookdir.y;
+  lookdir_d3d.m128_f32[2] = -lookdir.z;
+
+  up_d3d.m128_f32[0] = up.x;
+  up_d3d.m128_f32[1] = up.y;
+  up_d3d.m128_f32[2] = -up.z;
+
+  return DirectX::XMMatrixLookAtLH(eye_d3d, DirectX::XMVectorAdd(eye_d3d, lookdir_d3d), up_d3d);
 }
 
 void Camera::Update(float sec) {
@@ -54,5 +73,5 @@ void Camera::do_RotateInLocalCoords(glm::vec3 local_axis, float rad) {
 void Camera::RotateAlongPoint(glm::vec3 p, glm::vec3 local_axis, float rad) {
   float dist = sqrt(glm::dot(p - pos, p - pos));
   do_RotateInLocalCoords(glm::vec3(local_axis), rad);
-  pos = p - (lookdir * dist);
+  pos = p - (glm::normalize(lookdir) * dist);
 }

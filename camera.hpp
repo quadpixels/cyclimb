@@ -1,18 +1,18 @@
 #ifndef CAMERA_H
 #define CAMERA_H
 
-#include <GL/glew.h>
-#include <GL/freeglut.h>
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/transform.hpp>
+#include <DirectXMath.h>
 
 class Camera {
 public:
   Camera();
   glm::mat4 GetViewMatrix();
+  DirectX::XMMATRIX GetViewMatrix_D3D11();
   void Update(float);
   glm::vec3 pos, lookdir, up, vel; // in world coordinates
 

@@ -1,14 +1,28 @@
 #include <stdio.h>
 #include "chunk.hpp"
 #include "util.hpp"
+#include "camera.hpp"
 #include <string.h>
 
 float    Chunk::l0 = 1.0f;
 int      Chunk::size = 32;
 unsigned Chunk::program = 0;
 
+extern bool IsGL();
+extern ID3D11Device* g_device11;
+extern ID3D11DeviceContext* g_context11;
+extern ID3D11Buffer* g_perobject_cb_default_palette;
+extern Camera* GetCurrentSceneCamera();
+extern DirectX::XMMATRIX g_projection_d3d11;
+extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
+
+struct DefaultPalettePerObjectCB {
+  DirectX::XMMATRIX M, V, P;
+};
+
 Chunk::Chunk() {
   vao = vbo = tri_count = 0;
+  d3d11_vertex_buffer = nullptr;
   block = new unsigned char[size * size * size];
   light = new int[size * size * size];
   memset(block, 0x00, sizeof(char)*size*size*size);
@@ -17,20 +31,27 @@ Chunk::Chunk() {
 }
 
 void Chunk::BuildBuffers(Chunk* neighbors[26]) {
-  if (vbo != (unsigned)-999) {
-    glDeleteBuffers(1, &vbo);
-    glDeleteVertexArrays(1, &vao);
-    vao = vbo = 0;
+  bool is_gl = IsGL();
+  if (is_gl) {
+    if (vbo != (unsigned)-999) {
+      glDeleteBuffers(1, &vbo);
+      glDeleteVertexArrays(1, &vao);
+      vao = vbo = 0;
+    }
+  }
+  else {
+    if (d3d11_vertex_buffer != nullptr)
+      d3d11_vertex_buffer->Release();
   }
 
   // axis=0  x=u y=v z=w
   // axis=1  x=w y=u z=v
   // axis=2  x=v y=w z=u
 
-  // x_idxs ±íÊ¾ x Ó¦¸ÃÊÇ {u,v,w} ÖÐµÄµÚ¼¸¸ö£»ÆäËüµÄÒÀ´ÎÀàÍÆ
+  // x_idxs ... x ... {u,v,w}
   const int x_idxs[] = { 0,2,1 }, y_idxs[] = { 1,0,2 }, z_idxs[] = { 2,1,0 };
 
-  // u_idxs ±íÊ¾ u Ó¦¸ÃÊÇ {x,y,z} ÖÐµÄµÚ¼¸¸ö£¬ÆäËüµÄÒÀ´ÎÀàÍÆ
+  // u_idxs ... u ... {x,y,z}
   const int u_axes[] = { 0,1,2 }, v_axes[] = { 1,2,0 }, w_axes[] = { 2,0,1 };
 
   const glm::vec3 units[] = { glm::vec3(1,0,0), glm::vec3(0,1,0), glm::vec3(0,0,1) };
@@ -83,7 +104,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
             const int voxel = scratch[u*size+v];
             if (voxel != 0) {                          //     V
               int du = 1, dv = 1;                     // P1 ----------- P0
-              //       determine value of du and dv   // |  +W ´©³öÆÁÄ»   |
+              //       determine value of du and dv   // |  +W ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä»   |
               glm::vec3 pos_w = origin + l*w0,        // P2 ----------- P3 ---> U
                         p2 = pos_w - l*u0 - l*v0, p3 = p2 + float(du)*l0*u0, p0 = p3 + float(dv)*l0*v0,
                         p1 = p2 + float(dv)*l0*v0;
@@ -95,7 +116,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
               int ao_2 = GetOcclusionFactor(p2.x, p2.y, p2.z, ao_dir, neighbors);
               int ao_0 = 0, ao_1 = 0, ao_3 = 0;
 
-              // ÑÓÉì dv
+              // ï¿½ï¿½ï¿½ï¿½ dv
               // Try possible dv values & make dv as large as possible
               bool may_extend_u = true;
               for (int ddv=1; ddv+v-1<size; ddv++) {
@@ -114,12 +135,12 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
 
                 ao_0 = ao_00; ao_1 = ao_11; ao_3 = ao_33;
                 p0   = p00;   p1   = p11;   p3   = p33;
-                dv = ddv; // µ½ÕâÀïÕâ¸ö dv µÄÊÔÌ½Öµ¾Í¿ÉÒÔ±»²ÉÓÃÁË¡£
+                dv = ddv; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ dv ï¿½ï¿½ï¿½ï¿½Ì½Öµï¿½Í¿ï¿½ï¿½Ô±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ë¡ï¿½
                 if (!may_extend_u) break;
               }
 
-              // ÑÓÉì du
-              if (may_extend_u) { // Õâ¸öÒª¼ÓÉÏµÄ£¬²»È»¼ä¸ôÎª2µÄÊúÌõ»áÔì³Ébug
+              // ï¿½ï¿½ï¿½ï¿½ du
+              if (may_extend_u) { // ï¿½ï¿½ï¿½Òªï¿½ï¿½ï¿½ÏµÄ£ï¿½ï¿½ï¿½È»ï¿½ï¿½ï¿½Îª2ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½bug
                 for (int ddu = 2; ddu+u-1<size; ddu++) {
                   bool line_ok = true, checked = false;
                   glm::vec3 p11, p33, p00;
@@ -141,7 +162,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
                   if (line_ok && checked) {
                     ao_0 = ao_1 = ao_3 = ao_2;
                     p0   = p00;   p1   = p11;   p3   = p33;
-                    du   = ddu; // µ½ÕâÀï¡¢Õâ¸ö dv µÄÊÔÌ½Öµ¾Í¿ÉÒÔ±»²ÉÓÃÁË¡£
+                    du   = ddu; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¡¢ï¿½ï¿½ï¿½ dv ï¿½ï¿½ï¿½ï¿½Ì½Öµï¿½Í¿ï¿½ï¿½Ô±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ë¡ï¿½
                   } else break;
                 }
               }
@@ -151,8 +172,8 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
                 p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, p0.x, p0.y, p0.z
               };
               int idxes[] = {
-                0,1,2, 3,4,5, 6,7,8, 9,10,11, 12,13,14, 15,16,17, // Õý
-                0,1,2, 6,7,8, 3,4,5, 9,10,11, 15,16,17, 12,13,14  // ·´
+                0,1,2, 3,4,5, 6,7,8, 9,10,11, 12,13,14, 15,16,17, // ï¿½ï¿½
+                0,1,2, 6,7,8, 3,4,5, 9,10,11, 15,16,17, 12,13,14  // ï¿½ï¿½
               };
               for (unsigned i=0; i<18; i++) {
                 tmp_vert[idx_v++] = verts_xyz[idxes[i + d*18]];
@@ -182,49 +203,79 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
     }
   }
 
-  glGenVertexArrays(1, &vao);
-  glBindVertexArray(vao);
-  glGenBuffers(1, &vbo);
-
   float* tmp_packed = new float[tri_count * 3 * 6];
   for (int i=0; i<tri_count*3; i++) {
     const float x=tmp_vert[i*3], y=tmp_vert[i*3+1], z=tmp_vert[i*3+2],
                 nidx = tmp_norm[i],
                 data = tmp_data[i],
                 ao   = tmp_ao[i];
-    const float entry[] = { x,y,z,nidx,data,ao };
+    std::vector<float> entry;
+    if (is_gl) {
+      entry = std::vector<float>({ x,y,z,nidx,data,ao });
+    }
+    else {
+      entry = std::vector<float>({ x,y,-z,nidx,data,ao });
+    }
+
     for (unsigned j=0; j<6; j++) {
-      tmp_packed[i*6 + j] = entry[j];
+      int ii = i;
+      if (!is_gl) { // Change winding direction for D3D11
+        if (ii % 3 == 1) ii++;
+        else if (ii % 3 == 2) ii--;
+      }
+      tmp_packed[ii*6 + j] = entry[j];
     }
   }
 
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(float)*tri_count * 3 * 6,
-    tmp_packed, GL_STATIC_DRAW);
-  const size_t stride = sizeof(float)*6;
+  if (is_gl) {
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glGenBuffers(1, &vbo);
 
-  // XYZ pos
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (GLvoid*)0);
-  glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float)*tri_count * 3 * 6,
+      tmp_packed, GL_STATIC_DRAW);
+    const size_t stride = sizeof(float) * 6;
 
-  // Normal idx
-  glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, stride, (GLvoid*)(3*sizeof(GLfloat)));
-  glEnableVertexAttribArray(1);
+    // XYZ pos
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (GLvoid*)0);
+    glEnableVertexAttribArray(0);
 
-  // Data
-  glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (GLvoid*)(4*sizeof(GLfloat)));
-  glEnableVertexAttribArray(2);
+    // Normal idx
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, stride, (GLvoid*)(3 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(1);
 
-  // AO Index
-  glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, (GLvoid*)(5*sizeof(GLfloat)));
-  glEnableVertexAttribArray(3);
+    // Data
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (GLvoid*)(4 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(2);
 
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindVertexArray(0);
+    // AO Index
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, (GLvoid*)(5 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(3);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    MyCheckGLError("Chunk::BuildBuffer");
+  }
+  else {
+    if (tri_count > 0) {
+      D3D11_BUFFER_DESC desc = { };
+      desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+      desc.ByteWidth = sizeof(float) * tri_count * 3 * 6;
+      desc.StructureByteStride = sizeof(float) * 6;
+      desc.Usage = D3D11_USAGE_IMMUTABLE;
+
+      D3D11_SUBRESOURCE_DATA srd = { };
+      srd.pSysMem = tmp_packed;
+      srd.SysMemPitch = sizeof(float) * tri_count * 3 * 6;
+
+      assert(SUCCEEDED(g_device11->CreateBuffer(&desc, &srd, &d3d11_vertex_buffer)));
+    }
+  }
 
   delete[] tmp_vert; delete[] tmp_norm; delete[] tmp_data; delete[] tmp_ao;
 
-  MyCheckGLError("Chunk::BuildBuffer");
 
 //  printf("[Chunk::BuildBuffers] tri_count=%d\n", tri_count);
 //  for (int i=0; i<tri_count*3; i++) {
@@ -377,6 +428,7 @@ void Chunk::LoadDefault() {
 }
 
 void Chunk::Render(const glm::mat4& M) {
+  if (tri_count < 1) return;
   glUseProgram(program);
   GLuint mLoc = glGetUniformLocation(program, "M");
   glUniformMatrix4fv(mLoc, 1, GL_FALSE, &(M[0][0]));
@@ -390,6 +442,20 @@ void Chunk::Render() {
   glm::mat4 M(1);
   M = glm::translate(M, pos);
   Render(M);
+}
+
+void Chunk::Render_D3D11(const DirectX::XMMATRIX& M) {
+  if (tri_count < 1) return;
+  UpdateGlobalPerObjectCB(&M, nullptr, nullptr);
+  unsigned stride = sizeof(float) * 6, offset = 0;
+  g_context11->IASetVertexBuffers(0, 1, &d3d11_vertex_buffer, &stride, &offset);
+  g_context11->Draw(3 * tri_count, 0);
+}
+
+void Chunk::Render_D3D11() {
+  DirectX::XMMATRIX M = DirectX::XMMatrixIdentity();
+  M *= DirectX::XMMatrixTranslation(pos.x, pos.y, -pos.z);
+  Render_D3D11(M);
 }
 
 void Chunk::SetVoxel(unsigned x, unsigned y, unsigned z, int v) {

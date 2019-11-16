@@ -35,7 +35,8 @@ std::vector<Sprite*>* TestShapesScene::GetSpriteListForRender() {
 //==========================
 ClimbScene* ClimbScene::instance = nullptr;
 std::vector<ChunkGrid*> ClimbScene::model_platforms;
-std::vector<ChunkGrid*> ClimbScene::model_backgrounds;
+std::vector<ChunkGrid*> ClimbScene::model_backgrounds1;
+std::vector<ChunkGrid*> ClimbScene::model_backgrounds2;
 ChunkGrid* ClimbScene::model_char;
 ChunkGrid* ClimbScene::model_anchor;
 ChunkGrid* ClimbScene::model_coin;
@@ -78,8 +79,10 @@ void ClimbScene::InitStatic() {
   model_platforms.push_back(new ChunkGrid("climb/2.vox"));
   model_char = new ChunkGrid("climb/chr.vox");
   model_anchor = new ChunkGrid("climb/anchor.vox");
-  model_backgrounds.push_back(new ChunkGrid("climb/bg1.vox"));
-  model_backgrounds.push_back(new ChunkGrid("climb/bg2.vox"));
+  model_backgrounds1.push_back(new ChunkGrid("climb/bg1.vox"));
+  model_backgrounds1.push_back(new ChunkGrid("climb/bg1_2.vox"));
+  model_backgrounds2.push_back(new ChunkGrid("climb/bg2.vox"));
+  model_backgrounds2.push_back(new ChunkGrid("climb/bg2_2.vox"));
   model_coin = new ChunkGrid("climb/coin.vox");
   model_exit = new ChunkGrid("climb/goal.vox");
 }
@@ -156,8 +159,8 @@ void ClimbScene::Init() {
   // Load Level
   num_coins = 0; num_coins_total = 0;
   curr_level = 1;
-  StartLevel(curr_level);
   SetBackground(0);
+  StartLevel(curr_level);
   
   ClimbScene::instance = this;
   
@@ -346,69 +349,84 @@ void ClimbScene::Update(float secs) {
   for (Platform* p : platforms) p->Update(secs);
 }
 
-void ClimbScene::RenderHUD() {
+void ClimbScene::do_RenderHUD(GraphicsAPI api) {
+
   glm::mat4 uitransform(1);
-  
+
   wchar_t buf[50];
   float width;
-  
+
   // 准备阶段
   if (game_state == ClimbGameStateStartCountdown && g_main_menu_visible == false) {
-    //std::wstring text = std::wstring(L"准备… 第") + std::to_wstring(curr_level) + std::wstring(L"关");
-    std::wstring text = std::wstring(L"Get ready for level ") + std::to_wstring(curr_level);
+    std::wstring text = std::wstring(L"准备… 第") + std::to_wstring(curr_level) + std::wstring(L"关");
+    //std::wstring text = std::wstring(L"Get ready for level ") + std::to_wstring(curr_level);
     MeasureTextWidth(text, &width);
-    RenderText(GetShaderProgram(6), text, WIN_W/2-width/2, WIN_H/2, 0.8f,
-      glm::vec3(1.0f, 1.0f, 0.2f),
-      uitransform);
-  } else if (game_state == ClimbGameStateLevelEndWaitKey) {
+
+    if (api == ClimbOpenGL) {
+      RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2, 0.8f,
+        glm::vec3(1.0f, 1.0f, 0.2f),
+        uitransform);
+    }
+    else {
+      RenderText_D3D11(text, WIN_W / 2 - width / 2, WIN_H / 2, 0.8f,
+        glm::vec3(1.0f, 1.0f, 0.2f),
+        uitransform);
+    }
+  }
+  else if (game_state == ClimbGameStateLevelEndWaitKey) {
     //std::wstring text = std::wstring(L"Level ") + std::to_wstring(curr_level) + std::wstring(L"Completed!");
-    std::wstring text = std::wstring(L"Level ") + std::to_wstring(curr_level) + std::wstring(L" completed!");
+    std::wstring text = std::wstring(L"关卡 ") + std::to_wstring(curr_level) + std::wstring(L" 完成！");
     MeasureTextWidth(text, &width);
-    RenderText(GetShaderProgram(6), text, WIN_W/2-width/2, WIN_H/2+32, 0.8f,
+
+    RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2 + 32, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
     //swprintf(buf, 20, L"过关！");
-    swprintf(buf, 50, L"Time: %.1fs", curr_level_time);
+    swprintf(buf, 50, L"时间: %.1f秒", curr_level_time);
     text = std::wstring(buf);
     MeasureTextWidth(text, &width);
-    RenderText(GetShaderProgram(6), text, WIN_W/2-width/2, WIN_H/2+64, 0.8f,
+
+    RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2 + 64, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
 
-    swprintf(buf, 50, L"Press [Space] to continue");
+    swprintf(buf, 50, L"请按 [空格] 继续");
     text = std::wstring(buf);
     MeasureTextWidth(text, &width);
+
     RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2 + 96, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
   }
-  
+
   // 金币数
-  swprintf(buf, 20, L"%d/%d %.1fs", num_coins, num_coins_total, curr_level_time);
+  swprintf(buf, 20, L"硬币 %d/%d %.1fs", num_coins, num_coins_total, curr_level_time);
   std::wstring text(buf);
   const float scale = 0.8f;
   RenderText(GetShaderProgram(6), text, 32, 32, scale, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
-  
+
   bool SHOW_KEYSTROKES = false;
   if (SHOW_KEYSTROKES) {
     text = L"按下的键：";
     const std::wstring keys[] = { L"↖", L"↗", L"↑", L"←", L"→", L"↙", L"↓", L"↘" };
-    for (int i=0; i<9; i++) {
+    for (int i = 0; i < 9; i++) {
       if (keyflags.test(i)) text += keys[i];
       RenderText(GetShaderProgram(6), text, 32, 64, 1.0f, glm::vec3(0.2f, 1.0f, 1.0f), uitransform);
     }
-    
+
   }
-  
+
   if (g_textmessage->IsExpired() == false)
     g_textmessage->Render();
+}
+
+void ClimbScene::RenderHUD() {
 }
 
 void ClimbScene::OnKeyPressed(char k) {  
   if (k == 'g') { 
     is_debug = !is_debug;
-    printf("is_debug = %d\n", is_debug);
-    if (!is_debug) debug_vel = glm::vec3(0, 0, 0);
+    debug_vel = glm::vec3(0, 0, 0);
   } else if (k >= '1' && k <= '5') {
     StartLevel(k-'0');
   } //else if (k == '0') RevealExit();
@@ -421,11 +439,10 @@ void ClimbScene::OnKeyPressed(char k) {
   }
   
   if (is_debug) {
-    if      (k == 'w') debug_vel += glm::vec3( 0, 1, 0);
-    else if (k == 's') debug_vel += glm::vec3( 0,-1, 0);
-    else if (k == 'a') debug_vel += glm::vec3(-1, 0, 0);
-    else if (k == 'd') debug_vel += glm::vec3( 1, 0, 0);
-    return;
+    if      (k == 'i') debug_vel += glm::vec3( 0, 1, 0);
+    else if (k == 'k') debug_vel += glm::vec3( 0,-1, 0);
+    else if (k == 'j') debug_vel += glm::vec3(-1, 0, 0);
+    else if (k == 'l') debug_vel += glm::vec3( 1, 0, 0);
   }
   
   // 扔绳子试探
@@ -478,8 +495,8 @@ void ClimbScene::OnKeyPressed(char k) {
 void ClimbScene::OnKeyReleased(char k) {
   
   if (is_debug) {
-    if (k == 'w' || k == 's') debug_vel.y = 0;
-    else if (k == 'a' || k == 'd') debug_vel.x = 0;
+    if (k == 'i' || k == 'k') debug_vel.y = 0;
+    else if (k == 'j' || k == 'l') debug_vel.x = 0;
   }
   
   if (game_state == ClimbGameStateInGame) {
@@ -546,6 +563,7 @@ void ClimbScene::SetAnchorPoint(glm::vec3 anchor_p, glm::vec3 anchor_dir) {
 
 void ClimbScene::StartLevel(int levelid) {
   curr_level = levelid;
+  curr_bgid = 0;
   curr_level_time = 0;
   is_all_rockets_collected = false;
   
@@ -592,6 +610,10 @@ void ClimbScene::StartLevel(int levelid) {
         platforms.push_back(new ExitPlatform(s));
         printf("exit at (%g,%g)\n", x, y);
       }
+      else if (l[0] == "bgid") {
+        curr_bgid = std::stoi(l[1]);
+        SetBackground(curr_bgid);
+      }
     }
   }
   
@@ -628,13 +650,13 @@ void ClimbScene::SetBackground(int bgid) {
   // [1] [1] [1]
   // [0] [0] [0]
   for (int i=0; i<5; i++) {
-    ChunkSprite* s = new ChunkSprite(model_backgrounds[0]);
+    ChunkSprite* s = new ChunkSprite(model_backgrounds1[bgid]);
     s->scale = glm::vec3(1,1,1) * BACKGROUND_SCALE;
     backgrounds0.push_back(s);
   }
   
   for (int i=0; i<20; i++) {
-    ChunkSprite* s = new ChunkSprite(model_backgrounds[1]);
+    ChunkSprite* s = new ChunkSprite(model_backgrounds2[bgid]);
     s->scale = glm::vec3(1,1,1) * BACKGROUND_SCALE;
     backgrounds1.push_back(s);
   }

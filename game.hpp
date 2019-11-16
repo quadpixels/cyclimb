@@ -1,15 +1,21 @@
-#ifndef _GAME_H_
-#define _GAME_H_
-#include <vector>
-#include <string>
-#include <GL/glew.h>
-#include <GL/freeglut.h>
+#ifndef _GAME_HPP_
+#define _GAME_HPP_
+
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "chunkindex.hpp"
 #include "sprite.hpp"
+#include "util.hpp"
+
+#include <GLFW/glfw3.h>
+
+#include <vector>
+#include <string>
+#include <DirectXMath.h>
+#undef max
+#undef min
 
 //
 class Particles {
@@ -81,6 +87,7 @@ public:
   }
 
   void Render(const glm::mat4& uitransform);
+  void Render_D3D11(const glm::mat4& uitransform);
   void OnUpDownPressed(int delta); // -1: up;  +1: down
   void OnLeftRightPressed(int delta); // -1: left; +1: right
   void OnEnter();
@@ -101,7 +108,7 @@ public:
   unsigned millis_expire;
   TextMessage() { millis_expire = 0; }
   void SetMessage(const std::wstring& _msg, float seconds) {
-    unsigned elapsed = glutGet(GLUT_ELAPSED_TIME);
+    unsigned elapsed = GetElapsedMillis();
     millis_expire = (elapsed + seconds * 1000);
     messages.clear();
     messages.push_back(_msg);
@@ -110,7 +117,7 @@ public:
     messages.push_back(_msg);
   }
   bool IsExpired() {
-    int x = glutGet(GLUT_ELAPSED_TIME);
+    int x = int(GetElapsedMillis());
     return x >= millis_expire;
   }
   void Render();

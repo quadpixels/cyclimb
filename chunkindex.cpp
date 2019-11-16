@@ -46,6 +46,48 @@ void ChunkGrid::Render(
   }
 }
 
+extern void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
+void ChunkGrid::Render_D3D11(
+  const glm::vec3& pos,  const glm::vec3& scale,
+  const glm::mat3& orientation,  const glm::vec3& anchor) {
+  glm::mat4 M(orientation);
+
+  /*
+  M = glm::scale(M, scale);
+  
+  M = glm::translate(M, t);
+  glm::vec3 anchor1 = anchor; anchor1.z = -anchor1.z;
+  M = glm::translate(M, anchor1);
+  */
+
+  M = glm::scale(M, scale);
+  glm::vec3 t = glm::inverse(orientation) * pos / scale; //t.z = -t.z; // 这里不用反
+  M = glm::translate(M, t);
+  glm::vec3 anchor1 = anchor; anchor1.z = -anchor1.z;
+  M = glm::translate(M, -anchor1);
+
+  for (int xx = 0; xx < xdim; xx++) {
+    for (int yy = 0; yy < ydim; yy++) {
+      for (int zz = 0; zz < ydim; zz++) {
+        glm::vec3 tr(float(xx * Chunk::size),
+          float(yy * Chunk::size),
+          float(zz * Chunk::size) * -1);
+        glm::mat4 M_chunk = glm::translate(M, tr);
+        int ix = IX(xx, yy, zz);
+        Chunk* chk = chunks[ix];
+        if (chk->is_dirty) {
+          Chunk* neighs[26] = { NULL };
+          chk->BuildBuffers(neighs);
+        }
+
+        DirectX::XMMATRIX M1;
+        GlmMat4ToDirectXMatrix(&M1, M_chunk);
+        chunks[ix]->Render_D3D11(M1);
+      }
+    }
+  }
+}
+
 Chunk* ChunkGrid::GetChunk(int x, int y, int z, int* local_x, int* local_y, int* local_z) {
   int xx = x / Chunk::size,
       yy = y / Chunk::size,
@@ -137,14 +179,16 @@ ChunkGrid::ChunkGrid(const char* vox_fn) {
   int ver;
   assert (fread(&ver, sizeof(int), 1, f) == 1);
 
+  bool done = false; // For Ver >= 150 read voxels discard everything else
+
   int curr_size[3]; // X Y Z
-  while (ftell(f) < file_size) {
-  char chunk[5];
-  assert (fread(chunk, sizeof(char), 4, f) == 4);
-  chunk[4] = 0x00;
-  int size_content, size_children;
-  assert (fread(&size_content, sizeof(int), 1, f) == 1);
-  assert (fread(&size_children, sizeof(int), 1, f) == 1);
+  while (ftell(f) < file_size && done == false) {
+    char chunk[5];
+    assert (fread(chunk, sizeof(char), 4, f) == 4);
+    chunk[4] = 0x00;
+    int size_content, size_children;
+    assert (fread(&size_content, sizeof(int), 1, f) == 1);
+    assert (fread(&size_children, sizeof(int), 1, f) == 1);
 
     if (!strcmp(chunk, "MAIN")) {
       continue; // Read next chunk
@@ -174,6 +218,7 @@ ChunkGrid::ChunkGrid(const char* vox_fn) {
         SetVoxel(x, y, z, val);
       }
       delete xyzi;
+      done = true;
     } else if (!strcmp(chunk, "RGBA")) {
       printf("RGBA Palette, skipped\n");
       assert (0 == fseek(f, 256 * sizeof(int), SEEK_CUR));

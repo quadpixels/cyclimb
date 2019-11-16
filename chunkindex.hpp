@@ -1,14 +1,12 @@
 #ifndef CHUNKINDEX_HPP
 #define CHUNKINDEX_HPP
 
-#include <GL/glew.h>
-#include <GL/freeglut.h>
 #define GLM_FORCE_RADIANS
+#include "chunk.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
 #include <algorithm>
-#include "chunk.hpp"
 #include <stdio.h>
 
 class AABB {
@@ -88,6 +86,11 @@ public:
       const glm::vec3& scale,
       const glm::mat3& orientation,
       const glm::vec3& anchor) = 0;
+  virtual void Render_D3D11(
+    const glm::vec3& pos,
+    const glm::vec3& scale,
+    const glm::mat3& orientation,
+    const glm::vec3& anchor) = 0;
   virtual ~ChunkIndex() {}
   virtual void Fill(int vox) = 0;
   glm::vec3 GetCentroid() { return glm::vec3(x_len*0.5f, z_len*0.5f, y_len*0.5f); }
@@ -103,10 +106,16 @@ public:
   ChunkGrid(const char* vox_fn);
   ChunkGrid(const ChunkGrid& other);
   virtual void Render(
-      const glm::vec3& pos,
-      const glm::vec3& scale,
-      const glm::mat3& orientation,
-      const glm::vec3& anchor);
+    const glm::vec3& pos,
+    const glm::vec3& scale,
+    const glm::mat3& orientation,
+    const glm::vec3& anchor);
+  virtual void Render_D3D11(
+    const glm::vec3& pos,
+    const glm::vec3& scale,
+    const glm::mat3& orientation,
+    const glm::vec3& anchor
+  );
   virtual void SetVoxel(unsigned x, unsigned y, unsigned z, int v);
   virtual void SetVoxel(const glm::vec3& p, int vox);
   virtual void SetVoxelSphere(const glm::vec3& p, float radius, int vox);

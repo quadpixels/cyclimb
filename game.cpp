@@ -16,6 +16,7 @@ extern unsigned g_last_millis;
 extern ChunkGrid* g_chunkgrid[4];
 extern std::vector<Sprite*> g_projectiles;
 extern int g_font_size;
+extern GLFWwindow* g_window;
 
 void StartGame();
 Particles* GetGlobalParticles();
@@ -109,6 +110,38 @@ void MainMenu::Render(const glm::mat4& uitransform) {
   }
 }
 
+void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
+  // Copy & paste from Render()
+  const int ymin = 200, textsize = 24;
+  int y = ymin;
+
+  // Titles
+  for (int i = 0; i<int(menutitle.size()); i++) {
+    std::wstring line = menutitle.at(i);
+    float w;
+    MeasureTextWidth(line, &w);
+    glm::vec3 c = glm::vec3(1.0f, 1.0f, 0.5f);
+    RenderText_D3D11(line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
+    y += textsize;
+  }
+
+  y += textsize;
+
+  // Menu items
+  for (int i = 0; i<int(menuitems.size()); i++) {
+    MenuItem* itm = &(menuitems[i]);
+    std::wstring line = itm->GetTextForDisplay();
+
+    float w;
+    MeasureTextWidth(line, &w);
+    glm::vec3 c;
+    if (i == curr_selection.back()) c = glm::vec3(1.0f, 0.2f, 0.2f);
+    else c = glm::vec3(1.0f, 1.0f, 0.1f);
+    RenderText_D3D11(line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
+    y += textsize;
+  }
+}
+
 void MainMenu::OnUpDownPressed(int delta) {
   const int L = int(menuitems.size());
   if (menuitems.empty() == false && curr_selection.empty() == false) {
@@ -162,7 +195,7 @@ void MainMenu::OnEnter() {
         break; // Start Game
       case 1: EnterMenu(2); break; // Options
       case 2: EnterMenu(1); break;
-      case 3: glutLeaveMainLoop(); break;
+      case 3: glfwSetWindowShouldClose(g_window, true); break;
       default: break;
       }
       break;
@@ -182,9 +215,12 @@ void MainMenu::OnEnter() {
 
 void MainMenu::ExitMenu() {
   curr_menu.pop_back();
-  if (curr_menu.empty() == 0) {
+  if (curr_menu.empty() == false) {
     EnterMenu(curr_menu.back());
   } else {
+    if (curr_menu.size() < 1) {
+      g_main_menu_visible = false;
+    }
   }
 }
 

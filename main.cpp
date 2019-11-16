@@ -1,12 +1,3 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <wchar.h>
-#include <GL/glew.h>
-#include <GL/freeglut.h>
-#define GLM_FORCE_RADIANS
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include "shader.hpp"
 #include "camera.hpp"
 #include "testshapes.hpp"
@@ -22,15 +13,30 @@
 #include "scene.hpp"
 #include <bitset>
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <wchar.h>
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <GLFW/glfw3.h>
+
 #ifdef WIN32
 #pragma comment(linker, "/SUBSYSTEM:windows /ENTRY:mainCRTStartup")
 #endif
 
+GraphicsAPI g_api = ClimbD3D11;
+bool IsGL() { return (g_api == ClimbOpenGL); }
+
 void StartGame();
 
 int WIN_W = 1024, WIN_H = 600;
-const int SHADOW_RES = 512;
+int SHADOW_RES = 512;
 int g_font_size = 24;
+
+GLFWwindow* g_window = nullptr;
 
 bool g_main_menu_visible = true;
 unsigned g_fadein_complete_millis;
@@ -53,6 +59,7 @@ Triangle *g_triangle[2];
 ColorCube *g_colorcube[2];
 Chunk* ALLNULLS[26] = { NULL };
 ChunkGrid* g_chunkgrid[4];
+Chunk* g_chunk0 = nullptr;
 std::vector<Sprite*> g_projectiles;
 Particles*  g_particles;
 
@@ -62,13 +69,14 @@ Particles* GetGlobalParticles() { return g_particles; }
 TestShapesScene*   g_testscene    = NULL;
 ClimbScene*        g_climbscene   = NULL;
 
-int scene_idx = 1;
+int g_scene_idx = 1;
 GameScene* GetCurrentGameScene() {
   GameScene* scenes[] = { g_testscene, g_climbscene };
-  return scenes[scene_idx];
+  return scenes[g_scene_idx];
 }
 Camera* GetCurrentSceneCamera() {
-  return GetCurrentGameScene()->camera;
+  if (g_scene_idx == 0) return &g_cam;
+  else return GetCurrentGameScene()->camera;
 }
 
 // Render targets.
@@ -171,11 +179,25 @@ void MyInit() {
   g_fullscreen_quad = new FullScreenQuad();
 
   g_triangle[0] = new Triangle();
-  g_triangle[0]->pos = glm::vec3(-0.1,0,-0.1);
+  g_triangle[0]->pos = glm::vec3(10,0,-10);
   g_triangle[1] = new Triangle();
   g_triangle[1]->pos = glm::vec3(0.1,0,0);
   g_colorcube[0] = new ColorCube();
-  g_colorcube[0]->pos = glm::vec3(0, 0, 0);
+  g_colorcube[0]->pos = glm::vec3(11, 0, 0);
+
+  g_chunk0 = new Chunk();
+  g_chunk0->LoadDefault();
+  g_chunk0->BuildBuffers(ALLNULLS);
+  g_chunk0->pos = glm::vec3(-10, 10, 10);
+
+  g_chunkgrid[2] = new ChunkGrid(5, 5, 5);
+  for (int i = 0; i < 5; i++) {
+    for (int j = 0; j < 5; j++) {
+      for (int k = 0; k < 5; k++) {
+        g_chunkgrid[2]->SetVoxel(i, j, k, (i+j+k) % 255);
+      }
+    }
+  }
 
   g_chunkgrid[3] = new ChunkGrid(1,1,1);
   g_chunkgrid[3]->SetVoxel(0,0,0,12);
@@ -191,6 +213,8 @@ void MyInit() {
     "climb/coords.vox"
   )), *global_xyz = new ChunkSprite(new ChunkGrid(
     "climb/xyz.vox"
+  )), *test_background = new ChunkSprite(new ChunkGrid(
+    "climb/bg1_2.vox"
   ));
 
   test_sprite->pos = glm::vec3(0, -4, 0);
@@ -201,10 +225,86 @@ void MyInit() {
   global_xyz->scale = glm::vec3(2,2,2);
   global_xyz->anchor = glm::vec3(0.5f, 0.5f, 0.5f);
 
+  test_background->pos = glm::vec3(0, 0, -10);
+  test_background->scale = glm::vec3(2, 2, 2);
+
   g_testscene = new TestShapesScene();
   g_testscene->test_sprite = test_sprite;
   g_testscene->global_xyz = global_xyz;
+  g_testscene->test_background = test_background;
   
+  ClimbScene::InitStatic();
+  g_climbscene = new ClimbScene();
+  g_climbscene->Init();
+}
+
+void MyInit_D3D11() {
+  Triangle::Init_D3D11();
+  ColorCube::Init_D3D11();
+
+  g_triangle[0] = new Triangle();
+  g_triangle[0]->pos = glm::vec3(10, 0, -10);
+  g_triangle[1] = new Triangle();
+  g_triangle[1]->pos = glm::vec3(0.1, 0, 0);
+  g_colorcube[0] = new ColorCube();
+  g_colorcube[0]->pos = glm::vec3(11, 0, 0);
+
+  g_testscene = new TestShapesScene();
+  ChunkSprite* test_sprite = new ChunkSprite(new ChunkGrid(
+    "climb/coords.vox"
+  )), *global_xyz = new ChunkSprite(new ChunkGrid(
+    "climb/xyz.vox"
+  )), *test_background = new ChunkSprite(new ChunkGrid(
+    "climb/bg1_2.vox"
+  ));
+  g_testscene->test_sprite = test_sprite;
+  g_testscene->global_xyz = global_xyz;
+  g_testscene->test_background = test_background;
+
+  g_chunk0 = new Chunk();
+  g_chunk0->LoadDefault();
+  g_chunk0->BuildBuffers(ALLNULLS);
+  g_chunk0->pos = glm::vec3(-10, 10, 10);
+
+  g_chunkgrid[2] = new ChunkGrid(5, 5, 5);
+  for (int i = 0; i < 5; i++) {
+    for (int j = 0; j < 5; j++) {
+      for (int k = 0; k < 5; k++) {
+        g_chunkgrid[2]->SetVoxel(i, j, k, (i+j+k) % 255);
+      }
+    }
+  }
+
+  test_sprite->pos = glm::vec3(0, -4, 0);
+  test_sprite->anchor = glm::vec3(0.5f, 0.5f, 0.5f);
+  test_sprite->scale = glm::vec3(3, 3, 3);
+
+  global_xyz->pos = glm::vec3(-40, -42, -24);
+  global_xyz->scale = glm::vec3(2, 2, 2);
+  global_xyz->anchor = glm::vec3(0.5f, 0.5f, 0.5f);
+
+  test_background->pos = glm::vec3(0, 0, -10);
+  test_background->scale = glm::vec3(2, 2, 2);
+
+  g_testscene = new TestShapesScene();
+  g_testscene->test_sprite = test_sprite;
+  g_testscene->global_xyz = global_xyz;
+  g_testscene->test_background = test_background;
+
+  g_dir_light = new DirectionalLight(glm::vec3(-1, -3, -1), glm::vec3(1, 3, -1));
+
+  // Font stuff
+  InitTextRender_D3D11();
+  
+  g_mainmenu = new MainMenu();
+
+  // Climb Scene Stuff
+  g_chunkgrid[3] = new ChunkGrid(1, 1, 1);
+  g_chunkgrid[3]->SetVoxel(0, 0, 0, 12);
+
+  Particles::InitStatic(g_chunkgrid[3]);
+  g_particles = new Particles();
+
   ClimbScene::InitStatic();
   g_climbscene = new ClimbScene();
   g_climbscene->Init();
@@ -227,7 +327,7 @@ void RenderScene(const glm::mat4& V, const glm::mat4& P) {
   glClearColor(1.0f, 1.0f, 0.8f, 0.0f);
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
-  glEnable(GL_MULTISAMPLE_ARB);
+  glEnable(GL_MULTISAMPLE);
   glCullFace(GL_BACK);
 
   // Set V and P to all shaders
@@ -263,7 +363,7 @@ void RenderSceneWithShadow(
   glClearColor(0.8f, 1.0f, 1.0f, 0.0f);
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
-  glEnable(GL_MULTISAMPLE_ARB);
+  glEnable(GL_MULTISAMPLE);
   glCullFace(GL_BACK);
 
   // Bind shadow texture
@@ -318,6 +418,8 @@ void render() {
   }
   g_depth_fbo->Unbind();
 
+  glFlush();
+
   // 2: Main Pass, with shadows applied
   if (g_aa) {
     g_msaa_fbo->Bind();
@@ -340,6 +442,7 @@ void render() {
 
   // 3. Draw the rendered texture
 
+  glFlush();
 
   // 4. Draw UI
   g_slateui_msaa_fbo->Bind();
@@ -373,7 +476,10 @@ void render() {
 
   g_fullscreen_quad->RenderWithBlend(g_slateui_basic_fbo->tex);
 
-  glutSwapBuffers();
+  glFlush();
+
+  // Removed for GLFW
+  //glutSwapBuffers();
 
   GetCurrentGameScene()->PostRender();
 }
@@ -409,7 +515,7 @@ void update() {
     "绕局部Y轴 顺时针旋转",
     "绕局部Z轴 逆时针旋转",
     "绕局部Z轴 顺时针旋转",
-    "绕世界X轴 逆时针旋转",
+    "绕世界X`轴 逆时针旋转",
     "绕世界X轴 顺时针旋转",
     "绕世界Y轴 逆时针旋转",
     "绕世界Y轴 顺时针旋转",
@@ -460,11 +566,14 @@ void update() {
   }
 
   g_last_millis = elapsed;
-  glutPostRedisplay();
+
+  // Removed for GLFW
+  //glutPostRedisplay();
 }
 
 void keydown(unsigned char key, int x, int y) {
   if (GetCurrentGameScene() != g_climbscene) {
+    printf("TestScene!\n");
     switch (key) {
       case 't': g_cam_flags.set(0); break;
       case 'g': g_cam_flags.set(1); break;
@@ -511,7 +620,7 @@ void keydown(unsigned char key, int x, int y) {
     case '[': g_testscene->global_xyz->scale *= glm::vec3(0.99f, 0.99f, 0.99f); break;
     case ']': g_testscene->global_xyz->scale *= glm::vec3(1/0.99f, 1/0.99f, 1/0.99f); break;
 
-    case '`': scene_idx = (scene_idx + 1) % 2; break;
+    case '`': g_scene_idx = (g_scene_idx + 1) % 2; break;
     default: GetCurrentGameScene()->OnKeyPressed(char(key));
   }
 }
@@ -541,18 +650,18 @@ void keyup(unsigned char key, int x, int y) {
 
 void keydown2(int key, int x, int y) {
   switch (key) {
-    case GLUT_KEY_UP:    g_arrow_dy =  1; break;
-    case GLUT_KEY_DOWN:  g_arrow_dy = -1; break;
-    case GLUT_KEY_RIGHT: g_arrow_dx =  1; break;
-    case GLUT_KEY_LEFT:  g_arrow_dx = -1; break;
+    case GLFW_KEY_UP:    g_arrow_dy =  1; break;
+    case GLFW_KEY_DOWN:  g_arrow_dy = -1; break;
+    case GLFW_KEY_RIGHT: g_arrow_dx =  1; break;
+    case GLFW_KEY_LEFT:  g_arrow_dx = -1; break;
     default: break;
   }
   if (g_main_menu_visible) {
     switch (key) {
-      case GLUT_KEY_UP:    g_mainmenu->OnUpDownPressed(-1); break;
-      case GLUT_KEY_DOWN:  g_mainmenu->OnUpDownPressed( 1); break;
-      case GLUT_KEY_LEFT:  g_mainmenu->OnLeftRightPressed(-1); break;
-      case GLUT_KEY_RIGHT: g_mainmenu->OnLeftRightPressed( 1); break;
+      case GLFW_KEY_UP:    g_mainmenu->OnUpDownPressed(-1); break;
+      case GLFW_KEY_DOWN:  g_mainmenu->OnUpDownPressed( 1); break;
+      case GLFW_KEY_LEFT:  g_mainmenu->OnLeftRightPressed(-1); break;
+      case GLFW_KEY_RIGHT: g_mainmenu->OnLeftRightPressed( 1); break;
       default: break;
     }
   }
@@ -560,29 +669,236 @@ void keydown2(int key, int x, int y) {
 
 void keyup2(int key, int x, int y) {
   switch (key) {
-    case GLUT_KEY_UP: case GLUT_KEY_DOWN:    g_arrow_dy = 0; break;
-    case GLUT_KEY_LEFT: case GLUT_KEY_RIGHT: g_arrow_dx = 0; break;
+    case GLFW_KEY_UP: case GLFW_KEY_DOWN:    g_arrow_dy = 0; break;
+    case GLFW_KEY_LEFT: case GLFW_KEY_RIGHT: g_arrow_dx = 0; break;
     default: break;
   }
 }
 
-int main(int argc, char** argv) {
+void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
+{
+  printf("Framebuffer size set to %dx%d\n", width, height);
+  glViewport(0, 0, width, height);
+}
+
+//void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+void ProcessInput(GLFWwindow* window, int key, int scancode, int action, int mods) {
+  
+
+  if (g_main_menu_visible) {
+    if (key == GLFW_KEY_UP && action == GLFW_PRESS) g_mainmenu->OnUpDownPressed(-1);
+    if (key == GLFW_KEY_DOWN && action == GLFW_PRESS) g_mainmenu->OnUpDownPressed( 1);
+    if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) g_mainmenu->OnLeftRightPressed(-1);
+    if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) g_mainmenu->OnLeftRightPressed( 1);
+    if (key == GLFW_KEY_ENTER && action == GLFW_PRESS) g_mainmenu->OnEnter();
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) g_mainmenu->ExitMenu();
+  }
+  else {
+
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+      glfwSetWindowShouldClose(window, true);
+
+    char game_keys[] = { 'q', 'w', 'e', 'a', 's', 'd', 'z', 'x', 'c', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0' };
+    int glfw_keys[] = {
+      GLFW_KEY_Q, GLFW_KEY_W, GLFW_KEY_E, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_Z, GLFW_KEY_X, GLFW_KEY_C,
+      GLFW_KEY_1, GLFW_KEY_2,GLFW_KEY_3,GLFW_KEY_4,GLFW_KEY_5,GLFW_KEY_6,GLFW_KEY_7,GLFW_KEY_8,GLFW_KEY_9,GLFW_KEY_0,
+    };
+    for (int i = 0; i < sizeof(game_keys) / sizeof(game_keys[0]); i++) {
+      if (key == glfw_keys[i]) {
+        if (action == GLFW_PRESS)
+          GetCurrentGameScene()->OnKeyPressed(char(game_keys[i]));
+        else if (action == GLFW_RELEASE)
+          GetCurrentGameScene()->OnKeyReleased(char(game_keys[i]));
+      }
+    }
+
+    if (GetCurrentGameScene() == g_testscene) {
+      if (action == GLFW_PRESS) {
+        switch (key) {
+          case GLFW_KEY_T: g_cam_flags.set(0); break;
+          case GLFW_KEY_G: g_cam_flags.set(1); break;
+          case GLFW_KEY_F: g_cam_flags.set(2); break;
+          case GLFW_KEY_H: g_cam_flags.set(3); break;
+          case GLFW_KEY_R: g_cam_flags.set(4); break;
+          case GLFW_KEY_Y: g_cam_flags.set(5); break;
+          case GLFW_KEY_I: g_cam_flags.set(12); break;
+          case GLFW_KEY_K: g_cam_flags.set(13); break;
+          case GLFW_KEY_J: g_cam_flags.set(14); break;
+          case GLFW_KEY_L: g_cam_flags.set(15); break;
+          case GLFW_KEY_U: g_cam_flags.set(16); break;
+          case GLFW_KEY_O: g_cam_flags.set(17); break;
+
+          case GLFW_KEY_W: g_cam_dy = 1; break;
+          case GLFW_KEY_S: g_cam_dy = -1; break;
+          case GLFW_KEY_A: g_cam_dx = -1; break;
+          case GLFW_KEY_D: g_cam_dx = 1; break;
+          case GLFW_KEY_Q: g_cam_dz = -1; break;
+          case GLFW_KEY_E: g_cam_dz = 1; break;
+        }
+      }
+      else if (action == GLFW_RELEASE) {
+        switch (key) {
+        case GLFW_KEY_T: g_cam_flags.reset(0); break;
+        case GLFW_KEY_G: g_cam_flags.reset(1); break;
+        case GLFW_KEY_F: g_cam_flags.reset(2); break;
+        case GLFW_KEY_H: g_cam_flags.reset(3); break;
+        case GLFW_KEY_R: g_cam_flags.reset(4); break;
+        case GLFW_KEY_Y: g_cam_flags.reset(5); break;
+        case GLFW_KEY_I: g_cam_flags.reset(12); break;
+        case GLFW_KEY_K: g_cam_flags.reset(13); break;
+        case GLFW_KEY_J: g_cam_flags.reset(14); break;
+        case GLFW_KEY_L: g_cam_flags.reset(15); break;
+        case GLFW_KEY_U: g_cam_flags.reset(16); break;
+        case GLFW_KEY_O: g_cam_flags.reset(17); break;
+
+        case GLFW_KEY_W: g_cam_dy = 0; break;
+        case GLFW_KEY_S: g_cam_dy = 0; break;
+        case GLFW_KEY_A: g_cam_dx = 0; break;
+        case GLFW_KEY_D: g_cam_dx = 0; break;
+        case GLFW_KEY_Q: g_cam_dz = 0; break;
+        case GLFW_KEY_E: g_cam_dz = 0; break;
+        }
+      }
+    }
+  }
+}
+
+// For testing only
+void expanded_draw_calls() {
+
+  g_main_menu_visible = false;
+
+  g_depth_fbo->Bind();
+  {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClearColor(1.0f, 1.0f, 0.8f, 0.0f);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_MULTISAMPLE);
+    glCullFace(GL_BACK);
+    glUseProgram(g_programs[0]);
+    g_triangle[0]->Render();
+    g_triangle[1]->Render();
+    g_colorcube[0]->Render();
+
+    glUseProgram(g_programs[1]);
+    GLint vLoc = glGetUniformLocation(g_programs[1], "V");
+
+    glm::mat4 V, P;
+    bool is_testing_dir_light = true;
+    if (is_testing_dir_light) {
+      V = g_dir_light->V; P = g_dir_light->P;
+    }
+    else {
+      V = g_cam.GetViewMatrix(); P = g_projection;
+    }
+
+    glUniformMatrix4fv(vLoc, 1, GL_FALSE, &V[0][0]);
+    GLint pLoc = glGetUniformLocation(g_programs[1], "P");
+    glUniformMatrix4fv(pLoc, 1, GL_FALSE, &P[0][0]);
+    //GLint lpvLoc = glGetUniformLocation(g_programs[1], "lightPV");
+    //glUniformMatrix4fv(lpvLoc, 1, GL_FALSE, &lightPV[0][0]);
+
+    glm::mat4 M = glm::translate(glm::vec3(-30, 0, 0));
+    g_chunk0->Render(M);
+    g_testscene->test_sprite->Render();
+    g_testscene->test_background->Render();
+    g_chunkgrid[2]->Render(glm::vec3(10, 10, 10), glm::vec3(1), glm::mat3(1), glm::vec3(0.5, 0.5, 0.5));
+  }
+  g_depth_fbo->Unbind();
+
+  g_basic_fbo->Bind();
+  {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClearColor(0.8f, 1.0f, 1.0f, 0.0f);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_MULTISAMPLE);
+    glCullFace(GL_BACK);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g_depth_fbo->tex);
+
+    glm::mat4 V = g_cam.GetViewMatrix();
+    glm::mat4 P = g_projection;
+    glm::mat4 lightPV = g_dir_light->P * g_dir_light->V;
+
+    glUseProgram(g_programs[1]);
+    GLint vLoc = glGetUniformLocation(g_programs[1], "V");
+    glUniformMatrix4fv(vLoc, 1, GL_FALSE, &V[0][0]);
+    GLint pLoc = glGetUniformLocation(g_programs[1], "P");
+    glUniformMatrix4fv(pLoc, 1, GL_FALSE, &P[0][0]);
+    GLint lpvLoc = glGetUniformLocation(g_programs[1], "lightPV");
+    glUniformMatrix4fv(lpvLoc, 1, GL_FALSE, &lightPV[0][0]);
+    GLint shadowmapLoc = glGetUniformLocation(g_programs[1], "shadow_map");
+    glUniform1i(shadowmapLoc, 0);
+    GLuint dlLoc = glGetUniformLocation(g_programs[1], "dir_light");
+    glUniform3f(dlLoc, g_dir_light->dir.x,
+      g_dir_light->dir.y,
+      g_dir_light->dir.z);
+
+    // The same draw calls
+    glm::mat4 M = glm::translate(glm::vec3(-30, 0, 0));
+    g_chunk0->Render(M);
+    g_testscene->test_sprite->Render();
+    g_testscene->test_background->Render();
+    g_chunkgrid[2]->Render(glm::vec3(10, 10, 10), glm::vec3(1), glm::mat3(1), glm::vec3(0.5, 0.5, 0.5));
+  }
+
+  {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // Draw some text
+    RenderText(g_programs[6], L"ABC123哈哈嘿", 64.0f, 32.0f, 1.0f,
+      glm::vec3(1.0f, 1.0f, 0.2f), glm::mat4(1));
+
+    glDisable(GL_BLEND);
+  }
+
+  g_basic_fbo->Unbind();
+
+  g_fullscreen_quad->Render(g_basic_fbo->tex);
+}
+
+int main_opengl(int argc, char** argv) {
   // OpenGL 3.3 context
+  //glewExperimental = GL_TRUE;
+  //glutInit(&argc, argv);
+  //glutInitContextVersion(3, 3);
+  //glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH | GLUT_MULTISAMPLE);
+  //glutInitWindowSize(WIN_W, WIN_H);
+
+  glfwInit();
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+  glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+
   glewExperimental = GL_TRUE;
-  glutInit(&argc, argv);
-  glutInitContextVersion(3, 3);
-  glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH | GLUT_MULTISAMPLE);
-  glutInitWindowSize(WIN_W, WIN_H);
 
-  glutCreateWindow("ChaoyueClimb");
-  glutDisplayFunc(&render);
-  glutKeyboardFunc(&keydown);
-  glutKeyboardUpFunc(&keyup);
-  glutSpecialFunc(&keydown2);
-  glutSpecialUpFunc(&keyup2);
-  glutIdleFunc(&update);
-  glutSetKeyRepeat(false);
+  //glutCreateWindow("ChaoyueClimb");
+  //glutDisplayFunc(&render);
+  //glutKeyboardFunc(&keydown);
+  //glutKeyboardUpFunc(&keyup);
+  //glutSpecialFunc(&keydown2);
+  //glutSpecialUpFunc(&keyup2);
+  //glutIdleFunc(&update);
+  //glutSetKeyRepeat(false);
 
+
+  g_window = glfwCreateWindow(WIN_W, WIN_H, "ChaoyueClimb (OpenGL)", nullptr, nullptr);
+  //g_window = glfwCreateWindow(WIN_W, WIN_H, "My Title", glfwGetPrimaryMonitor(), NULL);
+
+
+  if (g_window == nullptr) {
+    printf("Failed to create GLFW window\n");
+    glfwTerminate();
+    return -1;
+  }
+
+  glfwMakeContextCurrent(g_window);
+  
   if(glewInit() == GLEW_OK) {
 
     // Ignore errors in GLEW
@@ -606,9 +922,38 @@ int main(int argc, char** argv) {
     int muc;
     glGetIntegerv(GL_MAX_VERTEX_UNIFORM_COMPONENTS, &muc);
     printf("GL_MAX_VERTEX_UNIFORM_COMPONENTS=%u\n", muc);
-    MyInit();
+  }
 
-    glutMainLoop();
+  /*if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+  {
+    std::cout << "Failed to initialize GLAD" << std::endl;
+    return -1;
+  }
+  */
+
+  glfwSetFramebufferSizeCallback(g_window, FramebufferSizeCallback);
+  glfwSetInputMode(g_window, GLFW_STICKY_KEYS, GLFW_FALSE);
+  glfwSetKeyCallback(g_window, ProcessInput);
+
+  // INIT STUFF
+  {
+    MyInit();
+  }
+
+  while (!glfwWindowShouldClose(g_window)) {
+    glfwPollEvents();
+
+    update();
+    bool USE_EXPANDED_DRAWCALLS = false;
+    if (USE_EXPANDED_DRAWCALLS && (g_scene_idx == 0)) { // TestScene
+      expanded_draw_calls();
+    }
+    else {
+      render();
+    }
+    glFinish();
+
+    glfwSwapBuffers(g_window);
   }
 
   return 0;
@@ -616,4 +961,18 @@ int main(int argc, char** argv) {
 
 void StartGame() {
   g_main_menu_visible = false;
+}
+
+extern int main_d3d11(int argc, char** argv);
+
+int main(int argc, char** argv) {
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "opengl")) { g_api = ClimbOpenGL; }
+    else if (!strcmp(argv[i], "d3d11")) { g_api = ClimbD3D11; }
+    else if (!strcmp(argv[i], "testscene")) { g_scene_idx = 0; }
+    else if (!strcmp(argv[i], "cyclimb")) { g_scene_idx = 1; }
+  }
+
+  if (g_api == ClimbOpenGL) main_opengl(argc, argv);
+  else if (g_api == ClimbD3D11) main_d3d11(argc, argv);
 }

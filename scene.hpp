@@ -15,6 +15,7 @@ public:
   virtual std::vector<Sprite*>* GetSpriteListForRender() = 0;
   virtual void                  PostRender() = 0;
   virtual void                  RenderHUD() = 0;
+  virtual void                  RenderHUD_D3D11() = 0;
   virtual void                  Update(float) = 0;
   virtual void                  OnKeyPressed(char key) { };
   virtual void                  OnKeyReleased(char key) { };
@@ -26,7 +27,7 @@ public:
 
 class TestShapesScene : public GameScene {
 public:
-  Sprite* test_sprite;
+  Sprite* test_sprite, *test_background;
   ChunkSprite* global_xyz;
   void PreRender() { }
   void PostRender() { }
@@ -35,6 +36,7 @@ public:
   std::vector<Sprite*>* GetSpriteListForRender();
   void Update(float secs) { };
   void RenderHUD() { };
+  void RenderHUD_D3D11() { };
 };
 
 class ClimbScene : public GameScene {
@@ -112,7 +114,7 @@ public:
   
   // 模型
   static std::vector<ChunkGrid*> model_platforms;
-  static std::vector<ChunkGrid*> model_backgrounds;
+  static std::vector<ChunkGrid*> model_backgrounds1, model_backgrounds2;
   static ChunkGrid* model_exit;
   static ChunkGrid* model_char;
   static ChunkGrid* unit_sq;
@@ -136,6 +138,7 @@ public:
   std::vector<Sprite*> coins, initial_coins;
   int num_coins, num_coins_total;
   int curr_level;
+  int curr_bgid;
   float curr_level_time;
   
   static void InitStatic();
@@ -206,6 +209,8 @@ public:
   std::vector<Sprite*>* GetSpriteListForRender();
   void Update(float secs);
   void RenderHUD();
+  void RenderHUD_D3D11();
+  void do_RenderHUD(GraphicsAPI api);
   virtual void OnKeyPressed(char);
   virtual void OnKeyReleased(char);
   void SetAnchorPoint(glm::vec3 anchor_p, glm::vec3 anchor_dir);

@@ -1,4 +1,5 @@
 level 1
+bgid 1
 plat0  40 0
 plat0 -40 0
 plat0  40 70
@@ -11,6 +12,7 @@ coin  -40  55
 coin   40  55
 coin    0  20
 level 2
+bgid 1
 plat0   0   30
 plat0   70  30
 plat0  140  30
@@ -24,6 +26,7 @@ coin   245   0
 coin   315   0
 exit   420  30
 level 3
+bgid 1
 plat0  -40 0
 coin   -40 -15
 plat0  -60 30
