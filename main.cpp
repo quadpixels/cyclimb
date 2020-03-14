@@ -31,8 +31,9 @@ GraphicsAPI g_api = ClimbD3D11;
 bool IsGL() { return (g_api == ClimbOpenGL); }
 
 void StartGame();
+extern void MyInit_D3D11();
 
-int WIN_W = 1024, WIN_H = 600;
+int WIN_W = 1280, WIN_H = 720;
 int SHADOW_RES = 512;
 int g_font_size = 24;
 
@@ -66,12 +67,13 @@ Particles*  g_particles;
 // globally shared
 Particles* GetGlobalParticles() { return g_particles; }
 
-TestShapesScene*   g_testscene    = NULL;
-ClimbScene*        g_climbscene   = NULL;
+TestShapesScene*   g_testscene      = nullptr;
+ClimbScene*        g_climbscene     = nullptr;
+LightTestScene*    g_lighttestscene = nullptr;
 
 int g_scene_idx = 1;
 GameScene* GetCurrentGameScene() {
-  GameScene* scenes[] = { g_testscene, g_climbscene };
+  GameScene* scenes[] = { g_testscene, g_climbscene, g_lighttestscene };
   return scenes[g_scene_idx];
 }
 Camera* GetCurrentSceneCamera() {
@@ -86,6 +88,7 @@ BasicFBO* g_basic_fbo, *g_slateui_basic_fbo;
 DepthOnlyFBO* g_depth_fbo;
 FullScreenQuad* g_fullscreen_quad;
 DirectionalLight* g_dir_light;
+DirectionalLight* g_dir_light1;
 
 MainMenu* g_mainmenu;
 TextMessage* g_textmessage;
@@ -160,6 +163,9 @@ void MyInit() {
   g_projection = glm::perspective(60.0f*3.14159f/180.0f, WIN_W*1.0f/WIN_H, 0.1f, 499.0f);
   //g_projection = glm::ortho(-100.f, 100.f, -60.f, 60.f, -10.f, 499.f);
   g_dir_light = new DirectionalLight(glm::vec3(-1, -3, -1), glm::vec3(1,3,-1));
+  glm::vec3 dir = glm::vec3(0, -1, 0);
+  g_dir_light1 = new DirectionalLight(dir, glm::vec3(0, 50, 0), glm::normalize(glm::cross(glm::vec3(0, 0, 1), dir)), 5.05 * 3.14159f / 180.0f);
+  //g_dir_light1 = new DirectionalLight(glm::vec3(1, -3, -1), glm::vec3(-50, 10, 10), glm::vec3(1, 0, 0), 7 * 3.14159f / 180.0f);
 
   g_msaa_fbo  = new MsaaFBO(WIN_W, WIN_H, 4);
   g_slateui_msaa_fbo = new MsaaFBO(WIN_W, WIN_H, 4);
@@ -233,78 +239,6 @@ void MyInit() {
   g_testscene->global_xyz = global_xyz;
   g_testscene->test_background = test_background;
   
-  ClimbScene::InitStatic();
-  g_climbscene = new ClimbScene();
-  g_climbscene->Init();
-}
-
-void MyInit_D3D11() {
-  Triangle::Init_D3D11();
-  ColorCube::Init_D3D11();
-
-  g_triangle[0] = new Triangle();
-  g_triangle[0]->pos = glm::vec3(10, 0, -10);
-  g_triangle[1] = new Triangle();
-  g_triangle[1]->pos = glm::vec3(0.1, 0, 0);
-  g_colorcube[0] = new ColorCube();
-  g_colorcube[0]->pos = glm::vec3(11, 0, 0);
-
-  g_testscene = new TestShapesScene();
-  ChunkSprite* test_sprite = new ChunkSprite(new ChunkGrid(
-    "climb/coords.vox"
-  )), *global_xyz = new ChunkSprite(new ChunkGrid(
-    "climb/xyz.vox"
-  )), *test_background = new ChunkSprite(new ChunkGrid(
-    "climb/bg1_2.vox"
-  ));
-  g_testscene->test_sprite = test_sprite;
-  g_testscene->global_xyz = global_xyz;
-  g_testscene->test_background = test_background;
-
-  g_chunk0 = new Chunk();
-  g_chunk0->LoadDefault();
-  g_chunk0->BuildBuffers(ALLNULLS);
-  g_chunk0->pos = glm::vec3(-10, 10, 10);
-
-  g_chunkgrid[2] = new ChunkGrid(5, 5, 5);
-  for (int i = 0; i < 5; i++) {
-    for (int j = 0; j < 5; j++) {
-      for (int k = 0; k < 5; k++) {
-        g_chunkgrid[2]->SetVoxel(i, j, k, (i+j+k) % 255);
-      }
-    }
-  }
-
-  test_sprite->pos = glm::vec3(0, -4, 0);
-  test_sprite->anchor = glm::vec3(0.5f, 0.5f, 0.5f);
-  test_sprite->scale = glm::vec3(3, 3, 3);
-
-  global_xyz->pos = glm::vec3(-40, -42, -24);
-  global_xyz->scale = glm::vec3(2, 2, 2);
-  global_xyz->anchor = glm::vec3(0.5f, 0.5f, 0.5f);
-
-  test_background->pos = glm::vec3(0, 0, -10);
-  test_background->scale = glm::vec3(2, 2, 2);
-
-  g_testscene = new TestShapesScene();
-  g_testscene->test_sprite = test_sprite;
-  g_testscene->global_xyz = global_xyz;
-  g_testscene->test_background = test_background;
-
-  g_dir_light = new DirectionalLight(glm::vec3(-1, -3, -1), glm::vec3(1, 3, -1));
-
-  // Font stuff
-  InitTextRender_D3D11();
-  
-  g_mainmenu = new MainMenu();
-
-  // Climb Scene Stuff
-  g_chunkgrid[3] = new ChunkGrid(1, 1, 1);
-  g_chunkgrid[3]->SetVoxel(0, 0, 0, 12);
-
-  Particles::InitStatic(g_chunkgrid[3]);
-  g_particles = new Particles();
-
   ClimbScene::InitStatic();
   g_climbscene = new ClimbScene();
   g_climbscene->Init();
@@ -503,7 +437,7 @@ void update() {
         glm::vec3(60,0, 0 ) * float(g_cam_dx) +
         glm::vec3(0, 60,0) * float(g_cam_dz);
   cam->Update(secs);
-
+  g_mainmenu->Update(secs);
   GetCurrentGameScene()->Update(secs);
 
   // 这是当时为了解答以下知乎问题而做的演示场景而准备的
@@ -515,7 +449,7 @@ void update() {
     "绕局部Y轴 顺时针旋转",
     "绕局部Z轴 逆时针旋转",
     "绕局部Z轴 顺时针旋转",
-    "绕世界X`轴 逆时针旋转",
+    "绕世界X轴 逆时针旋转",
     "绕世界X轴 顺时针旋转",
     "绕世界Y轴 逆时针旋转",
     "绕世界Y轴 顺时针旋转",
@@ -849,7 +783,7 @@ void expanded_draw_calls() {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     // Draw some text
-    RenderText(g_programs[6], L"ABC123哈哈嘿", 64.0f, 32.0f, 1.0f,
+    RenderText(ClimbOpenGL, L"ABC123哈哈嘿", 64.0f, 32.0f, 1.0f,
       glm::vec3(1.0f, 1.0f, 0.2f), glm::mat4(1));
 
     glDisable(GL_BLEND);
@@ -932,7 +866,7 @@ int main_opengl(int argc, char** argv) {
   */
 
   glfwSetFramebufferSizeCallback(g_window, FramebufferSizeCallback);
-  glfwSetInputMode(g_window, GLFW_STICKY_KEYS, GLFW_FALSE);
+  glfwSetInputMode(g_window, GLFW_STICKY_KEYS, 0);
   glfwSetKeyCallback(g_window, ProcessInput);
 
   // INIT STUFF
@@ -971,6 +905,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "d3d11")) { g_api = ClimbD3D11; }
     else if (!strcmp(argv[i], "testscene")) { g_scene_idx = 0; }
     else if (!strcmp(argv[i], "cyclimb")) { g_scene_idx = 1; }
+    else if (!strcmp(argv[i], "lighttest")) { g_scene_idx = 2; }
   }
 
   if (g_api == ClimbOpenGL) main_opengl(argc, argv);

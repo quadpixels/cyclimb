@@ -5,6 +5,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <d3d11.h>
+#include "util.hpp"
 
 struct Character {
 	GLuint textureID;
@@ -21,6 +22,5 @@ struct Character_D3D11 {
 
 void InitTextRender();
 void InitTextRender_D3D11();
-void RenderText(GLuint program, std::wstring text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color, glm::mat4 transform);
-void RenderText_D3D11(std::wstring text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform);
+void RenderText(GraphicsAPI api, std::wstring text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color, glm::mat4 transform);
 void MeasureTextWidth(std::wstring text, float *w);

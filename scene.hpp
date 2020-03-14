@@ -2,17 +2,22 @@
 #include "game.hpp"
 #include "camera.hpp"
 #include "chunkindex.hpp"
+#include "testshapes.hpp"
+#include "util.hpp"
 
 #include <vector>
 #include <bitset>
 
 extern Camera g_cam;
+extern void UpdateSimpleTexturePerSceneCB(const float x, const float y, const float alpha);
 
 class GameScene {
 public:
   virtual void                  PrepareSpriteListForRender() = 0;
   virtual void                  PreRender()  = 0;
   virtual std::vector<Sprite*>* GetSpriteListForRender() = 0;
+  virtual void                  PrepareLights() = 0;
+  virtual void                  RenderLights();
   virtual void                  PostRender() = 0;
   virtual void                  RenderHUD() = 0;
   virtual void                  RenderHUD_D3D11() = 0;
@@ -28,6 +33,7 @@ public:
 class TestShapesScene : public GameScene {
 public:
   Sprite* test_sprite, *test_background;
+  FullScreenQuad* fsquad;
   ChunkSprite* global_xyz;
   void PreRender() { }
   void PostRender() { }
@@ -37,6 +43,7 @@ public:
   void Update(float secs) { };
   void RenderHUD() { };
   void RenderHUD_D3D11() { };
+  void PrepareLights() { };
 };
 
 class ClimbScene : public GameScene {
@@ -215,6 +222,10 @@ public:
   virtual void OnKeyReleased(char);
   void SetAnchorPoint(glm::vec3 anchor_p, glm::vec3 anchor_dir);
   
+  DirectionalLight* lights[16];
+  float light_phase = 0.0;
+  void PrepareLights();
+  
   // 每帧更新时做的事情
   void RotateCoins(float secs);
   void CameraFollow(float secs);
@@ -234,4 +245,50 @@ public:
   void RevealExit();
   void LayoutRocketsOnExit(const glm::vec3& exit_pos);
   void BeginLevelCompleteSequence();
+};
+
+class LightTestScene : public GameScene {
+public:
+  enum MacroState { OLD_YEAR, NEW_YEAR };
+  MacroState macro_state;
+
+  static float ACTOR_INIT_Y;
+  static void InitStatic();
+  static std::vector<ChunkGrid*> model_backgrounds;
+  static std::map<char, ChunkGrid*> model_digits;
+  ChunkSprite* bg_sprites[6];
+  static ChunkGrid* model_clock;
+  ChunkSprite* clock_sprite;
+
+  ChunkSprite* digit_sprites[20];
+  struct DigitState {
+    char old_char, new_char;
+    float tween_end_sec;
+  };
+  DigitState digit_states[20];
+  std::string status_string;
+
+  constexpr static int NUM_ACTORS = 16;
+  ChunkSprite* char_sprites[NUM_ACTORS];
+  float deltays[NUM_ACTORS];
+  float total_secs;
+  float last_update_total_secs;
+  int last_sec;
+  DirectionalLight* lights[16];
+
+  float curr_light_angle;
+
+  LightTestScene();
+
+  void PreRender() { }
+  void PostRender() { }
+  std::vector<Sprite*> sprite_render_list;
+  void PrepareSpriteListForRender();
+  std::vector<Sprite*>* GetSpriteListForRender();
+  void Update(float secs);
+  void RenderHUD() { };
+  void RenderHUD_D3D11() { };
+  void PrepareLights();
+
+  MacroState GetMacroState(int* curr_sec);
 };

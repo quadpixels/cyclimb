@@ -1,0 +1,9 @@
+freetype.dll
+glew32.dll
+glfw3.dll
+.vs
+windows_lib/*
+x64
+x86
+Debug
+Release

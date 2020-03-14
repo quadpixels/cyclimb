@@ -1,3 +1,5 @@
+#include <windows.h>
+
 #include "game.hpp"
 #include "chunkindex.hpp"
 #include <algorithm>
@@ -17,6 +19,9 @@ extern ChunkGrid* g_chunkgrid[4];
 extern std::vector<Sprite*> g_projectiles;
 extern int g_font_size;
 extern GLFWwindow* g_window;
+extern void UpdateSimpleTexturePerSceneCB(const float x, const float y, const float alpha);
+
+extern HWND g_hwnd;
 
 void StartGame();
 Particles* GetGlobalParticles();
@@ -89,7 +94,7 @@ void MainMenu::Render(const glm::mat4& uitransform) {
     float w;
     MeasureTextWidth(line, &w);
     glm::vec3 c = glm::vec3(1.0f, 1.0f, 0.5f);
-    RenderText(program, line, WIN_W/2 - w/2, y, 1.0f, c, uitransform);
+    RenderText(ClimbOpenGL, line, WIN_W/2 - w/2, y, 1.0f, c, uitransform);
     y += textsize;
   }
 
@@ -105,7 +110,7 @@ void MainMenu::Render(const glm::mat4& uitransform) {
     glm::vec3 c;
     if (i == curr_selection.back()) c = glm::vec3(1.0f, 0.2f, 0.2f);
     else c = glm::vec3(1.0f, 1.0f, 0.1f);
-    RenderText(program, line, WIN_W/2 - w/2, y, 1.0f, c, uitransform);
+    RenderText(ClimbOpenGL, line, WIN_W/2 - w/2, y, 1.0f, c, uitransform);
     y += textsize;
   }
 }
@@ -121,7 +126,7 @@ void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
     float w;
     MeasureTextWidth(line, &w);
     glm::vec3 c = glm::vec3(1.0f, 1.0f, 0.5f);
-    RenderText_D3D11(line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
+    RenderText(ClimbD3D11, line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
     y += textsize;
   }
 
@@ -137,9 +142,13 @@ void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
     glm::vec3 c;
     if (i == curr_selection.back()) c = glm::vec3(1.0f, 0.2f, 0.2f);
     else c = glm::vec3(1.0f, 1.0f, 0.1f);
-    RenderText_D3D11(line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
+    RenderText(ClimbD3D11, line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
     y += textsize;
   }
+
+  // Background
+  UpdateSimpleTexturePerSceneCB(0, 0, fade_alpha);
+  fsquad->Render_D3D11();
 }
 
 void MainMenu::OnUpDownPressed(int delta) {
@@ -170,7 +179,7 @@ void MainMenu::EnterMenu(int idx) {
     menutitle.push_back(title0);
     menutitle.push_back(title1);
     menutitle.push_back(L"Main Menu");
-
+    FadeInHelpScreen();
     menuitems.push_back(MenuItem(L"No help at this moment"));
   } else if (idx == 2) {
     menutitle.push_back(title0);
@@ -191,13 +200,25 @@ void MainMenu::OnEnter() {
     case 0: {
       switch (curr_selection[curr_menu.size()-1]) {
       case 0:
-        StartGame();
-        break; // Start Game
+        StartGame(); // Start Game
+        break;
       case 1: EnterMenu(2); break; // Options
-      case 2: EnterMenu(1); break;
-      case 3: glfwSetWindowShouldClose(g_window, true); break;
+      case 2: EnterMenu(1); break; // Help
+      case 3: {
+        // close glfw window
+        glfwSetWindowShouldClose(g_window, true); 
+        glfwDestroyWindow(g_window);
+        // close D3D window
+        DestroyWindow(g_hwnd);
+        break; // Exit
+      }
       default: break;
       }
+      break;
+    }
+    case 1: {
+      FadeOutHelpScreen();
+      ExitMenu();
       break;
     }
     case 2: {
@@ -270,7 +291,6 @@ void MainMenu::OnLeftRightPressed(int delta) {
   MainMenu::MenuItem* itm = &(menuitems[curr_selection[curr_menu.size()-1]]);
   if (itm->type == MenuItemType::Toggle) {
     const int L = int(itm->choices.size());
-
     int next_ch = (itm->choice_idx + delta + L) % L;
     switch (itm->valuetype) {
       case MenuItem::ValueTypeBool:
@@ -280,24 +300,44 @@ void MainMenu::OnLeftRightPressed(int delta) {
         *(itm->ptr.pInt)  = itm->values[next_ch].asInt;
         break;
     }
-
     itm->choice_idx = next_ch;
   }
+}
+
+void MainMenu::FadeInHelpScreen() {
+  fade_alpha0 = 0; fade_alpha1 = 1;
+  fade_millis0 = GetElapsedMillis(); fade_millis1 = fade_millis0 + FADE_DURATION;
+}
+
+void MainMenu::FadeOutHelpScreen() {
+  fade_alpha0 = 1; fade_alpha1 = 0;
+  fade_millis0 = GetElapsedMillis(); fade_millis1 = fade_millis0 + FADE_DURATION;
+}
+
+int MainMenu::FADE_DURATION = 1000; // Milliseconds
+
+void MainMenu::Update(float delta_secs) {
+  fade_millis = GetElapsedMillis();
+  if (fade_millis1 - fade_millis0 <= 0) {
+    fade_alpha = fade_alpha0;
+    return;
+  }
+  float c = (fade_millis - fade_millis0) * 1.0f / (fade_millis1 - fade_millis0);
+  if (c < 0) c = 0; else if (c > 1) c = 1;
+  fade_alpha = fade_alpha0 * (1.0f - c) + fade_alpha1 * c;
 }
 
 void TextMessage::Render() {
   const int y = WIN_H / 2, textsize = g_font_size;
   const float y0 = WIN_H/2 - g_font_size * 0.5f;
-
   for (int i=0; i<int(messages.size()); i++) {
     float w;
     std::wstring msg = messages[i];
     MeasureTextWidth(msg, &w);
     glm::vec3 c = glm::vec3(1.0f, 1.0f, 0.5f);
     glm::mat4 ident(1);
-    RenderText(program, msg, WIN_W/2 - w/2, y0 + g_font_size * i, 1.0f, c, ident);
+    RenderText(ClimbOpenGL, msg, WIN_W/2 - w/2, y0 + g_font_size * i, 1.0f, c, ident);
   }
-
 }
 
 unsigned TextMessage::program = 0;

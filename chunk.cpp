@@ -48,10 +48,10 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
   // axis=1  x=w y=u z=v
   // axis=2  x=v y=w z=u
 
-  // x_idxs ... x ... {u,v,w}
+  // x_idxs 表示 x 应该是 {u,v,w} 中的第几个；其它的依次类推
   const int x_idxs[] = { 0,2,1 }, y_idxs[] = { 1,0,2 }, z_idxs[] = { 2,1,0 };
 
-  // u_idxs ... u ... {x,y,z}
+  // u_idxs 表示 u 应该是 {x,y,z} 中的第几个，其它的依次类推
   const int u_axes[] = { 0,1,2 }, v_axes[] = { 1,2,0 }, w_axes[] = { 2,0,1 };
 
   const glm::vec3 units[] = { glm::vec3(1,0,0), glm::vec3(0,1,0), glm::vec3(0,0,1) };
@@ -104,7 +104,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
             const int voxel = scratch[u*size+v];
             if (voxel != 0) {                          //     V
               int du = 1, dv = 1;                     // P1 ----------- P0
-              //       determine value of du and dv   // |  +W ������Ļ   |
+              //       determine value of du and dv   // |  +W 穿出屏幕   |
               glm::vec3 pos_w = origin + l*w0,        // P2 ----------- P3 ---> U
                         p2 = pos_w - l*u0 - l*v0, p3 = p2 + float(du)*l0*u0, p0 = p3 + float(dv)*l0*v0,
                         p1 = p2 + float(dv)*l0*v0;
@@ -116,7 +116,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
               int ao_2 = GetOcclusionFactor(p2.x, p2.y, p2.z, ao_dir, neighbors);
               int ao_0 = 0, ao_1 = 0, ao_3 = 0;
 
-              // ���� dv
+              // 延伸 dv
               // Try possible dv values & make dv as large as possible
               bool may_extend_u = true;
               for (int ddv=1; ddv+v-1<size; ddv++) {
@@ -135,12 +135,12 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
 
                 ao_0 = ao_00; ao_1 = ao_11; ao_3 = ao_33;
                 p0   = p00;   p1   = p11;   p3   = p33;
-                dv = ddv; // ��������� dv ����ֵ̽�Ϳ��Ա������ˡ�
+                dv = ddv; // 到这里这个 dv 的试探值就可以被采用了。
                 if (!may_extend_u) break;
               }
 
-              // ���� du
-              if (may_extend_u) { // ���Ҫ���ϵģ���Ȼ���Ϊ2�����������bug
+              // 延伸 du
+              if (may_extend_u) { // 这个要加上的，不然间隔为2的竖条会造成bug
                 for (int ddu = 2; ddu+u-1<size; ddu++) {
                   bool line_ok = true, checked = false;
                   glm::vec3 p11, p33, p00;
@@ -162,7 +162,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
                   if (line_ok && checked) {
                     ao_0 = ao_1 = ao_3 = ao_2;
                     p0   = p00;   p1   = p11;   p3   = p33;
-                    du   = ddu; // �������� dv ����ֵ̽�Ϳ��Ա������ˡ�
+                    du   = ddu; // 到这里、这个 dv 的试探值就可以被采用了。
                   } else break;
                 }
               }
@@ -172,8 +172,8 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
                 p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, p0.x, p0.y, p0.z
               };
               int idxes[] = {
-                0,1,2, 3,4,5, 6,7,8, 9,10,11, 12,13,14, 15,16,17, // ��
-                0,1,2, 6,7,8, 3,4,5, 9,10,11, 15,16,17, 12,13,14  // ��
+                0,1,2, 3,4,5, 6,7,8, 9,10,11, 12,13,14, 15,16,17, // 正
+                0,1,2, 6,7,8, 3,4,5, 9,10,11, 15,16,17, 12,13,14  // 反
               };
               for (unsigned i=0; i<18; i++) {
                 tmp_vert[idx_v++] = verts_xyz[idxes[i + d*18]];
@@ -275,21 +275,6 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
   }
 
   delete[] tmp_vert; delete[] tmp_norm; delete[] tmp_data; delete[] tmp_ao;
-
-
-//  printf("[Chunk::BuildBuffers] tri_count=%d\n", tri_count);
-//  for (int i=0; i<tri_count*3; i++) {
-//    printf("[Vert %d] (%g,%g,%g) %d %d %d\n",
-//      i,
-//      tmp_packed[i*6],
-//      tmp_packed[i*6+1],
-//      tmp_packed[i*6+2],
-//      int(tmp_packed[i*6+3]),
-//      int(tmp_packed[i*6+4]),
-//      int(tmp_packed[i*6+5])
-//    );
-//  }
-
   delete[] tmp_packed;
   is_dirty = false;
 }

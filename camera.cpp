@@ -75,3 +75,12 @@ void Camera::RotateAlongPoint(glm::vec3 p, glm::vec3 local_axis, float rad) {
   do_RotateInLocalCoords(glm::vec3(local_axis), rad);
   pos = p - (glm::normalize(lookdir) * dist);
 }
+
+DirectX::XMVECTOR Camera::GetPos_D3D11() {
+  DirectX::XMVECTOR ret = { };
+  ret.m128_f32[0] = pos.x;
+  ret.m128_f32[1] = pos.y;
+  ret.m128_f32[2] = pos.z * -1;
+  ret.m128_f32[3] = 1.0f;
+  return ret;
+}

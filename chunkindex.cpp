@@ -50,7 +50,16 @@ extern void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
 void ChunkGrid::Render_D3D11(
   const glm::vec3& pos,  const glm::vec3& scale,
   const glm::mat3& orientation,  const glm::vec3& anchor) {
-  glm::mat4 M(orientation);
+
+  glm::vec3 pos11 = pos;
+  pos11.z *= -1;
+
+  glm::mat3 orientation1 = orientation;
+  //orientation1[2][0] *= -1;
+  //orientation1[2][1] *= -1;
+  //orientation1[2][2] *= -1;
+
+  glm::mat4 M(orientation1);
 
   /*
   M = glm::scale(M, scale);
@@ -61,14 +70,15 @@ void ChunkGrid::Render_D3D11(
   */
 
   M = glm::scale(M, scale);
-  glm::vec3 t = glm::inverse(orientation) * pos / scale; //t.z = -t.z; // 这里不用反
+  glm::vec3 t = glm::inverse(orientation1) * pos11 / scale;
+
   M = glm::translate(M, t);
   glm::vec3 anchor1 = anchor; anchor1.z = -anchor1.z;
   M = glm::translate(M, -anchor1);
 
   for (int xx = 0; xx < xdim; xx++) {
     for (int yy = 0; yy < ydim; yy++) {
-      for (int zz = 0; zz < ydim; zz++) {
+      for (int zz = 0; zz < zdim; zz++) {
         glm::vec3 tr(float(xx * Chunk::size),
           float(yy * Chunk::size),
           float(zz * Chunk::size) * -1);

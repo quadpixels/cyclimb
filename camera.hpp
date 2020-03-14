@@ -13,6 +13,7 @@ public:
   Camera();
   glm::mat4 GetViewMatrix();
   DirectX::XMMATRIX GetViewMatrix_D3D11();
+  DirectX::XMVECTOR GetPos_D3D11();
   void Update(float);
   glm::vec3 pos, lookdir, up, vel; // in world coordinates
 

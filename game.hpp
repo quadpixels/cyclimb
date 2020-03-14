@@ -17,6 +17,8 @@
 #undef max
 #undef min
 
+extern ID3D11ShaderResourceView* g_helpinfo_srv11;
+
 //
 class Particles {
 public:
@@ -83,6 +85,9 @@ public:
   std::vector<std::wstring> menutitle;
   std::vector<MenuItem> menuitems;
   MainMenu() {
+    fade_alpha0 = fade_alpha1 = 0;
+    fade_millis0 = fade_millis1 = 0;
+    fsquad = new FullScreenQuad(g_helpinfo_srv11);
     EnterMenu(0);
   }
 
@@ -91,12 +96,18 @@ public:
   void OnUpDownPressed(int delta); // -1: up;  +1: down
   void OnLeftRightPressed(int delta); // -1: left; +1: right
   void OnEnter();
-
   void EnterMenu(const int idx);
   void ExitMenu();
-
-
+  bool IsInHelp() { return is_in_help; }
+  FullScreenQuad* fsquad;
   std::vector<int> curr_selection, curr_menu;
+  bool is_in_help;
+  unsigned fade_millis0, fade_millis1, fade_millis;
+  float fade_alpha0, fade_alpha1, fade_alpha;
+  static int FADE_DURATION;
+  void FadeInHelpScreen();
+  void FadeOutHelpScreen();
+  void Update(float delta_secs);
 
   static void InitStatic(unsigned p) { program = p; }
   static unsigned program;

@@ -9,12 +9,32 @@
 #include <GLFW/glfw3.h>
 #include <vector>
 #include <string>
+#include "shader.hpp"
 
+#include <d3d11.h>
+#undef min
+#undef max
 #include <DirectXMath.h>
 
 enum GraphicsAPI {
   ClimbOpenGL,
   ClimbD3D11,
+};
+
+struct DefaultPalettePerSceneCB {
+  DirectX::XMVECTOR dir_light;
+  DirectX::XMMATRIX lightPV;
+  DirectX::XMVECTOR cam_pos;
+  //int spotlightCount;
+  //DirectX::XMMATRIX spotlightPV[16]; // Projection-View matrix
+  //DirectX::XMVECTOR spotlightColors[16];
+};
+
+struct VolumetricLightCB {
+  int spotlightCount;
+  DirectX::XMVECTOR cam_pos;
+  DirectX::XMMATRIX spotlightPV[16]; // Projection-View matrix
+  DirectX::XMVECTOR spotlightColors[16];
 };
 
 void MyCheckGLError(const char* tag);
@@ -28,16 +48,32 @@ public:
   void RenderWithBlend(GLuint texture);
   static void Init(unsigned, unsigned);
   static unsigned program, program_depth;
+
+  FullScreenQuad(ID3D11ShaderResourceView* _srv);
+  void Render_D3D11();
+
+  static void Init_D3D11();
+
+  static ID3D11Buffer* d3d11_vertex_buffer;
+  static ID3D11InputLayout* d3d11_input_layout;
+  static float quad_vertices_and_attrib[4 * 6];
+
 private:
   static GLuint vao, vbo;
   static float  vertices[3*6];
   void do_render(GLuint tex);
+
+  ID3D11ShaderResourceView* texture_srv;
 };
 
+// Added hack: ratio=1
 class DirectionalLight {
 public:
   glm::mat4 P, V;
   glm::vec3 dir, pos;
+  float fov;
+
+  bool is_spotlight_hack;
 
   DirectX::XMMATRIX GetP_D3D11_DXMath(); // The first flavor
   DirectX::XMMATRIX GetP_D3D11_GLM();    // The second flavor
@@ -46,6 +82,7 @@ public:
   DirectX::XMMATRIX GetPV_D3D11();
 
   DirectionalLight(const glm::vec3& _dir, const glm::vec3& _pos);
+  DirectionalLight(const glm::vec3& _dir, const glm::vec3& _pos, const glm::vec3& up, const float fov);
 };
 
 unsigned GetElapsedMillis();

@@ -14,13 +14,16 @@ extern Camera* GetCurrentSceneCamera();
 
 extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext *g_context11;
-extern ID3D11VertexShader* g_vs_default_palette;
-extern ID3D11PixelShader* g_ps_default_palette;
+extern ID3D11VertexShader* g_vs_default_palette, *g_vs_simpletexture;
+extern ID3D11PixelShader* g_ps_default_palette, *g_ps_simpletexture;
 extern ID3DBlob *g_vs_default_palette_blob;
 extern ID3DBlob *g_ps_default_palette_blob;
 extern DirectX::XMMATRIX g_projection_d3d11;
 extern ID3D11Buffer* g_perobject_cb_default_palette;
 extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
+extern ID3DBlob* g_vs_textrender_blob, * g_ps_textrender_blob;
+extern ID3D11BlendState* g_blendstate11;
+extern ID3D11Buffer* g_simpletexture_cb;
 
 float Triangle::base_vertices_and_attrib_ccw[] = {
   0.0f, 0.0f, 0.0f, 0.0f, 128.0f, 0.0f,
@@ -315,3 +318,4 @@ void ColorCube::Render_D3D11() {
   g_context11->VSSetConstantBuffers(0, 1, &g_perobject_cb_default_palette);
   g_context11->Draw(36, 0);
 }
+

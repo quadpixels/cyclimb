@@ -122,7 +122,11 @@ std::vector<Sprite*>* ClimbScene::GetSpriteListForRender() {
   return &sprite_render_list;
 }
 
-ClimbScene::ClimbScene() { }
+ClimbScene::ClimbScene() {
+  lights[0] = new DirectionalLight(glm::vec3(1, -1, 0), glm::vec3(-100, 200, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
+  lights[1] = new DirectionalLight(glm::vec3(-1, -1, 0), glm::vec3(100, 200, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
+  lights[2] = new DirectionalLight(glm::vec3(0, -1, 0), glm::vec3(0, 200, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
+}
 
 void ClimbScene::Init() {
   level_finish_state.parent = this;
@@ -171,6 +175,7 @@ void ClimbScene::Update(float secs) {
   if (g_main_menu_visible == false) {
     countdown_millis -= secs * 1000.0f;
     if (countdown_millis < 0) countdown_millis = 0;
+    light_phase += secs;
   }
   
   switch (game_state) {
@@ -362,23 +367,16 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
     //std::wstring text = std::wstring(L"Get ready for level ") + std::to_wstring(curr_level);
     MeasureTextWidth(text, &width);
 
-    if (api == ClimbOpenGL) {
-      RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2, 0.8f,
-        glm::vec3(1.0f, 1.0f, 0.2f),
-        uitransform);
-    }
-    else {
-      RenderText_D3D11(text, WIN_W / 2 - width / 2, WIN_H / 2, 0.8f,
-        glm::vec3(1.0f, 1.0f, 0.2f),
-        uitransform);
-    }
+    RenderText(api, text, WIN_W / 2 - width / 2, WIN_H / 2, 0.8f,
+      glm::vec3(1.0f, 1.0f, 0.2f),
+      uitransform);
   }
   else if (game_state == ClimbGameStateLevelEndWaitKey) {
     //std::wstring text = std::wstring(L"Level ") + std::to_wstring(curr_level) + std::wstring(L"Completed!");
     std::wstring text = std::wstring(L"关卡 ") + std::to_wstring(curr_level) + std::wstring(L" 完成！");
     MeasureTextWidth(text, &width);
 
-    RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2 + 32, 0.8f,
+    RenderText(api, text, WIN_W / 2 - width / 2, WIN_H / 2 + 32, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
     //swprintf(buf, 20, L"过关！");
@@ -386,7 +384,7 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
     text = std::wstring(buf);
     MeasureTextWidth(text, &width);
 
-    RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2 + 64, 0.8f,
+    RenderText(api, text, WIN_W / 2 - width / 2, WIN_H / 2 + 64, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
 
@@ -394,7 +392,7 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
     text = std::wstring(buf);
     MeasureTextWidth(text, &width);
 
-    RenderText(GetShaderProgram(6), text, WIN_W / 2 - width / 2, WIN_H / 2 + 96, 0.8f,
+    RenderText(api, text, WIN_W / 2 - width / 2, WIN_H / 2 + 96, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
   }
@@ -403,7 +401,7 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
   swprintf(buf, 20, L"硬币 %d/%d %.1fs", num_coins, num_coins_total, curr_level_time);
   std::wstring text(buf);
   const float scale = 0.8f;
-  RenderText(GetShaderProgram(6), text, 32, 32, scale, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
+  RenderText(api, text, 32, 32, scale, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
 
   bool SHOW_KEYSTROKES = false;
   if (SHOW_KEYSTROKES) {
@@ -411,7 +409,7 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
     const std::wstring keys[] = { L"↖", L"↗", L"↑", L"←", L"→", L"↙", L"↓", L"↘" };
     for (int i = 0; i < 9; i++) {
       if (keyflags.test(i)) text += keys[i];
-      RenderText(GetShaderProgram(6), text, 32, 64, 1.0f, glm::vec3(0.2f, 1.0f, 1.0f), uitransform);
+      RenderText(api, text, 32, 64, 1.0f, glm::vec3(0.2f, 1.0f, 1.0f), uitransform);
     }
 
   }
@@ -421,6 +419,11 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
 }
 
 void ClimbScene::RenderHUD() {
+  do_RenderHUD(ClimbOpenGL);
+}
+
+void ClimbScene::RenderHUD_D3D11() {
+  do_RenderHUD(ClimbD3D11);
 }
 
 void ClimbScene::OnKeyPressed(char k) {  
@@ -821,4 +824,30 @@ void ClimbScene::DamagablePlatform::DoDamage(const glm::vec3& world_x) {
 void ClimbScene::HideRope() {
   rope_state = Hidden;
   probe_end_millis = 0;
+}
+
+// 2019-12-18
+// 2020-01-01 ?????
+extern ID3D11DeviceContext* g_context11;
+extern ID3D11InputLayout* g_inputlayout_for_light11;
+extern ID3D11Buffer* g_fsquad_for_light11, *g_perscene_cb_light11;
+extern ID3D11BlendState* g_blendstate11;
+extern ID3D11PixelShader* g_ps_light;
+extern ID3D11VertexShader* g_vs_light;
+extern ID3D11ShaderResourceView* g_gbuffer_srv11;
+extern ID3D11SamplerState *g_sampler11;
+
+void GameScene::RenderLights() {
+  g_context11->IASetInputLayout(g_inputlayout_for_light11);
+  g_context11->VSSetShader(g_vs_light, nullptr, 0);
+  g_context11->PSSetShader(g_ps_light, nullptr, 0);
+  g_context11->PSSetSamplers(0, 1, &g_sampler11);
+  g_context11->PSSetShaderResources(0, 1, &g_gbuffer_srv11);
+  g_context11->PSSetConstantBuffers(0, 1, &g_perscene_cb_light11);
+  float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  g_context11->OMSetBlendState(g_blendstate11, blend_factor, 0xFFFFFFFF);
+  unsigned stride = sizeof(float) * 4;
+  unsigned zero = 0;
+  g_context11->IASetVertexBuffers(0, 1, &g_fsquad_for_light11, &stride, &zero);
+  g_context11->Draw(6, 0);
 }

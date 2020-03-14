@@ -14,6 +14,7 @@ extern ID3D11VertexShader* g_vs_textrender;
 extern ID3D11PixelShader* g_ps_textrender;
 extern ID3DBlob *g_vs_textrender_blob;
 extern void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
+extern GLuint g_programs[];
 
 ID3D11InputLayout *input_layout11;
 
@@ -27,10 +28,10 @@ struct TextCbPerScene {
   DirectX::XMVECTOR textcolor;
 };
 
-ID3D11Buffer* vertex_buffer11;
-ID3D11Buffer* textcb_perscene11;
+static ID3D11Buffer* vertex_buffer11;
+static ID3D11Buffer* textcb_perscene11;
 
-ID3D11BlendState* blendstate11;
+extern ID3D11BlendState* g_blendstate11;
 
 void do_InitCommon() {
   // Face
@@ -99,20 +100,6 @@ void InitTextRender_D3D11() {
   };
   assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc, 2, g_vs_textrender_blob->GetBufferPointer(),
     g_vs_textrender_blob->GetBufferSize(), &input_layout11)));
-
-  // Blend State
-  D3D11_BLEND_DESC bd = { };
-  bd.AlphaToCoverageEnable = false;
-  bd.IndependentBlendEnable = false;
-  bd.RenderTarget[0].BlendEnable = true;
-  bd.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-  bd.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
-  bd.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-  bd.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-  bd.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-  bd.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-  bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-  assert(SUCCEEDED(g_device11->CreateBlendState(&bd, &blendstate11)));
 
   do_InitCommon();
 }
@@ -195,7 +182,7 @@ Character_D3D11 GetCharacter_D3D11(wchar_t ch) {
       tex, srv,
       glm::ivec2(W, H),
       glm::ivec2(g_face->glyph->bitmap_left, g_face->glyph->bitmap_top),
-      g_face->glyph->advance.x
+      (GLuint)(g_face->glyph->advance.x)
     };
     g_characters_d3d11[ch] = character_d3d11;
   }
@@ -214,8 +201,7 @@ void MeasureTextWidth(std::wstring text, float *w) {
 }
 
 // https://learnopengl.com/code_viewer.php?code=in-practice/text_rendering
-void RenderText(GLuint program, std::wstring text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color,
-    glm::mat4 transform) {
+void do_RenderText(GLuint program, std::wstring text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color, glm::mat4 transform) {
 	glUseProgram(program);
 	glUniform3f(glGetUniformLocation(program, "textColor"), color.x, color.y, color.z);
 	glm::vec2 screensize(WIN_W, WIN_H);
@@ -261,7 +247,7 @@ void RenderText(GLuint program, std::wstring text, GLfloat x, GLfloat y, GLfloat
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void RenderText_D3D11(std::wstring text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform) {
+void do_RenderText_D3D11(std::wstring text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform) {
   g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   g_context11->IASetInputLayout(input_layout11);
   g_context11->VSSetShader(g_vs_textrender, nullptr, 0);
@@ -270,7 +256,7 @@ void RenderText_D3D11(std::wstring text, float x, float y, float scale, glm::vec
   unsigned zero = 0;
   g_context11->IASetVertexBuffers(0, 1, &vertex_buffer11, &stride, &zero);
   float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
-  g_context11->OMSetBlendState(blendstate11, blend_factor, 0xFFFFFFFF);
+  g_context11->OMSetBlendState(g_blendstate11, blend_factor, 0xFFFFFFFF);
   g_context11->VSSetConstantBuffers(0, 1, &textcb_perscene11);
   g_context11->PSSetConstantBuffers(0, 1, &textcb_perscene11);
 
@@ -315,5 +301,12 @@ void RenderText_D3D11(std::wstring text, float x, float y, float scale, glm::vec
     }
 
     x += (ch.advance >> 6) * scale;
+  }
+}
+
+void RenderText(GraphicsAPI api, std::wstring text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color, glm::mat4 transform) {
+  switch (api) {
+    case ClimbD3D11: do_RenderText_D3D11(text, x, y, scale, color, transform); break;
+    case ClimbOpenGL: do_RenderText(g_programs[6], text, x, y, scale, color, transform); break;
   }
 }
