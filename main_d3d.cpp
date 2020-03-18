@@ -437,7 +437,7 @@ void InitAssets11() {
   // Help Info
   CoInitialize(nullptr);
   hr = DirectX::CreateWICTextureFromFile(g_device11,
-    L"climb\\help.png",
+    L"climb\\help.jpg",
     &g_helpinfo11,
     &g_helpinfo_srv11);
   assert(SUCCEEDED(hr));
@@ -800,8 +800,7 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
 
   if (wParam == 27) {
     if (g_main_menu_visible) {
-      g_mainmenu->ExitMenu();
-      g_main_menu_visible = false;
+      g_mainmenu->OnEscPressed();
     }
     else {
       g_mainmenu->EnterMenu(0);

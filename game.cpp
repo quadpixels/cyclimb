@@ -180,7 +180,7 @@ void MainMenu::EnterMenu(int idx) {
     menutitle.push_back(title1);
     menutitle.push_back(L"Main Menu");
     FadeInHelpScreen();
-    menuitems.push_back(MenuItem(L"No help at this moment"));
+    menuitems.push_back(MenuItem(L" "));
   } else if (idx == 2) {
     menutitle.push_back(title0);
     menutitle.push_back(title1);
@@ -307,11 +307,13 @@ void MainMenu::OnLeftRightPressed(int delta) {
 void MainMenu::FadeInHelpScreen() {
   fade_alpha0 = 0; fade_alpha1 = 1;
   fade_millis0 = GetElapsedMillis(); fade_millis1 = fade_millis0 + FADE_DURATION;
+  is_in_help = true;
 }
 
 void MainMenu::FadeOutHelpScreen() {
   fade_alpha0 = 1; fade_alpha1 = 0;
   fade_millis0 = GetElapsedMillis(); fade_millis1 = fade_millis0 + FADE_DURATION;
+  is_in_help = false;
 }
 
 int MainMenu::FADE_DURATION = 1000; // Milliseconds
@@ -325,6 +327,17 @@ void MainMenu::Update(float delta_secs) {
   float c = (fade_millis - fade_millis0) * 1.0f / (fade_millis1 - fade_millis0);
   if (c < 0) c = 0; else if (c > 1) c = 1;
   fade_alpha = fade_alpha0 * (1.0f - c) + fade_alpha1 * c;
+}
+
+void MainMenu::OnEscPressed() {
+  if (IsInHelp()) {
+    FadeOutHelpScreen();
+    ExitMenu();
+  }
+  else {
+    ExitMenu();
+    g_main_menu_visible = false;
+  }
 }
 
 void TextMessage::Render() {
