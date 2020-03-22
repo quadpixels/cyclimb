@@ -8,6 +8,7 @@
 #include "chunkindex.hpp"
 #include "sprite.hpp"
 #include "util.hpp"
+#include "camera.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -80,16 +81,11 @@ public:
     }
   };
 
+  MainMenu();
   MenuItem GetMenuItem(const char*);
 
   std::vector<std::wstring> menutitle;
   std::vector<MenuItem> menuitems;
-  MainMenu() {
-    fade_alpha0 = fade_alpha1 = 0;
-    fade_millis0 = fade_millis1 = 0;
-    fsquad = new FullScreenQuad(g_helpinfo_srv11);
-    EnterMenu(0);
-  }
 
   void Render(const glm::mat4& uitransform);
   void Render_D3D11(const glm::mat4& uitransform);
@@ -100,7 +96,14 @@ public:
   void EnterMenu(const int idx);
   void ExitMenu();
   bool IsInHelp() { return is_in_help; }
+
+  Camera* cam_helpinfo;
   FullScreenQuad* fsquad;
+
+  // Dynamic Sprites in Help Screen
+  std::vector<Sprite*> sprites_helpinfo;
+  std::vector<D3D11_VIEWPORT> viewports11_helpinfo;
+
   std::vector<int> curr_selection, curr_menu;
   bool is_in_help;
   unsigned fade_millis0, fade_millis1, fade_millis;

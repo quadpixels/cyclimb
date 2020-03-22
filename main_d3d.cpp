@@ -130,6 +130,7 @@ ID3DBlob *g_vs_simple_depth_blob;
 ID3D11VertexShader *g_vs_simple_depth;
 
 DirectX::XMMATRIX g_projection_d3d11;
+DirectX::XMMATRIX g_projection_helpinfo_d3d11;
 
 HWND g_hwnd;
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
@@ -222,6 +223,7 @@ void InitDevice11() {
 
   //g_projection_d3d11 = glm::perspective(60.0f*3.14159f / 180.0f, WIN_W*1.0f / WIN_H, 0.1f, 499.0f);
   g_projection_d3d11 = DirectX::XMMatrixPerspectiveFovLH(60.0f*3.14159f / 180.0f, WIN_W*1.0f / WIN_H, 0.01f, 499.0f);
+  g_projection_helpinfo_d3d11 = DirectX::XMMatrixPerspectiveFovLH(60.0f * 3.14159f / 180.0f, 1.0f, 0.001f, 100.0f);
 
   // Per-Object CB for base pass
   // Per-Scene CB for base pass
@@ -674,7 +676,6 @@ void MyInit_D3D11() {
   // Font stuff
   InitTextRender_D3D11();
 
-  g_mainmenu = new MainMenu();
   g_textmessage = new TextMessage();
 
   // Climb Scene Stuff
@@ -697,6 +698,9 @@ void MyInit_D3D11() {
 
   FullScreenQuad* fsq = new FullScreenQuad(g_helpinfo_srv11);
   g_testscene->fsquad = fsq;
+
+  // Depends on ClimbScene's static resources
+  g_mainmenu = new MainMenu();
 }
 
 void Render() {

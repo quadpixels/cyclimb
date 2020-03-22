@@ -33,6 +33,8 @@ public:
 
   void RotateAlongPoint(glm::vec3 p, glm::vec3 local_axis, float rad);
 
+  void InitForHelpInfo();
+
 private:
   void do_MoveInLocalCoords(glm::vec3 local_dir, float dist);
   void do_RotateInLocalCoords(glm::vec3 local_axis, float rad);

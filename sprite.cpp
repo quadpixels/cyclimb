@@ -18,6 +18,7 @@ void ChunkSprite::Init() {
   scale = glm::vec3(1,1,1);
   // Default Anchor: centered
   anchor = chunk->Size() * 0.5f;
+  pos = glm::vec3(0, 0, 0);
 }
 
 void Sprite::RotateAroundGlobalAxis(const glm::vec3& axis, const float deg) {

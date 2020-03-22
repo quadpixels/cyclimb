@@ -6,6 +6,12 @@ Camera::Camera() {
   up  = glm::normalize(glm::vec3(0,10,-50));
 }
 
+void Camera::InitForHelpInfo() {
+  pos = glm::vec3(0.0f, 0.0f, 20.0f);
+  lookdir = glm::normalize(-pos);
+  up = glm::vec3(0, 1, 0);
+}
+
 glm::mat4 Camera::GetViewMatrix() {
   return glm::lookAt(pos, pos + lookdir, up);
 }

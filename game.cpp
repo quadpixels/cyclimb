@@ -7,7 +7,9 @@
 #include "textrender.hpp"
 #include <math.h>
 #include "sprite.hpp"
+#include "scene.hpp"
 #include <stddef.h>
+#include <DirectXMath.h>
 
 extern bool g_aa, g_shadows;
 extern int WIN_W, WIN_H;
@@ -20,8 +22,22 @@ extern std::vector<Sprite*> g_projectiles;
 extern int g_font_size;
 extern GLFWwindow* g_window;
 extern void UpdateSimpleTexturePerSceneCB(const float x, const float y, const float alpha);
-
+extern ID3D11DeviceContext* g_context11;
 extern HWND g_hwnd;
+extern ID3D11RenderTargetView *g_backbuffer_rtv11, *g_gbuffer_rtv11;
+extern ID3D11DepthStencilView *g_dsv11;
+extern D3D11_RECT g_scissorrect11;
+extern ID3D11InputLayout* g_inputlayout_voxel11;
+extern ID3D11VertexShader* g_vs_default_palette;
+extern ID3D11PixelShader* g_ps_default_palette;
+extern ID3D11SamplerState* g_sampler11;
+extern ID3D11Buffer* g_perobject_cb_default_palette;
+extern ID3D11Buffer* g_perscene_cb_default_palette;
+extern DirectionalLight* g_dir_light;
+extern DirectX::XMMATRIX g_projection_helpinfo_d3d11;
+
+extern void UpdatePerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
+extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
 
 void StartGame();
 Particles* GetGlobalParticles();
@@ -80,6 +96,56 @@ void Particles::Update(float secs) {
 }
 
 unsigned MainMenu::program = 0;
+
+MainMenu::MainMenu() {
+  is_in_help = false;
+  fade_alpha0 = fade_alpha1 = 0;
+  fade_millis0 = fade_millis1 = 0;
+  fsquad = new FullScreenQuad(g_helpinfo_srv11);
+
+  sprites_helpinfo.push_back(new ChunkSprite(ClimbScene::model_char));
+  sprites_helpinfo.push_back(new ChunkSprite(ClimbScene::model_coin));
+  
+  const glm::vec3 X(1, 0, 0);
+
+  Sprite* p0 = new ChunkSprite(ClimbScene::model_platforms[0]);
+  p0->scale = glm::vec3(0.5, 0.5, 0.5);
+  p0->RotateAroundLocalAxis(X, -15);
+  sprites_helpinfo.push_back(p0);
+
+  Sprite* p1 = new ChunkSprite(ClimbScene::model_platforms[1]);
+  p1->scale = glm::vec3(0.5, 0.5, 0.5);
+  p1->RotateAroundLocalAxis(X, -15);
+  sprites_helpinfo.push_back(p1);
+
+  Sprite* p2 = new ChunkSprite(ClimbScene::model_exit);
+  p2->scale = glm::vec3(0.5, 0.5, 0.5);
+  p2->RotateAroundLocalAxis(X, -15);
+  sprites_helpinfo.push_back(p2);
+
+  cam_helpinfo = new Camera();
+  cam_helpinfo->InitForHelpInfo();
+  
+  const int W0 = 1280, H0 = 720; // Normalize to this
+  int viewports[][4] = {
+    { 264, 0, 192, 192 },
+    { 1050, 454, 256, 256 },
+    { 915, -56, 320, 320 },
+    { 915, 61, 320, 320 },
+    { 915, 170, 320, 320 },
+  };
+  for (int i = 0; i < sizeof(viewports) / sizeof(viewports[0]); i++) {
+    D3D11_VIEWPORT vp;
+    vp.TopLeftX = int(viewports[i][0] * 1.0f / W0 * WIN_W);
+    vp.TopLeftY = int(viewports[i][1] * 1.0f / H0 * WIN_H);
+    vp.Width = int(viewports[i][2] * 1.0f / W0 * WIN_W);
+    vp.Height = int(viewports[i][3] * 1.0f / H0 * WIN_H);
+    vp.MinDepth = 0;
+    vp.MaxDepth = 1;
+    viewports11_helpinfo.push_back(vp);
+  }
+  EnterMenu(0);
+}
 
 /**
  * Prerequisite: bind the overlay Render Target
@@ -149,6 +215,43 @@ void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
   // Background
   UpdateSimpleTexturePerSceneCB(0, 0, fade_alpha);
   fsquad->Render_D3D11();
+  
+  if (is_in_help) {
+    // Directly render to backbuffer
+    // Normal Pass
+    ID3D11RenderTargetView* rtvs[] = { g_backbuffer_rtv11, g_gbuffer_rtv11 };
+    g_context11->OMSetRenderTargets(2, rtvs, g_dsv11);
+    g_context11->RSSetScissorRects(1, &g_scissorrect11);
+    g_context11->VSSetShader(g_vs_default_palette, nullptr, 0);
+    g_context11->PSSetShader(g_ps_default_palette, nullptr, 0);
+    g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_context11->IASetInputLayout(g_inputlayout_voxel11);
+    g_context11->PSSetSamplers(0, 1, &g_sampler11);
+
+    // The following is vevvy similar 2 Normal Pass
+    DirectX::XMMATRIX V = cam_helpinfo->GetViewMatrix_D3D11(), P = g_projection_helpinfo_d3d11;
+    ID3D11Buffer* cbs[] = { g_perobject_cb_default_palette, g_perscene_cb_default_palette };
+    UpdatePerSceneCB(&(g_dir_light->GetDir_D3D11()), &(g_dir_light->GetPV_D3D11()), &(cam_helpinfo->GetPos_D3D11()));
+    g_context11->VSSetConstantBuffers(0, 2, cbs);
+    g_context11->PSSetConstantBuffers(1, 1, &g_perscene_cb_default_palette);
+
+    // Prepare V and P 
+    bool is_testing_dir_light = false;
+    UpdateGlobalPerObjectCB(nullptr, &V, &P);
+
+    // Perpare dir_light
+    UpdatePerSceneCB(&g_dir_light->GetDir_D3D11(), &(g_dir_light->GetPV_D3D11()), &(cam_helpinfo->GetPos_D3D11()));
+
+    g_context11->ClearDepthStencilView(g_dsv11, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    // Enable DS state b/c drawing text disables DS state
+    g_context11->OMSetDepthStencilState(nullptr, 0);
+
+    // Each sprite has its own viewport
+    for (int i = 0; i<int(sprites_helpinfo.size()); i++) {
+      g_context11->RSSetViewports(1, &(viewports11_helpinfo[i]));
+      sprites_helpinfo[i]->Render_D3D11();
+    }
+  }
 }
 
 void MainMenu::OnUpDownPressed(int delta) {
