@@ -214,7 +214,7 @@ ChunkGrid::ChunkGrid(const char* vox_fn) {
         vox_fn, ver, file_size,
         num_voxels, curr_size[0], curr_size[1], curr_size[2]);
 
-      // Y and Z are inverted
+      // Y and Z are swapped
       Init(curr_size[0], curr_size[2], curr_size[1]);
 
       int* xyzi = new int[num_voxels];

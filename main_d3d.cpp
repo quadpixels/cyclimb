@@ -52,8 +52,8 @@ IDXGISwapChain *g_swapchain11;
 ID3D11RenderTargetView *g_backbuffer_rtv11, *g_shadowmap_rtv11, *g_gbuffer_rtv11;
 ID3D11DepthStencilView *g_dsv11, *g_shadowmap_dsv11;
 ID3D11Texture2D *g_backbuffer, *g_depthbuffer11, *g_shadowmap11, *g_gbuffer11;
-ID3D11Resource* g_helpinfo11;
-ID3D11ShaderResourceView *g_shadowmap_srv11, *g_gbuffer_srv11, *g_helpinfo_srv11;
+
+ID3D11ShaderResourceView *g_shadowmap_srv11, *g_gbuffer_srv11;
 D3D11_VIEWPORT g_viewport11, g_viewport_shadowmap11;
 D3D11_RECT g_scissorrect11, g_scissorrect_shadowmap11;
 ID3D11SamplerState *g_sampler11;
@@ -436,13 +436,7 @@ void InitAssets11() {
   };
   assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc2, 2, g_vs_light_blob->GetBufferPointer(), g_vs_light_blob->GetBufferSize(), &g_inputlayout_for_light11)));
 
-  // Help Info
   CoInitialize(nullptr);
-  hr = DirectX::CreateWICTextureFromFile(g_device11,
-    L"climb\\help.jpg",
-    &g_helpinfo11,
-    &g_helpinfo_srv11);
-  assert(SUCCEEDED(hr));
 }
 
 int main_d3d11(int argc, char** argv) {
@@ -479,13 +473,13 @@ int main_d3d11(int argc, char** argv) {
     hinstance, nullptr);
 
   InitDevice11();
-  InitAssets11();
+  InitAssets11(); // Will call CoInitialize(nullptr) here, needed for loading images
   MyInit_D3D11();
 
   init_done = true;
 
   BOOL x = ShowWindow(g_hwnd, SW_RESTORE);
-  printf("ShowWindow returns %d, g_hwnd=%X\n", x, g_hwnd);
+  printf("ShowWindow returns %d, g_hwnd=%X\n", x, int(g_hwnd));
 
   // Message Loop
   MSG msg = { 0 };
@@ -696,8 +690,10 @@ void MyInit_D3D11() {
 
   FullScreenQuad::Init_D3D11();
 
-  FullScreenQuad* fsq = new FullScreenQuad(g_helpinfo_srv11);
+  FullScreenQuad* fsq = new FullScreenQuad(ClimbScene::helpinfo_srv);
   g_testscene->fsquad = fsq;
+
+  ImageSprite2D::Init_D3D11();
 
   // Depends on ClimbScene's static resources
   g_mainmenu = new MainMenu();
@@ -807,7 +803,7 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
       g_mainmenu->OnEscPressed();
     }
     else {
-      g_mainmenu->EnterMenu(0);
+      g_mainmenu->EnterMenu(0, false);
       g_main_menu_visible = true;
     }
   }

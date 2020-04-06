@@ -536,7 +536,7 @@ void keydown(unsigned char key, int x, int y) {
         g_mainmenu->ExitMenu();
         g_main_menu_visible = false;
       } else {
-        g_mainmenu->EnterMenu(0);
+        g_mainmenu->EnterMenu(0, false);
         g_main_menu_visible = true;
       }
       break;

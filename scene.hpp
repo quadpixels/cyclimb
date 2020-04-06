@@ -150,6 +150,10 @@ public:
   
   static void InitStatic();
   
+  // 资源
+  static ID3D11Resource* helpinfo_res, *keys_res;
+  static ID3D11ShaderResourceView* helpinfo_srv, *keys_srv;
+
   static const float SPRING_K; // 弹力系数
   static const float L0      ; // 绳子的初始长度
   static const float GRAVITY;  // 重力加速度
@@ -183,7 +187,7 @@ public:
   RopeState rope_state;
   glm::vec3 probe_delta;
   
-  unsigned probe_end_millis;
+  float probe_remaining_millis;
   
   enum ClimbGameState {
     ClimbGameStateInGame,

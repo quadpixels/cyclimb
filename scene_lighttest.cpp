@@ -181,6 +181,7 @@ void LightTestScene::PrepareLights() {
       g_vol_light_cb.spotlightPV[i] = lights[i]->GetPV_D3D11();
     }
     g_vol_light_cb.spotlightCount = 6;
+    g_vol_light_cb.forceAlwaysOn = false;
   }
   else {
     if (total_secs - last_update_total_secs > 0.1) {
@@ -219,6 +220,7 @@ void LightTestScene::PrepareLights() {
         }
       }
       g_vol_light_cb.spotlightCount = 16;
+      g_vol_light_cb.forceAlwaysOn = false;
     }
   }
 
@@ -282,6 +284,7 @@ void ClimbScene::PrepareLights() {
     g_vol_light_cb.spotlightCount = 0;
   }
 
+  g_vol_light_cb.forceAlwaysOn = false;
   g_vol_light_cb.cam_pos = GetCurrentSceneCamera()->GetPos_D3D11();
 
   memcpy(mapped.pData, &g_vol_light_cb, sizeof(g_vol_light_cb));

@@ -10,6 +10,7 @@
 #include <vector>
 #include <string>
 #include "shader.hpp"
+#include <unordered_map>
 
 #include <d3d11.h>
 #undef min
@@ -32,6 +33,7 @@ struct DefaultPalettePerSceneCB {
 
 struct VolumetricLightCB {
   int spotlightCount;
+  int forceAlwaysOn;
   DirectX::XMVECTOR cam_pos;
   DirectX::XMMATRIX spotlightPV[16]; // Projection-View matrix
   DirectX::XMVECTOR spotlightColors[16];
@@ -64,6 +66,24 @@ private:
   void do_render(GLuint tex);
 
   ID3D11ShaderResourceView* texture_srv;
+};
+
+// Not very efficient -- updated every draw call every frame
+class ImageSprite2D {
+public:
+  static ID3D11Buffer* d3d11_vertex_buffer, *d3d11_vertex_buffer_staging;
+  static void Init_D3D11();
+  ImageSprite2D(ID3D11ShaderResourceView* img_srv, RECT src_rect);
+  ImageSprite2D(ID3D11ShaderResourceView* img_srv, RECT src_rect, glm::vec2 pos, glm::vec2 hext);
+  glm::vec2 dest_pos, dest_hext; // Image space pos and half extent
+  RECT src_rect;
+  void Render_D3D11();
+private:
+  void init_srv(ID3D11ShaderResourceView* img_srv, RECT src_rect);
+  ID3D11ShaderResourceView* tex_srv, *vert_buffer_srv;
+  static std::unordered_map<ID3D11ShaderResourceView*, std::pair<int, int> > tex_dims;
+  static ID3D11InputLayout* d3d11_input_layout;
+  static float quad_vertices_and_attrib[24];
 };
 
 // Added hack: ratio=1

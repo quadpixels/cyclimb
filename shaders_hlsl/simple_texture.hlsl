@@ -12,7 +12,7 @@ struct PSOutput {
   float4 color : SV_Target;
 };
 
-cbuffer CBPerScene : register(b0) {
+cbuffer CB : register(b0) {
   float4 xyoffset_alpha;
 };
 

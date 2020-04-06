@@ -6,6 +6,10 @@
 #include <math.h>
 #include <assert.h>
 #include <wchar.h>
+#include "WICTextureLoader.h"
+
+extern ID3D11Device* g_device11;
+extern ID3D11DeviceContext* g_context11;
 
 extern unsigned g_fadein_complete_millis;
 extern unsigned g_last_millis;
@@ -17,7 +21,6 @@ extern float g_cam_rot_x, g_cam_rot_y;
 
 GLuint GetShaderProgram(int idx);
 extern int WIN_W, WIN_H;
-
 extern bool g_main_menu_visible;
 
 //==========================
@@ -33,6 +36,8 @@ std::vector<Sprite*>* TestShapesScene::GetSpriteListForRender() {
 }
 
 //==========================
+ID3D11Resource* ClimbScene::helpinfo_res, *ClimbScene::keys_res;
+ID3D11ShaderResourceView* ClimbScene::helpinfo_srv, *ClimbScene::keys_srv;
 ClimbScene* ClimbScene::instance = nullptr;
 std::vector<ChunkGrid*> ClimbScene::model_platforms;
 std::vector<ChunkGrid*> ClimbScene::model_backgrounds1;
@@ -85,6 +90,14 @@ void ClimbScene::InitStatic() {
   model_backgrounds2.push_back(new ChunkGrid("climb/bg2_2.vox"));
   model_coin = new ChunkGrid("climb/coin.vox");
   model_exit = new ChunkGrid("climb/goal.vox");
+
+  HRESULT hr = DirectX::CreateWICTextureFromFile(g_device11,
+    L"climb\\help.jpg", &helpinfo_res, &helpinfo_srv);
+  assert(SUCCEEDED(hr));
+
+  hr = DirectX::CreateWICTextureFromFile(g_device11,
+    L"climb\\keys.jpg", &keys_res, &keys_srv);
+  assert(SUCCEEDED(hr));
 }
 
 void ClimbScene::PreRender() { }
@@ -172,10 +185,11 @@ void ClimbScene::Init() {
 }
 
 void ClimbScene::Update(float secs) {
+  bool should_step = false;
   if (g_main_menu_visible == false) {
     countdown_millis -= secs * 1000.0f;
     if (countdown_millis < 0) countdown_millis = 0;
-    light_phase += secs;
+    should_step = true;
   }
   
   switch (game_state) {
@@ -186,9 +200,11 @@ void ClimbScene::Update(float secs) {
         if (is_debug) {
           player->pos += debug_vel * (100.0f * secs);
         } else {
-          player->vel += glm::vec3(0, GRAVITY * secs, 0); 
-          player->Update(secs);
-          player->vel.x += player_x_thrust * secs;
+          if (should_step) {
+            player->vel += glm::vec3(0, GRAVITY * secs, 0);
+            player->Update(secs);
+            player->vel.x += player_x_thrust * secs;
+          }
         }
     
         if (player->pos.y < -100) {
@@ -206,7 +222,13 @@ void ClimbScene::Update(float secs) {
         
         // probe
         const unsigned millis = GetElapsedMillis();
-        float probe_completion = 1.0f - (int(probe_end_millis) - int(millis)) * 1.0f / PROBE_DURATION;
+        if (should_step) {
+          probe_remaining_millis -= 1000.0f * secs;
+          if (probe_remaining_millis < 0) {
+            probe_remaining_millis = -999;
+          }
+        }
+        float probe_completion = 1.0f - probe_remaining_millis / PROBE_DURATION;
         bool probing = ((probe_completion > 0 || is_key_pressed) && (rope_state == Probing));
             
         if (probing) {
@@ -228,7 +250,7 @@ void ClimbScene::Update(float secs) {
                     BeginLevelCompleteSequence();
                   }
                   rope_state = Anchored;
-                  probe_end_millis = 0;
+                  probe_remaining_millis = -999;
                   SetAnchorPoint(x, probe_delta);
                   anchor_levels = 1;
                   {
@@ -254,29 +276,31 @@ void ClimbScene::Update(float secs) {
         DONE: { }
         }
         
-        if (rope_state == Anchored) {
-          glm::vec3 delta = anchor_rope_endpoint - GetPlayerEffectiveRopeEndpoint();
-          if (glm::dot(delta, delta) > L0 * L0) {
-            const float len = sqrtf(glm::dot(delta, delta)) - L0;
-            glm::vec3 pull = glm::normalize(delta);
-            glm::vec3 acc = pull * len * SPRING_K;
-            
-            // 计算旋转
-            {
-              // 角速度变化量
-              glm::vec3 local_pull = glm::transpose(player->orientation) * pull;
-              glm::vec3 delta_omega = glm::cross(local_pull, -curr_player_rope_endpoint);
-              player->omega += delta_omega * secs * INVERSE_INERTIA;
+        if (should_step) {
+          if (rope_state == Anchored) {
+            glm::vec3 delta = anchor_rope_endpoint - GetPlayerEffectiveRopeEndpoint();
+            if (glm::dot(delta, delta) > L0* L0) {
+              const float len = sqrtf(glm::dot(delta, delta)) - L0;
+              glm::vec3 pull = glm::normalize(delta);
+              glm::vec3 acc = pull * len * SPRING_K;
+
+              // 计算旋转
+              {
+                // 角速度变化量
+                glm::vec3 local_pull = glm::transpose(player->orientation) * pull;
+                glm::vec3 delta_omega = glm::cross(local_pull, -curr_player_rope_endpoint);
+                player->omega += delta_omega * secs * INVERSE_INERTIA;
+              }
+
+              player->vel += acc * secs;
+              player->vel.x *= X_VEL_DAMP;
+              player->vel.y *= Y_VEL_DAMP;
             }
-            
-            player->vel += acc * secs;
-            player->vel.x *= X_VEL_DAMP;
-            player->vel.y *= Y_VEL_DAMP;
           }
-        }
         
-        {
-          player->omega *= 0.99f;
+          {
+            player->omega *= 0.99f;
+          }
         }
         
         // Intersect coin
@@ -303,8 +327,12 @@ void ClimbScene::Update(float secs) {
         if (num_coins > 0)
           RotateCoins(secs);
         
+        // 无论何时都会转
         CameraFollow(secs);
-        GetGlobalParticles()->Update(secs);
+        if (should_step) {
+          GetGlobalParticles()->Update(secs);
+        }
+        light_phase += secs;
       }
       break;
     case ClimbGameStateStartCountdown: {
@@ -426,7 +454,9 @@ void ClimbScene::RenderHUD_D3D11() {
   do_RenderHUD(ClimbD3D11);
 }
 
-void ClimbScene::OnKeyPressed(char k) {  
+void ClimbScene::OnKeyPressed(char k) {
+  bool should_step = !g_main_menu_visible;
+
   if (k == 'g') { 
     is_debug = !is_debug;
     debug_vel = glm::vec3(0, 0, 0);
@@ -457,13 +487,15 @@ void ClimbScene::OnKeyPressed(char k) {
       glm::vec3(-1,-1, 0), glm::vec3(0,-1, 0), glm::vec3(1,-1, 0), // Z S C
     };
     int idx = -999;
-    for (int i=0; i<9; i++) {
-      if (k == keys[i]) {
-        idx = i; 
-        keyflags.set(i);
-        if (rope_state != Anchored)
-          curr_player_rope_endpoint = PLAYER_ROPE_ENDPOINT[i];
-        break;
+    if (should_step) {
+      for (int i = 0; i < 9; i++) {
+        if (k == keys[i]) {
+          idx = i;
+          keyflags.set(i);
+          if (rope_state != Anchored)
+            curr_player_rope_endpoint = PLAYER_ROPE_ENDPOINT[i];
+          break;
+        }
       }
     }
     
@@ -484,7 +516,7 @@ void ClimbScene::OnKeyPressed(char k) {
         is_key_pressed = true;
         rope_state = Probing;
         probe_delta = glm::normalize(dirs[idx]) * PROBE_DIST;
-        probe_end_millis = GetElapsedMillis() + PROBE_DURATION;
+        probe_remaining_millis = PROBE_DURATION;
         anchor->pos = GetPlayerEffectivePos();
         anchor_rope_endpoint = anchor->pos;
         // ROTATE
@@ -823,7 +855,7 @@ void ClimbScene::DamagablePlatform::DoDamage(const glm::vec3& world_x) {
 
 void ClimbScene::HideRope() {
   rope_state = Hidden;
-  probe_end_millis = 0;
+  probe_remaining_millis = -999;
 }
 
 // 2019-12-18

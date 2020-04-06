@@ -38,7 +38,7 @@ public:
 
 class MainMenu {
 public:
-  enum MenuItemType {
+  enum class MenuItemType {
     Text,
     Selectable,
     Toggle
@@ -66,14 +66,14 @@ public:
     } ptr;
 
     MenuItem(const wchar_t* _text) {
-      type = Selectable;
+      type = MenuItemType::Selectable;
       text = _text;
       choice_idx = 0;
     }
 
     std::wstring GetTextForDisplay() {
       std::wstring ret = text;
-      if (type == Toggle) {
+      if (type == MenuItemType::Toggle) {
         if (choices.empty()) { }
         else ret = ret + L" <" + choices[choice_idx] + L">";
       }
@@ -86,6 +86,8 @@ public:
 
   std::vector<std::wstring> menutitle;
   std::vector<MenuItem> menuitems;
+  
+  std::vector<ImageSprite2D*> keys_sprites;
 
   void Render(const glm::mat4& uitransform);
   void Render_D3D11(const glm::mat4& uitransform);
@@ -93,9 +95,10 @@ public:
   void OnLeftRightPressed(int delta); // -1: left; +1: right
   void OnEscPressed();
   void OnEnter();
-  void EnterMenu(const int idx);
+  void EnterMenu(const int idx, bool is_from_exit);
   void ExitMenu();
   bool IsInHelp() { return is_in_help; }
+  void DrawHelpScreen();
 
   Camera* cam_helpinfo;
   FullScreenQuad* fsquad;
@@ -103,6 +106,11 @@ public:
   // Dynamic Sprites in Help Screen
   std::vector<Sprite*> sprites_helpinfo;
   std::vector<D3D11_VIEWPORT> viewports11_helpinfo;
+  D3D11_VIEWPORT viewport_vollight;
+  float secs_elapsed;
+  void PrepareLightsForGoalDemo();
+  void RenderLightsForGoalDemo();
+  DirectionalLight* lights[3];
 
   std::vector<int> curr_selection, curr_menu;
   bool is_in_help;

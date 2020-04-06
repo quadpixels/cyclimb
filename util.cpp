@@ -2,6 +2,7 @@
 #include <fstream>
 #include <Windows.h> // GetTickCount
 
+extern int WIN_W, WIN_H;
 extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11VertexShader* g_vs_default_palette, * g_vs_simpletexture;
@@ -140,8 +141,6 @@ void FullScreenQuad::Init_D3D11() {
   };
   assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc1, 2, g_vs_textrender_blob->GetBufferPointer(),
     g_vs_textrender_blob->GetBufferSize(), &d3d11_input_layout)));
-
-
 }
 
 void FullScreenQuad::Render_D3D11() {
@@ -163,6 +162,101 @@ void FullScreenQuad::Render_D3D11() {
 
 ID3D11Buffer* FullScreenQuad::d3d11_vertex_buffer;
 ID3D11InputLayout* FullScreenQuad::d3d11_input_layout;
+
+ID3D11Buffer* ImageSprite2D::d3d11_vertex_buffer, *ImageSprite2D::d3d11_vertex_buffer_staging;
+ID3D11InputLayout* ImageSprite2D::d3d11_input_layout;
+std::unordered_map<ID3D11ShaderResourceView*, std::pair<int, int> > ImageSprite2D::tex_dims;
+
+float ImageSprite2D::quad_vertices_and_attrib[] = {
+  -1.0,  1.0, 0.0, 0.0,
+   1.0,  1.0, 1.0, 0.0,
+   1.0, -1.0, 1.0, 1.0,
+
+   1.0, -1.0, 1.0, 1.0,
+  -1.0, -1.0, 0.0, 1.0,
+  -1.0,  1.0, 0.0, 0.0,
+};
+
+void ImageSprite2D::Init_D3D11() {
+  D3D11_BUFFER_DESC desc = { };
+  desc.Usage = D3D11_USAGE_DYNAMIC;
+  desc.ByteWidth = sizeof(quad_vertices_and_attrib);
+  desc.StructureByteStride = sizeof(float) * 4;
+  desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+  desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+  D3D11_SUBRESOURCE_DATA srd = { };
+  srd.pSysMem = quad_vertices_and_attrib;
+  srd.SysMemPitch = sizeof(quad_vertices_and_attrib);
+  assert(SUCCEEDED(g_device11->CreateBuffer(&desc, &srd, &d3d11_vertex_buffer)));
+
+  D3D11_INPUT_ELEMENT_DESC inputdesc1[] = {
+    { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+  };
+  assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc1, 2, g_vs_textrender_blob->GetBufferPointer(),
+    g_vs_textrender_blob->GetBufferSize(), &d3d11_input_layout)));
+}
+
+ImageSprite2D::ImageSprite2D(ID3D11ShaderResourceView* _tex_srv, RECT _src_rect) {
+  init_srv(_tex_srv, _src_rect);
+}
+
+ImageSprite2D::ImageSprite2D(ID3D11ShaderResourceView* _tex_srv, RECT _src_rect, glm::vec2 pos, glm::vec2 hext) {
+  init_srv(_tex_srv, _src_rect);
+  dest_pos = pos; dest_hext = hext;
+}
+
+void ImageSprite2D::init_srv(ID3D11ShaderResourceView* _tex_srv, RECT _src_rect) {
+  tex_srv = _tex_srv; src_rect = _src_rect;
+  dest_hext = glm::vec2(16, 16);
+  dest_pos = glm::vec2(160, 160);
+
+  if (tex_dims.find(_tex_srv) == tex_dims.end()) {
+    ID3D11Texture2D* tex;
+    _tex_srv->GetResource((ID3D11Resource**)(&tex));
+    D3D11_TEXTURE2D_DESC t2dd;
+    tex->GetDesc(&t2dd);
+    tex_dims[_tex_srv] = std::make_pair(t2dd.Width, t2dd.Height);
+  }
+}
+
+void ImageSprite2D::Render_D3D11() {
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  assert(SUCCEEDED(g_context11->Map(d3d11_vertex_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)));
+  const float x = -1 + 2 * dest_pos.x / WIN_W, y = - (-1 + 2 * dest_pos.y / WIN_H);
+  const float hw = dest_hext.x / WIN_W, hh = dest_hext.y / WIN_H;
+  const float x0 = x - hw, x1 = x + hw, y0 = y - hh, y1 = y + hh;
+  std::pair<int, int> ts = tex_dims.at(tex_srv);
+  const float u0 = src_rect.left * 1.0 / ts.first, u1 = src_rect.right * 1.0 / ts.first;
+  const float v0 = src_rect.top * 1.0 / ts.second, v1 = src_rect.bottom * 1.0 / ts.second;
+
+  float qva[] = {
+    x0, y1, u0, v0,
+    x1, y1, u1, v0,
+    x1, y0, u1, v1,
+
+    x1, y0, u1, v1,
+    x0, y0, u0, v1,
+    x0, y1, u0, v0,
+  };
+  memcpy(mapped.pData, qva, sizeof(qva));
+  g_context11->Unmap(d3d11_vertex_buffer, 0);
+
+  g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  const unsigned int stride = sizeof(float) * 4;
+  const unsigned int offset = 0;
+  g_context11->IASetInputLayout(d3d11_input_layout);
+  g_context11->IASetVertexBuffers(0, 1, &d3d11_vertex_buffer, &stride, &offset);
+  g_context11->VSSetShader(g_vs_simpletexture, nullptr, 0);
+  g_context11->PSSetShader(g_ps_simpletexture, nullptr, 0);
+  g_context11->PSSetShaderResources(0, 1, &tex_srv);
+  g_context11->PSSetConstantBuffers(0, 1, &g_simpletexture_cb);
+  float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  g_context11->OMSetBlendState(g_blendstate11, blend_factor, 0xFFFFFFFF);
+  g_context11->VSSetConstantBuffers(0, 0, nullptr);
+  g_context11->PSSetConstantBuffers(0, 0, nullptr);
+  g_context11->Draw(6, 0);
+}
 
 DirectionalLight::DirectionalLight(const glm::vec3& _dir, const glm::vec3& _pos) {
   dir = glm::normalize(_dir); pos = _pos;
@@ -275,7 +369,7 @@ std::vector<std::string> ReadLinesFromFile(const char* fn) {
 }
 
 std::vector<std::string> SplitStringBySpace(std::string x) {
-  int idx0 = -1, idx1 = 0;
+  long idx0 = -1, idx1 = 0;
   std::vector<std::string> ret;
   while (idx1 < int(x.size())) {
     if (x[idx1] != ' ') {

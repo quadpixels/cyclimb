@@ -14,6 +14,7 @@ struct PSOutput {
 
 cbuffer CBPerScene : register(b0) {
   int spotlightCount;
+  int forceAlwaysOn;
   float4   cam_pos;
   float4x4 spotlightPV[16];
   float4   spotlightColors[16];
@@ -58,6 +59,9 @@ PSOutput PSMain(VSOutput input) {
       float tmp = 0.0f;
       float4 p   = worldpos;
       float3 dir = normalize(cp - worldpos.xyz);
+      if (forceAlwaysOn == 1) {
+        p.xyz = cp - dir * 300.0f;
+      }
       //dir = dir * -1;
       for (int i=0; i<48; i++) {
         if (1 == IsInSpotlight(p, idx))
