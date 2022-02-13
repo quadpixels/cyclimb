@@ -1,3 +1,15 @@
 [submodule "FreeGLUT"]
 	path = FreeGLUT
 	url = https://github.com/dcnieho/FreeGLUT
+[submodule "glew-cmake"]
+	path = glew
+	url = https://github.com/Perlmint/glew-cmake
+[submodule "glm"]
+	path = glm
+	url = https://github.com/g-truc/glm
+[submodule "glfw"]
+	path = glfw
+	url = https://github.com/glfw/glfw
+[submodule "freetype2"]
+	path = freetype2
+	url = https://github.com/aseprite/freetype2
