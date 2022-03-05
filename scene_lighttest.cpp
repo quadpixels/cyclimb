@@ -7,6 +7,8 @@
 #include <assert.h>
 #include <wchar.h>
 
+extern int WIN_W, WIN_H;
+
 std::vector<ChunkGrid*> LightTestScene::model_backgrounds;
 std::map<char, ChunkGrid*> LightTestScene::model_digits;
 ChunkGrid* LightTestScene::model_clock;
@@ -181,6 +183,8 @@ void LightTestScene::PrepareLights() {
       g_vol_light_cb.spotlightPV[i] = lights[i]->GetPV_D3D11();
     }
     g_vol_light_cb.spotlightCount = 6;
+    g_vol_light_cb.aspect = WIN_W * 1.0f / WIN_H;
+    g_vol_light_cb.fovy = 60 * 3.14159f / 180.0f;
     g_vol_light_cb.forceAlwaysOn = false;
   }
   else {
@@ -275,6 +279,10 @@ void ClimbScene::PrepareLights() {
         g_vol_light_cb.spotlightPV[2] = lights[2]->GetPV_D3D11();
         lights[2]->pos = pos;
         g_vol_light_cb.spotlightCount = 3;
+
+        g_vol_light_cb.aspect = WIN_W * 1.0f / WIN_H;
+        g_vol_light_cb.fovy = 60 * 3.14159f / 180.0f;
+        g_vol_light_cb.forceAlwaysOn = 0;
 
         break;
       }

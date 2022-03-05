@@ -157,7 +157,7 @@ MainMenu::MainMenu() {
     { 915, -56, 320, 320 }, // platforms[0] - platform example
     { 915, 61, 320, 320 }, // platforms[1] - platform example
     { 915, 170, 320, 320 }, // goal - platform example
-    { 491, 471, 320, 320 }, // goal - level clear example
+    { 491, 451, 320, 320 }, // goal - level clear example
     { -32, 286, 320, 320 }, // coin - level clear example
   };
   for (int i = 0; i < sizeof(viewports) / sizeof(viewports[0]); i++) {
@@ -264,7 +264,8 @@ void MainMenu::PrepareLightsForGoalDemo() {
   g_vol_light_cb.spotlightPV[2] = lights[2]->GetPV_D3D11();
   lights[2]->pos = pos;
   g_vol_light_cb.spotlightCount = 3;
-
+  g_vol_light_cb.aspect = WIN_W * 1.0f / WIN_H;
+  g_vol_light_cb.fovy = 60 * 3.14159f / 180.0f;
   g_vol_light_cb.forceAlwaysOn = 1;
   g_vol_light_cb.cam_pos = cam_helpinfo->GetPos_D3D11();
   memcpy(mapped.pData, &g_vol_light_cb, sizeof(g_vol_light_cb));

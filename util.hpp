@@ -34,6 +34,7 @@ struct DefaultPalettePerSceneCB {
 struct VolumetricLightCB {
   int spotlightCount;
   int forceAlwaysOn;
+  float aspect, fovy;
   DirectX::XMVECTOR cam_pos;
   DirectX::XMMATRIX spotlightPV[16]; // Projection-View matrix
   DirectX::XMVECTOR spotlightColors[16];

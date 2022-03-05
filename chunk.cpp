@@ -433,6 +433,7 @@ void Chunk::Render_D3D11(const DirectX::XMMATRIX& M) {
   if (tri_count < 1) return;
   UpdateGlobalPerObjectCB(&M, nullptr, nullptr);
   unsigned stride = sizeof(float) * 6, offset = 0;
+  g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   g_context11->IASetVertexBuffers(0, 1, &d3d11_vertex_buffer, &stride, &offset);
   g_context11->Draw(3 * tri_count, 0);
 }
