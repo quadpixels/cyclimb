@@ -54,7 +54,10 @@ extern ID3D11SamplerState* g_sampler11;
 extern void UpdatePerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
 extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
 
+bool g_debug = true;
+
 void StartGame();
+void EnterEditMode();
 Particles* GetGlobalParticles();
 
 //======================== Particles =======
@@ -420,6 +423,7 @@ void MainMenu::EnterMenu(int idx, bool is_from_exit) {
     menutitle.push_back(L"Main Menu");
 
     menuitems.push_back(MenuItem(L"Start Game"));
+    menuitems.push_back(MenuItem(L"Edit Mode"));
     menuitems.push_back(MenuItem(L"Options"));
     menuitems.push_back(MenuItem(L"Help"));
     menuitems.push_back(MenuItem(L"Exit"));
@@ -437,7 +441,7 @@ void MainMenu::EnterMenu(int idx, bool is_from_exit) {
     menuitems.push_back(GetMenuItem("shadows"));
   }
 
-  if (!is_from_exit) {
+  if (!is_from_exit || curr_menu.empty()) {
     curr_menu.push_back(idx);
     curr_selection.push_back(0);
   }
@@ -450,9 +454,10 @@ void MainMenu::OnEnter() {
       case 0:
         StartGame(); // Start Game
         break;
-      case 1: EnterMenu(2, false); break; // Options
-      case 2: EnterMenu(1, false); break; // Help
-      case 3: {
+      case 1: EnterEditMode(); break;
+      case 2: EnterMenu(2, false); break; // Options
+      case 3: EnterMenu(1, false); break; // Help
+      case 4: {
         // close glfw window
         glfwSetWindowShouldClose(g_window, true); 
         glfwDestroyWindow(g_window);

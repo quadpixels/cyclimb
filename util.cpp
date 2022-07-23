@@ -16,6 +16,8 @@ extern ID3DBlob* g_vs_textrender_blob, * g_ps_textrender_blob;
 extern ID3D11BlendState* g_blendstate11;
 extern ID3D11Buffer* g_simpletexture_cb;
 
+extern bool IsGL();
+
 void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m) {
   for (int r = 0; r < 4; r++) {
     for (int c = 0; c < 4; c++) {
@@ -202,7 +204,9 @@ ImageSprite2D::ImageSprite2D(ID3D11ShaderResourceView* _tex_srv, RECT _src_rect)
 }
 
 ImageSprite2D::ImageSprite2D(ID3D11ShaderResourceView* _tex_srv, RECT _src_rect, glm::vec2 pos, glm::vec2 hext) {
-  init_srv(_tex_srv, _src_rect);
+  if (!IsGL()) {
+    init_srv(_tex_srv, _src_rect);
+  }
   dest_pos = pos; dest_hext = hext;
 }
 

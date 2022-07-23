@@ -807,7 +807,8 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
       g_mainmenu->OnEscPressed();
     }
     else {
-      g_mainmenu->EnterMenu(0, false);
+      bool is_from_exit = true;
+      g_mainmenu->EnterMenu(0, is_from_exit);
       g_main_menu_visible = true;
     }
   }

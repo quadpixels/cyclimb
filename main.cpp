@@ -212,6 +212,7 @@ void MyInit() {
   
   InitTextRender();
 
+  ClimbScene::InitStatic();
   g_mainmenu = new MainMenu();
   g_textmessage = new TextMessage();
 
@@ -239,7 +240,6 @@ void MyInit() {
   g_testscene->global_xyz = global_xyz;
   g_testscene->test_background = test_background;
   
-  ClimbScene::InitStatic();
   g_climbscene = new ClimbScene();
   g_climbscene->Init();
 }
@@ -536,7 +536,8 @@ void keydown(unsigned char key, int x, int y) {
         g_mainmenu->ExitMenu();
         g_main_menu_visible = false;
       } else {
-        g_mainmenu->EnterMenu(0, false);
+        if (g_mainmenu->curr_menu.empty())
+          g_mainmenu->EnterMenu(0, false);
         g_main_menu_visible = true;
       }
       break;
@@ -895,6 +896,12 @@ int main_opengl(int argc, char** argv) {
 
 void StartGame() {
   g_main_menu_visible = false;
+  g_climbscene->SetGameState(ClimbScene::ClimbGameStateStartCountdown);
+}
+
+void EnterEditMode() {
+  g_main_menu_visible = false;
+  g_climbscene->SetGameState(ClimbScene::ClimbGameStateInEditing);
 }
 
 extern int main_d3d11(int argc, char** argv);

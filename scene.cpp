@@ -18,10 +18,19 @@ extern char g_arrow_dx, g_arrow_dy;
 extern Particles* GetGlobalParticles();
 extern TextMessage* g_textmessage;
 extern float g_cam_rot_x, g_cam_rot_y;
+extern std::bitset<18> g_cam_flags;
 
 GLuint GetShaderProgram(int idx);
 extern int WIN_W, WIN_H;
 extern bool g_main_menu_visible;
+extern bool g_debug;
+
+static const char kKeys[] = { 'q', 'e', 'w', 'a', 'd', 'z', 's', 'c' };
+static const glm::vec3 kDirs[] = {
+    glm::vec3(-1, 1, 0), glm::vec3(1, 1, 0), glm::vec3(0, 1, 0), // Q E W
+    glm::vec3(-1, 0, 0), glm::vec3(1, 0, 0), // A D
+    glm::vec3(-1,-1, 0), glm::vec3(0,-1, 0), glm::vec3(1,-1, 0), // Z S C
+};
 
 //==========================
 
@@ -66,6 +75,8 @@ const float ClimbScene::X_THRUST = 80.0f;
 const int   ClimbScene::LEVEL_FINISH_JUMP_PERIOD = 500;
 const float ClimbScene::INVERSE_INERTIA = 0.05f;
 
+extern bool IsGL();
+
 const glm::vec3 ClimbScene::PLAYER_ROPE_ENDPOINT[8] = 
   {
     glm::vec3(-7/1.414f, 7/1.414f, 0.0f), // 左上
@@ -91,13 +102,15 @@ void ClimbScene::InitStatic() {
   model_coin = new ChunkGrid("climb/coin.vox");
   model_exit = new ChunkGrid("climb/goal.vox");
 
-  HRESULT hr = DirectX::CreateWICTextureFromFile(g_device11,
-    L"climb\\help.jpg", &helpinfo_res, &helpinfo_srv);
-  assert(SUCCEEDED(hr));
+  if (!IsGL()) {
+    HRESULT hr = DirectX::CreateWICTextureFromFile(g_device11,
+      L"climb\\help.jpg", &helpinfo_res, &helpinfo_srv);
+    assert(SUCCEEDED(hr));
 
-  hr = DirectX::CreateWICTextureFromFile(g_device11,
-    L"climb\\keys.jpg", &keys_res, &keys_srv);
-  assert(SUCCEEDED(hr));
+    hr = DirectX::CreateWICTextureFromFile(g_device11,
+      L"climb\\keys.jpg", &keys_res, &keys_srv);
+    assert(SUCCEEDED(hr));
+  }
 }
 
 void ClimbScene::PreRender() { }
@@ -193,6 +206,9 @@ void ClimbScene::Update(float secs) {
   }
   
   switch (game_state) {
+    case ClimbGameStateNotStarted: {
+      break;
+    }
     case ClimbGameStateInGame:
       {
         curr_level_time += secs;
@@ -378,16 +394,25 @@ void ClimbScene::Update(float secs) {
       GetGlobalParticles()->Update(secs);
       break;
     }
+    case ClimbGameStateInEditing: {
+      for (int i = 0; i < 9; i++) {
+        if (keyflags.test(i)) {
+          camera->pos += kDirs[i];
+        }
+      }
+      break;
+    }
   }
+
   for (Platform* p : platforms) p->Update(secs);
 }
 
 void ClimbScene::do_RenderHUD(GraphicsAPI api) {
-
   glm::mat4 uitransform(1);
 
   wchar_t buf[50];
   float width;
+  bool show_coin_count = false;
 
   // 准备阶段
   if (game_state == ClimbGameStateStartCountdown && g_main_menu_visible == false) {
@@ -398,6 +423,7 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
     RenderText(api, text, WIN_W / 2 - width / 2, WIN_H / 2, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
+    show_coin_count = true;
   }
   else if (game_state == ClimbGameStateLevelEndWaitKey) {
     //std::wstring text = std::wstring(L"Level ") + std::to_wstring(curr_level) + std::wstring(L"Completed!");
@@ -423,13 +449,21 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
     RenderText(api, text, WIN_W / 2 - width / 2, WIN_H / 2 + 96, 0.8f,
       glm::vec3(1.0f, 1.0f, 0.2f),
       uitransform);
+    show_coin_count = true;
+  }
+  else if (game_state == ClimbGameStateInEditing) {
+    std::wstring text = std::to_wstring(platforms.size()) + L" 个平台";
+    glm::mat4 uitransform(1);
+    RenderText(api, text, 32, 32, 1.0f, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
   }
 
-  // 金币数
-  swprintf(buf, 20, L"硬币 %d/%d %.1fs", num_coins, num_coins_total, curr_level_time);
   std::wstring text(buf);
   const float scale = 0.8f;
-  RenderText(api, text, 32, 32, scale, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
+  if (show_coin_count) {
+    // 金币数
+    swprintf(buf, 20, L"硬币 %d/%d %.1fs", num_coins, num_coins_total, curr_level_time);
+    RenderText(api, text, 32, 32, scale, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
+  }
 
   bool SHOW_KEYSTROKES = false;
   if (SHOW_KEYSTROKES) {
@@ -444,6 +478,12 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
 
   if (g_textmessage->IsExpired() == false)
     g_textmessage->Render();
+
+  if (g_debug) {
+    swprintf(buf, 20, L"state=%d", game_state);
+    text = std::wstring(buf);
+    RenderText(api, text, 32, WIN_H - 48, scale, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
+  }
 }
 
 void ClimbScene::RenderHUD() {
@@ -477,19 +517,13 @@ void ClimbScene::OnKeyPressed(char k) {
     else if (k == 'j') debug_vel += glm::vec3(-1, 0, 0);
     else if (k == 'l') debug_vel += glm::vec3( 1, 0, 0);
   }
-  
+
   // 扔绳子试探
   if (game_state == ClimbGameStateInGame) {
-    char keys[] = { 'q', 'e', 'w', 'a', 'd', 'z', 's', 'c' };
-    glm::vec3 dirs[] = { 
-      glm::vec3(-1, 1, 0), glm::vec3(1, 1, 0), glm::vec3(0, 1, 0), // Q E W
-      glm::vec3(-1, 0, 0), glm::vec3(1, 0, 0), // A D
-      glm::vec3(-1,-1, 0), glm::vec3(0,-1, 0), glm::vec3(1,-1, 0), // Z S C
-    };
     int idx = -999;
     if (should_step) {
       for (int i = 0; i < 9; i++) {
-        if (k == keys[i]) {
+        if (k == kKeys[i]) {
           idx = i;
           keyflags.set(i);
           if (rope_state != Anchored)
@@ -515,27 +549,34 @@ void ClimbScene::OnKeyPressed(char k) {
         printf("STARTPROBE, k=%c\n", k);
         is_key_pressed = true;
         rope_state = Probing;
-        probe_delta = glm::normalize(dirs[idx]) * PROBE_DIST;
+        probe_delta = glm::normalize(kDirs[idx]) * PROBE_DIST;
         probe_remaining_millis = PROBE_DURATION;
         anchor->pos = GetPlayerEffectivePos();
         anchor_rope_endpoint = anchor->pos;
         // ROTATE
-        anchor->orientation[1] = glm::normalize(dirs[idx]);
-        anchor->orientation[0] = glm::normalize(glm::cross(dirs[idx], glm::vec3(0, 0, 1)));
+        anchor->orientation[1] = glm::normalize(kDirs[idx]);
+        anchor->orientation[0] = glm::normalize(glm::cross(kDirs[idx], glm::vec3(0, 0, 1)));
+      }
+    }
+  }
+  else if (game_state == ClimbGameStateInEditing) {
+    for (int i = 0; i < 9; i++) {
+      if (k == kKeys[i]) {
+        keyflags.set(i);
       }
     }
   }
 }
 
 void ClimbScene::OnKeyReleased(char k) {
-  
   if (is_debug) {
     if (k == 'i' || k == 'k') debug_vel.y = 0;
     else if (k == 'j' || k == 'l') debug_vel.x = 0;
   }
-  
+
+  char keys[] = { 'q', 'e', 'w', 'a', 'd', 'z', 's', 'c' };
+
   if (game_state == ClimbGameStateInGame) {
-    char keys[] = { 'q', 'e', 'w', 'a', 'd', 'z', 's', 'c' }; 
     int idx = -999;
     for (int i=0; i<9; i++) {
       if (keys[i] == k) { idx = i; keyflags.reset(i); break; } 
@@ -556,6 +597,11 @@ void ClimbScene::OnKeyReleased(char k) {
         }
         is_key_pressed = false;
       }
+    }
+  }
+  else if (game_state == ClimbGameStateInEditing) {
+    for (int i = 0; i < 9; i++) {
+      if (keys[i] == k) { keyflags.reset(i); break; }
     }
   }
 }
@@ -763,6 +809,10 @@ void ClimbScene::SetGameState(ClimbGameState gs) {
     }
     case ClimbGameStateLevelEndWaitKey: {
       level_finish_state.pos0 = player->pos;
+      break;
+    }
+    case ClimbGameStateInEditing: {
+      countdown_millis = 0;
       break;
     }
   }

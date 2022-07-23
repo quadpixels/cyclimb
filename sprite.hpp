@@ -19,10 +19,15 @@ enum SpriteFaction {
 // 3. 局部坐标系；以anchor为原点，每个单位为一个scale对应的方向上的体素单位长
 class Sprite {
 public:
+  enum DrawMode {
+    NORMAL,
+    WIREFRAME,
+  };
   glm::vec3 pos, vel, omega;
   glm::mat3 orientation;
   SpriteFaction faction;
   glm::vec3 scale, anchor;
+  DrawMode draw_mode;
   virtual void Render() = 0;
   virtual void Render_D3D11() = 0;
   virtual void Update(float);
@@ -33,6 +38,9 @@ public:
   glm::vec3 GetVoxelCoord(const glm::vec3& p_world);
   glm::vec3 GetWorldCoord(const glm::vec3& p_local);
   virtual ~Sprite() { }
+  Sprite() {
+    draw_mode = NORMAL;
+  }
 };
 
 class ChunkSprite : public Sprite {

@@ -190,10 +190,13 @@ public:
   float probe_remaining_millis;
   
   enum ClimbGameState {
+    ClimbGameStateNotStarted,
     ClimbGameStateInGame,
     ClimbGameStateStartCountdown,
     ClimbGameStateLevelFinishSequence,
     ClimbGameStateLevelEndWaitKey,
+
+    ClimbGameStateInEditing,
   };
   
   // 这个结构控制游戏状态从 ClimbGameStateLevelFinishSequene 到
