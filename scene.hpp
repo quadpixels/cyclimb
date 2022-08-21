@@ -252,6 +252,8 @@ public:
   void RevealExit();
   void LayoutRocketsOnExit(const glm::vec3& exit_pos);
   void BeginLevelCompleteSequence();
+
+  Sprite* cursor_sprite;
 };
 
 class LightTestScene : public GameScene {

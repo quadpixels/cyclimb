@@ -39,7 +39,7 @@ public:
   glm::vec3 GetWorldCoord(const glm::vec3& p_local);
   virtual ~Sprite() { }
   Sprite() {
-    draw_mode = NORMAL;
+    draw_mode = DrawMode::NORMAL;
   }
 };
 

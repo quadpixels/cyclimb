@@ -142,6 +142,11 @@ void ClimbScene::PrepareSpriteListForRender() {
   for (int i=0; i<particles->particles.size(); i++) {
     sprite_render_list.push_back(particles->particles[i].sprite);
   }
+
+  // Edit mode
+  if (this->game_state == ClimbScene::ClimbGameState::ClimbGameStateInEditing) {
+    sprite_render_list.push_back(cursor_sprite);
+  }
 }
 
 std::vector<Sprite*>* ClimbScene::GetSpriteListForRender() {
@@ -195,6 +200,11 @@ void ClimbScene::Init() {
   ClimbScene::instance = this;
   
   keyflags.reset();
+
+  // Edit mode cursor
+  cursor_sprite = new ChunkSprite(Particles::default_particle);
+  cursor_sprite->draw_mode = Sprite::DrawMode::WIREFRAME;
+  cursor_sprite->scale = glm::vec3(5, 5, 5);
 }
 
 void ClimbScene::Update(float secs) {
@@ -400,6 +410,8 @@ void ClimbScene::Update(float secs) {
           camera->pos += kDirs[i];
         }
       }
+      cursor_sprite->pos.x = camera->pos.x;
+      cursor_sprite->pos.y = camera->pos.y;
       break;
     }
   }

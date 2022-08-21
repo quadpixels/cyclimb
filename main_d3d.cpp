@@ -70,6 +70,7 @@ ID3D11BlendState* g_blendstate11;
 ID3D11Buffer* g_fsquad_for_light11;
 ID3D11InputLayout* g_inputlayout_for_light11;
 ID3D11DepthStencilState* g_dsstate_for_text11;
+ID3D11RasterizerState* g_rsstate_normal11, * g_rsstate_wireframe11;
 
 struct DefaultPalettePerObjectCB {
   DirectX::XMMATRIX M, V, P;
@@ -349,6 +350,24 @@ void InitDevice11() {
     dsd.DepthEnable = false;
     assert(SUCCEEDED(g_device11->CreateDepthStencilState(&dsd, &g_dsstate_for_text11)));
   }
+
+  {
+    D3D11_RASTERIZER_DESC rsd = { };
+    rsd.AntialiasedLineEnable = false;
+    rsd.CullMode = D3D11_CULL_BACK;
+    rsd.DepthBias = 0;
+    rsd.DepthBiasClamp = 0;
+    rsd.DepthClipEnable = true;
+    rsd.FillMode = D3D11_FILL_SOLID;
+    rsd.FrontCounterClockwise = false;
+    rsd.MultisampleEnable = false;
+    rsd.ScissorEnable = false;
+    rsd.SlopeScaledDepthBias = 0;
+    assert(SUCCEEDED(g_device11->CreateRasterizerState(&rsd, &g_rsstate_normal11)));
+
+    rsd.FillMode = D3D11_FILL_WIREFRAME;
+    assert(SUCCEEDED(g_device11->CreateRasterizerState(&rsd, &g_rsstate_wireframe11)));
+  }
 }
 
 void InitAssets11() {
@@ -583,19 +602,22 @@ static void expanded_draw_calls() {
   g_swapchain11->Present(1, 0);
 }
 
-void IssueDrawCalls_D3D11() {
+void IssueDrawCalls_D3D11(Sprite::DrawMode draw_mode) {
   GameScene* scene = GetCurrentGameScene();
   if (scene) {
     std::vector<Sprite*>* sprites = GetCurrentGameScene()->GetSpriteListForRender();
     for (Sprite* s : *sprites) {
-      if (s) s->Render_D3D11();
+      if (s && s->draw_mode == draw_mode) s->Render_D3D11();
     }
-    for (Sprite* s : g_projectiles) s->Render_D3D11();
+    for (Sprite* s : g_projectiles) {
+      if (s && s->draw_mode == draw_mode)
+        s->Render_D3D11();
+    }
   }
 }
 
 // Using glm::mat4 for compatibility with OpenGL code path
-void RenderScene_D3D11(const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P) {
+void RenderScene_D3D11(const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P, Sprite::DrawMode draw_mode) {
   ID3D11Buffer* cbs[] = { g_perobject_cb_default_palette, g_perscene_cb_default_palette };
   UpdatePerSceneCB(&(g_dir_light->GetDir_D3D11()), &(g_dir_light->GetPV_D3D11()), &(GetCurrentSceneCamera()->GetPos_D3D11()));
   g_context11->VSSetConstantBuffers(0, 2, cbs);
@@ -610,7 +632,7 @@ void RenderScene_D3D11(const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P) {
     UpdatePerSceneCB(&g_dir_light->GetDir_D3D11(), &(g_dir_light->GetPV_D3D11()), &(GetCurrentSceneCamera()->GetPos_D3D11()));
   }
 
-  IssueDrawCalls_D3D11();
+  IssueDrawCalls_D3D11(draw_mode);
 }
 
 void MyInit_D3D11() {
@@ -740,7 +762,7 @@ void Render() {
       DirectX::XMMATRIX V, P;
       P = g_dir_light->GetP_D3D11_DXMath();
       V = g_dir_light->GetV_D3D11();
-      RenderScene_D3D11(V, P);
+      RenderScene_D3D11(V, P, Sprite::DrawMode::NORMAL);
     }
 
     // Normal Pass
@@ -754,8 +776,15 @@ void Render() {
     g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_context11->IASetInputLayout(g_inputlayout_voxel11);
     g_context11->PSSetSamplers(0, 1, &g_sampler11);
+    g_context11->RSSetState(g_rsstate_normal11);
 
-    RenderScene_D3D11(cam->GetViewMatrix_D3D11(), g_projection_d3d11);
+    RenderScene_D3D11(cam->GetViewMatrix_D3D11(), g_projection_d3d11, Sprite::DrawMode::NORMAL);
+
+    // Wireframe Pass
+    g_context11->RSSetState(g_rsstate_wireframe11);
+    RenderScene_D3D11(cam->GetViewMatrix_D3D11(), g_projection_d3d11, Sprite::DrawMode::WIREFRAME);
+
+    g_context11->RSSetState(nullptr);
 
     GameScene* scene = GetCurrentGameScene();
 
