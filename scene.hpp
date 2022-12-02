@@ -48,7 +48,37 @@ public:
 
 class ClimbScene : public GameScene {
 public:
-  
+  // Static level info
+  class LevelData {
+  public:
+    struct PlatformEntry {
+      float x, y;
+      std::string tag;
+      PlatformEntry() : x(0), y(0), tag("") {}
+    };
+
+    int bgid;
+    std::vector<PlatformEntry> entries;
+
+    LevelData() : bgid(0) {}
+
+    void AddEntry(float x, float y, const std::string& tag) {
+      PlatformEntry e;
+      e.x = x;
+      e.y = y;
+      e.tag = tag;
+      entries.push_back(e);
+    }
+    bool Empty() {
+      return entries.empty();
+    }
+    void Print() {
+      printf("bgid=%d, %zu entries\n", bgid, entries.size());
+    }
+  };
+  void LoadLevelData();
+  std::vector<LevelData> levels;
+
   class Platform {
   public:
     Sprite* sprite;

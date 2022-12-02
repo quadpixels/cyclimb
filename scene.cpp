@@ -192,6 +192,7 @@ void ClimbScene::Init() {
   player_x_thrust = 0;
   
   // Load Level
+  LoadLevelData();
   num_coins = 0; num_coins_total = 0;
   curr_level = 1;
   SetBackground(0);
@@ -467,6 +468,10 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
     std::wstring text = std::to_wstring(platforms.size()) + L" 个平台";
     glm::mat4 uitransform(1);
     RenderText(api, text, 32, 32, 1.0f, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
+
+    swprintf(buf, 50, L"%.1f, %.1f, %.1f",
+      camera->pos.x, camera->pos.y, camera->pos.z);
+    RenderText(api, buf, 32, 64, 1.0f, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
   }
 
   std::wstring text(buf);
@@ -654,11 +659,45 @@ void ClimbScene::SetAnchorPoint(glm::vec3 anchor_p, glm::vec3 anchor_dir) {
   printf("[SetAnchorPoint]\n");
 }
 
+void ClimbScene::LoadLevelData() {
+  std::vector<std::string> data = ReadLinesFromFile("cyclimb_levels.txt");
+  printf("Level data has %lu lines\n", data.size());
+  
+  LevelData level;
+  int curr_level = 0;
+  for (std::string line : data) {
+    std::vector<std::string> l = SplitStringBySpace(line);
+    if (l[0] == "level") {
+      curr_level = std::stoi(l[1]);
+      if (!level.Empty()) {
+        levels.push_back(level);
+        level = LevelData();
+      }
+    }
+    else if (l[0] == "bgid") {
+      level.bgid = std::stoi(l[1]);
+    }
+    else if (l.size() == 3) {
+      float x = std::stof(l[1]), y = std::stof(l[2]);
+      level.AddEntry(x, y, l[0]);
+    }
+  }
+  if (!level.Empty()) {
+    levels.push_back(level);
+  }
+  printf("%zd levels\n", levels.size());
+}
+
 void ClimbScene::StartLevel(int levelid) {
-  curr_level = levelid;
+  printf("StartLevel %d\n", levelid);
+  int idx = levelid - 1;
+  if (idx < 0 || idx >= levels.size()) return;
+
+  curr_level = idx;
   curr_bgid = 0;
   curr_level_time = 0;
   is_all_rockets_collected = false;
+  num_coins = num_coins_total = 0;
   
   for (Platform* s : platforms) { delete s; }
   platforms.clear();
@@ -666,50 +705,39 @@ void ClimbScene::StartLevel(int levelid) {
   coins.clear();
   
   // Platform sprite
-  std::vector<std::string> data = ReadLinesFromFile("cyclimb_levels.txt");
-  printf("Level data has %lu lines\n", data.size());
+  LevelData& ldata = levels.at(idx);
   
-  int curr_level = 0;
-  num_coins = num_coins_total = 0;
-  
-  for (std::string line : data) {
-    std::vector<std::string> l = SplitStringBySpace(line);
-    if (l[0] == "level") { curr_level = std::stoi(l[1]); }
-    if (curr_level == levelid) {
-      if (l[0] == "plat0") {
-        float x = std::stof(l[1]), y = std::stof(l[2]);
-        ChunkSprite* s = new ChunkSprite(model_platforms[0]);
-        s->pos = glm::vec3(x, y, 0);
-        platforms.push_back(new NormalPlatform(s));
-        printf("plat0 at (%g,%g)\n", x, y);
-      } else if (l[0] == "damagable0") {
-        float x = std::stof(l[1]), y = std::stof(l[2]);
-        ChunkSprite* s = new ChunkSprite(model_platforms[1]);
-        s->pos = glm::vec3(x, y, 0);
-        platforms.push_back(new DamagablePlatform(s));
-        printf("damagable0 at (%g,%g)\n", x, y);
-      } else if (l[0] == "coin") {
-        float x = std::stof(l[1]), y = std::stof(l[2]);
-        ChunkSprite* s = new ChunkSprite(model_coin);
-        s->pos = glm::vec3(x, y, 0);
-        coins.push_back(s);
-        printf("coin at (%g,%g)\n", x, y);
-        num_coins ++;
-        num_coins_total ++;
-      } else if (l[0] == "exit") {
-        float x = std::stof(l[1]), y = std::stof(l[2]);
-        ChunkSprite* s = new ChunkSprite(model_exit);
-        s->pos = glm::vec3(x, y, 0);
-        platforms.push_back(new ExitPlatform(s));
-        printf("exit at (%g,%g)\n", x, y);
-      }
-      else if (l[0] == "bgid") {
-        curr_bgid = std::stoi(l[1]);
-        SetBackground(curr_bgid);
-      }
+  for (LevelData::PlatformEntry entry : ldata.entries) {
+    if (entry.tag == "plat0") {
+      ChunkSprite* s = new ChunkSprite(model_platforms[0]);
+      s->pos = glm::vec3(entry.x, entry.y, 0);
+      platforms.push_back(new NormalPlatform(s));
+      printf("plat0 at (%g,%g)\n", entry.x, entry.y);
+    }
+    else if (entry.tag == "damagable0") {
+      ChunkSprite* s = new ChunkSprite(model_platforms[1]);
+      s->pos = glm::vec3(entry.x, entry.y, 0);
+      platforms.push_back(new DamagablePlatform(s));
+      printf("damagable0 at (%g,%g)\n", entry.x, entry.y);
+    }
+    else if (entry.tag == "coin") {
+      ChunkSprite* s = new ChunkSprite(model_coin);
+      s->pos = glm::vec3(entry.x, entry.y, 0);
+      coins.push_back(s);
+      printf("coin at (%g,%g)\n", entry.x, entry.y);
+      num_coins++;
+      num_coins_total++;
+    }
+    else if (entry.tag == "exit") {
+      ChunkSprite* s = new ChunkSprite(model_exit);
+      s->pos = glm::vec3(entry.x, entry.y, 0);
+      platforms.push_back(new ExitPlatform(s));
+      printf("exit at (%g,%g)\n", entry.x, entry.y);
     }
   }
-  
+
+  SetBackground(ldata.bgid);
+
   initial_coins = coins;
   
   is_key_pressed = false;
