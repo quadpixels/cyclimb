@@ -40,8 +40,9 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
     }
   }
   else {
-    if (d3d11_vertex_buffer != nullptr)
-      d3d11_vertex_buffer->Release();
+    if (d3d11_vertex_buffer != nullptr) {
+      //d3d11_vertex_buffer->Release(); // TODO: 为什么导致crash
+    }
   }
 
   // axis=0  x=u y=v z=w
