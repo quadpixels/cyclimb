@@ -2,36 +2,41 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
-
+#ifdef WIN32
 #include <DirectXMath.h>
-
+#endif
 GLuint vao, vbo;
 extern int WIN_W, WIN_H;
 extern int g_font_size;
+#ifdef WIN32
 extern ID3D11Device *g_device11;
 extern ID3D11DeviceContext *g_context11;
 extern ID3D11VertexShader* g_vs_textrender;
 extern ID3D11PixelShader* g_ps_textrender;
 extern ID3DBlob *g_vs_textrender_blob;
 extern void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
+ID3D11InputLayout *input_layout11;
+#endif
 extern GLuint g_programs[];
 
-ID3D11InputLayout *input_layout11;
 
 std::map<wchar_t, Character> g_characters;
+#ifdef WIN32
 std::map<wchar_t, Character_D3D11> g_characters_d3d11;
+#endif
 FT_Face g_face;
+
+#ifdef WIN32
 struct TextCbPerScene {
   DirectX::XMVECTOR screensize; // Assume alignment at float4 boundary
   DirectX::XMMATRIX transform;
   DirectX::XMMATRIX projection;
   DirectX::XMVECTOR textcolor;
 };
-
 static ID3D11Buffer* vertex_buffer11;
 static ID3D11Buffer* textcb_perscene11;
-
 extern ID3D11BlendState* g_blendstate11;
+#endif
 
 void do_InitCommon() {
   // Face
@@ -40,6 +45,7 @@ void do_InitCommon() {
     printf("Error: cannot init FreeType library\n");
   }
   const char* ttfs[] = {
+    "/"
     "/usr/share/fonts/truetype/arphic/uming.ttc",
     "C:\\Windows\\Fonts\\simsun.ttc",
   };
@@ -75,6 +81,7 @@ void InitTextRender() {
   do_InitCommon();
 }
 
+#ifdef WIN32
 void InitTextRender_D3D11() {
   // Declare a dynamic Vertex Buffer
   // 4 floats per vertex, 3 vertex per triangle, 2 triangles per character, so 6*4
@@ -103,6 +110,7 @@ void InitTextRender_D3D11() {
 
   do_InitCommon();
 }
+#endif
 
 Character GetCharacter(wchar_t ch) {
 	if (g_characters.find(ch) == g_characters.end()) {
@@ -140,6 +148,7 @@ Character GetCharacter(wchar_t ch) {
 	return g_characters[ch];
 }
 
+#ifdef WIN32
 Character_D3D11 GetCharacter_D3D11(wchar_t ch) {
   if (g_characters_d3d11.find(ch) == g_characters_d3d11.end()) {
     if (FT_Load_Char(g_face, ch, FT_LOAD_RENDER)) {
@@ -189,6 +198,7 @@ Character_D3D11 GetCharacter_D3D11(wchar_t ch) {
 
   return g_characters_d3d11[ch];
 }
+#endif
 
 void MeasureTextWidth(std::wstring text, float *w) {
   float ret = 0.0f;
@@ -247,6 +257,7 @@ void do_RenderText(GLuint program, std::wstring text, GLfloat x, GLfloat y, GLfl
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+#ifdef WIN32
 void do_RenderText_D3D11(std::wstring text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform) {
   g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   g_context11->IASetInputLayout(input_layout11);
@@ -303,10 +314,14 @@ void do_RenderText_D3D11(std::wstring text, float x, float y, float scale, glm::
     x += (ch.advance >> 6) * scale;
   }
 }
+#endif
 
 void RenderText(GraphicsAPI api, std::wstring text, GLfloat x, GLfloat y, GLfloat scale, glm::vec3 color, glm::mat4 transform) {
   switch (api) {
+#ifdef WIN32
     case ClimbD3D11: do_RenderText_D3D11(text, x, y, scale, color, transform); break;
+#endif
     case ClimbOpenGL: do_RenderText(g_programs[6], text, x, y, scale, color, transform); break;
+    default: break;
   }
 }

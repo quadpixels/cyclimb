@@ -1,8 +1,14 @@
 #include "util.hpp"
 #include <fstream>
+#ifdef WIN32
 #include <Windows.h> // GetTickCount
+#else
+#include <sys/time.h>
+#endif
 
 extern int WIN_W, WIN_H;
+
+#ifdef WIN32
 extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11VertexShader* g_vs_default_palette, * g_vs_simpletexture;
@@ -15,9 +21,11 @@ extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::X
 extern ID3DBlob* g_vs_textrender_blob, * g_ps_textrender_blob;
 extern ID3D11BlendState* g_blendstate11;
 extern ID3D11Buffer* g_simpletexture_cb;
+#endif
 
 extern bool IsGL();
 
+#ifdef WIN32
 void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m) {
   for (int r = 0; r < 4; r++) {
     for (int c = 0; c < 4; c++) {
@@ -26,9 +34,24 @@ void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m) {
   }
   //out->r[3].m128_f32[2] *= -1;
 }
+#endif
 
 unsigned GetElapsedMillis() {
+  #ifdef WIN32
   return GetTickCount();
+  #else
+  static bool t0_inited = false;
+  static struct timeval t0;
+  if (!t0_inited) {
+    t0_inited = true;
+    gettimeofday(&t0, nullptr);
+  }
+  struct timeval t1;
+  gettimeofday(&t1, nullptr);
+  long ms = (t1.tv_sec - t0.tv_sec) * 1000 +
+            (t1.tv_usec - t0.tv_usec) / 1000;
+  return static_cast<unsigned>(ms);
+  #endif
 }
 
 void MyCheckGLError(const char* tag) {
@@ -121,6 +144,7 @@ float FullScreenQuad::quad_vertices_and_attrib[] = {
   -1.0,  1.0, 0.0, 0.0,
 };
 
+#ifdef WIN32
 FullScreenQuad::FullScreenQuad(ID3D11ShaderResourceView* _srv) {
   texture_srv = _srv;
 }
@@ -168,6 +192,7 @@ ID3D11InputLayout* FullScreenQuad::d3d11_input_layout;
 ID3D11Buffer* ImageSprite2D::d3d11_vertex_buffer, *ImageSprite2D::d3d11_vertex_buffer_staging;
 ID3D11InputLayout* ImageSprite2D::d3d11_input_layout;
 std::unordered_map<ID3D11ShaderResourceView*, std::pair<int, int> > ImageSprite2D::tex_dims;
+#endif
 
 float ImageSprite2D::quad_vertices_and_attrib[] = {
   -1.0,  1.0, 0.0, 0.0,
@@ -178,7 +203,7 @@ float ImageSprite2D::quad_vertices_and_attrib[] = {
   -1.0, -1.0, 0.0, 1.0,
   -1.0,  1.0, 0.0, 0.0,
 };
-
+#ifdef WIN32
 void ImageSprite2D::Init_D3D11() {
   D3D11_BUFFER_DESC desc = { };
   desc.Usage = D3D11_USAGE_DYNAMIC;
@@ -261,6 +286,7 @@ void ImageSprite2D::Render_D3D11() {
   g_context11->PSSetConstantBuffers(0, 0, nullptr);
   g_context11->Draw(6, 0);
 }
+#endif
 
 DirectionalLight::DirectionalLight(const glm::vec3& _dir, const glm::vec3& _pos) {
   dir = glm::normalize(_dir); pos = _pos;
@@ -286,6 +312,7 @@ DirectionalLight::DirectionalLight(const glm::vec3& _dir, const glm::vec3& _pos,
   this->fov = fov;
 }
 
+#ifdef WIN32
 DirectX::XMMATRIX DirectionalLight::GetP_D3D11_DXMath() {
   DirectX::XMMATRIX P_D3D11;
   if (!is_spotlight_hack)
@@ -344,6 +371,7 @@ DirectX::XMVECTOR DirectionalLight::GetDir_D3D11() {
   dir1.m128_f32[2] = -dir.z;
   return dir1;
 }
+#endif
 
 void PrintMat4(const glm::mat4& m, const char* tag) {
   printf("%s =\n", tag);

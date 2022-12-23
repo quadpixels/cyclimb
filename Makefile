@@ -1,28 +1,30 @@
 all: cyclimb
 
+CFLAGS=-g
+
 textrender.o: textrender.cpp
-	g++ -I/usr/include/freetype2 $^ -c -o $@
+	g++ -I/usr/include/freetype2 $(CFLAGS) $^ -c -o $@
 
 chunk.o: chunk.cpp chunk.hpp
-	g++ $< -c -o $@ -O2
+	g++ $(CFLAGS) $< -c -o $@ -O
 
 game.o: game.cpp game.hpp
-	g++ $< -c -o $@ -O2
+	g++ $(CFLAGS) $< -c -o $@
 
 scene.o: scene.cpp scene.hpp
-	g++ $< -g -c -o $@
+	g++ $(CFLAGS) $< -g -c -o $@
 
 chunkindex.o: chunkindex.cpp chunkindex.hpp
-	g++ $< -c -o $@ -O2
+	g++ $(CFLAGS) $< -c -o $@ -O2
 
 gles/chunk.o: gles/chunk.cpp
-	g++ $^ -c -o $@ -O2
+	g++ $(CFLAGS) $^ -c -o $@ -O2
 
 main.o: main.cpp
-	g++ $^ -c -o $@
+	g++ $(CFLAGS) $^ -c -o $@
 
 %.o : %.cpp
-	g++ $^ -g -c -o $@
+	g++ $(CFLAGS) $^ -g -c -o $@
 
 
 TARGETS=main.o testshapes.o shader.o camera.o \
@@ -32,7 +34,7 @@ TARGETS=main.o testshapes.o shader.o camera.o \
 
 
 cyclimb: $(TARGETS)
-	g++ $^ -o $@ -lGL -lGLEW -lglut -lGLU -lfreetype -g
+	g++ $(CFLAGS) $^ -o $@ -lGL -lGLEW -lglut -lGLU -lfreetype -lglfw
 
 clean:
 	@if [ -f cyclimb ]; then\

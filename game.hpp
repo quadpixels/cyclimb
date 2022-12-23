@@ -14,11 +14,13 @@
 
 #include <vector>
 #include <string>
+#ifdef WIN32
 #include <DirectXMath.h>
+extern ID3D11ShaderResourceView* g_helpinfo_srv11;
+#endif
 #undef max
 #undef min
 
-extern ID3D11ShaderResourceView* g_helpinfo_srv11;
 
 //
 class Particles {
@@ -106,8 +108,10 @@ public:
 
   // Dynamic Sprites in Help Screen
   std::vector<Sprite*> sprites_helpinfo;
+#ifdef WIN32
   std::vector<D3D11_VIEWPORT> viewports11_helpinfo;
   D3D11_VIEWPORT viewport_vollight;
+#endif
   float secs_elapsed;
   void PrepareLightsForGoalDemo();
   void RenderLightsForGoalDemo();

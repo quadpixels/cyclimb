@@ -6,8 +6,10 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
+#ifdef WIN32
 #include <d3d11.h>
 #include <DirectXMath.h>
+#endif
 #undef max
 #undef min
 
@@ -26,7 +28,9 @@ public:
   void Render();
   void Render(const glm::mat4& M);
   void Render_D3D11();
+#ifdef WIN32
   void Render_D3D11(const DirectX::XMMATRIX& M);
+#endif
   void SetVoxel(unsigned x, unsigned y, unsigned z, int v);
   int  GetVoxel(unsigned x, unsigned y, unsigned z);
   void Fill(int vox);
@@ -35,7 +39,9 @@ public:
 private:
   unsigned vao, vbo, tri_count;
 
+#ifdef WIN32
   ID3D11Buffer* d3d11_vertex_buffer;
+#endif
 
   static float l0;
   int* light;

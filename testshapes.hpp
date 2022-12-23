@@ -4,8 +4,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include "shader.hpp"
-
+#ifdef WIN32
 #include <d3d11.h>
+#endif
 #undef min
 #undef max
 
@@ -15,15 +16,19 @@ public:
   static void Init(unsigned);
   static void Init_D3D11();
   void Render();
+#ifdef WIN32
   void Render_D3D11();
+#endif
 private:
   static GLuint vao, vbo;
   static float  base_vertices_and_attrib_ccw[3 * 6];
   static float  base_vertices_and_attrib_cw[3 * 4];
   static unsigned program;
 
+#ifdef WIN32
   static ID3D11Buffer* d3d11buffer;
   static ID3D11InputLayout* d3d11_input_layout;
+#endif
 public:
   glm::vec3 pos;
 };
@@ -41,8 +46,10 @@ private:
   static float base_vertices_and_attrib_cw[36 * 6];
   static unsigned program;
 
+#ifdef WIN32
   static ID3D11Buffer* d3d11_vertex_buffer;
   static ID3D11InputLayout* d3d11_input_layout;
+#endif
 public:
   glm::vec3 pos;
 };

@@ -1,4 +1,6 @@
-﻿#include <windows.h>
+﻿#ifdef WIN32
+#include <windows.h>
+#endif
 
 #include "game.hpp"
 #include "chunkindex.hpp"
@@ -9,7 +11,9 @@
 #include "sprite.hpp"
 #include "scene.hpp"
 #include <stddef.h>
+#ifdef WIN32
 #include <DirectXMath.h>
+#endif
 #include <sstream>
 
 extern GraphicsAPI g_api;
@@ -23,6 +27,8 @@ extern ChunkGrid* g_chunkgrid[4];
 extern std::vector<Sprite*> g_projectiles;
 extern int g_font_size;
 extern GLFWwindow* g_window;
+
+#ifdef WIN32
 extern void UpdateSimpleTexturePerSceneCB(const float x, const float y, const float alpha);
 extern ID3D11DeviceContext* g_context11;
 extern HWND g_hwnd;
@@ -40,7 +46,6 @@ extern DirectX::XMMATRIX g_projection_helpinfo_d3d11;
 extern D3D11_VIEWPORT g_viewport11;
 extern ID3D11Buffer* g_perscene_cb_light11;
 extern struct VolumetricLightCB g_vol_light_cb;
-
 // For render lights
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11InputLayout* g_inputlayout_for_light11;
@@ -50,9 +55,10 @@ extern ID3D11PixelShader* g_ps_light;
 extern ID3D11VertexShader* g_vs_light;
 extern ID3D11ShaderResourceView* g_gbuffer_srv11;
 extern ID3D11SamplerState* g_sampler11;
-
 extern void UpdatePerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
 extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
+#endif
+
 extern GameScene* GetCurrentGameScene();
 
 bool g_debug = true;
@@ -121,7 +127,9 @@ MainMenu::MainMenu() {
   is_in_help = false;
   fade_alpha0 = fade_alpha1 = 0;
   fade_millis0 = fade_millis1 = 0;
+#ifdef WIN32
   fsquad = new FullScreenQuad(ClimbScene::helpinfo_srv);
+#endif
 
   sprites_helpinfo.push_back(new ChunkSprite(ClimbScene::model_char));
   sprites_helpinfo.push_back(new ChunkSprite(ClimbScene::model_anchor));
@@ -154,6 +162,7 @@ MainMenu::MainMenu() {
   cam_helpinfo->InitForHelpInfo();
   
   const int W0 = 1280, H0 = 720; // Normalize to this
+#ifdef WIN32
   int viewports[][4] = {
     { 264, 0, 192, 192 }, // 主角
     { 582, 23, 128, 128 }, // anchor
@@ -174,11 +183,10 @@ MainMenu::MainMenu() {
     vp.MaxDepth = 1;
     viewports11_helpinfo.push_back(vp);
   }
-
   // TODO: Fix discrepancy between position of rendered goal platform and light shaft
   viewport_vollight = viewports11_helpinfo[6];
   viewport_vollight.TopLeftY += 32 * 1.0f / H0 * WIN_H;
-  
+
   // Button pattern Q, W, E, D, C, S, Z, A
   const int dx[] = { -1, 0, 1, 1, 1, 0, -1, -1 };
   const int dy[] = { -1, -1, -1, 0, 1, 1, 1, 0 };
@@ -188,6 +196,7 @@ MainMenu::MainMenu() {
     const glm::vec2 p{ 640 + 42 * dx[i], 186 + 42 * dy[i] };
     keys_sprites.push_back(new ImageSprite2D(ClimbScene::keys_srv, tex, p, he));
   }
+#endif
 
   lights[0] = new DirectionalLight(glm::vec3(1, -1, 0), glm::vec3(-100, 0, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
   lights[1] = new DirectionalLight(glm::vec3(-1, -1, 0), glm::vec3(100, 0, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
@@ -243,10 +252,10 @@ void MainMenu::PrepareLightsForGoalDemo() {
   lights[1]->dir = x;
   x = glm::normalize(glm::vec3(cos(a - tmp) * dx, -dy, sin(a - tmp) * dx));
   lights[2]->dir = x;
-  
+
+#ifdef WIN32  
   D3D11_MAPPED_SUBRESOURCE mapped;
   assert(SUCCEEDED(g_context11->Map(g_perscene_cb_light11, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)));
-
   g_vol_light_cb.spotlightCount = 0;
     
   glm::vec3 pos(0, 0, 0);
@@ -275,9 +284,11 @@ void MainMenu::PrepareLightsForGoalDemo() {
   memcpy(mapped.pData, &g_vol_light_cb, sizeof(g_vol_light_cb));
 
   g_context11->Unmap(g_perscene_cb_light11, 0);
+#endif
 }
 
 void MainMenu::RenderLightsForGoalDemo() {
+#ifdef WIN32
   g_context11->IASetInputLayout(g_inputlayout_for_light11);
   g_context11->VSSetShader(g_vs_light, nullptr, 0);
   g_context11->PSSetShader(g_ps_light, nullptr, 0);
@@ -290,11 +301,13 @@ void MainMenu::RenderLightsForGoalDemo() {
   unsigned zero = 0;
   g_context11->IASetVertexBuffers(0, 1, &g_fsquad_for_light11, &stride, &zero);
   g_context11->Draw(6, 0);
+#endif
 }
 
 void MainMenu::DrawHelpScreen() {
   // Directly render to backbuffer
   // Normal Pass
+#ifdef WIN32
   ID3D11RenderTargetView* rtvs[] = { g_backbuffer_rtv11, nullptr }; // Do not write gbuffer
   g_context11->OMSetRenderTargets(2, rtvs, g_dsv11);
   g_context11->RSSetScissorRects(1, &g_scissorrect11);
@@ -354,6 +367,7 @@ void MainMenu::DrawHelpScreen() {
   g_context11->RSSetViewports(1, &g_viewport11);
 
   for (ImageSprite2D* sp : keys_sprites) sp->Render_D3D11();
+#endif
 }
 
 void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
@@ -388,19 +402,22 @@ void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
   }
 
   // Background
+#ifdef WIN32
   UpdateSimpleTexturePerSceneCB(0, 0, fade_alpha);
   fsquad->Render_D3D11();
-  
+#endif
   if (is_in_help) {
     DrawHelpScreen();
   }
 
   // DBG
+  #ifdef WIN32
   {
     std::wstringstream ws;
     ws << std::to_wstring(curr_menu.size()) << " | " << std::to_wstring(curr_selection.size());
     RenderText(ClimbD3D11, ws.str(), 20, 700, 1, glm::vec3(0, 1, 1), uitransform);
   }
+  #endif
 }
 
 void MainMenu::OnUpDownPressed(int delta) {
@@ -478,7 +495,9 @@ void MainMenu::OnEnter() {
         glfwSetWindowShouldClose(g_window, true); 
         glfwDestroyWindow(g_window);
         // close D3D window
-        DestroyWindow(g_hwnd);
+        #ifdef WIN32
+          DestroyWindow(g_hwnd);
+        #endif
         break; // Exit
       }
       default: break;

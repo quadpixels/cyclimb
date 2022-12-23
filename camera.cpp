@@ -17,6 +17,7 @@ glm::mat4 Camera::GetViewMatrix() {
 }
 
 // Will convert world coordinates accordingly
+#ifdef WIN32
 DirectX::XMMATRIX Camera::GetViewMatrix_D3D11() {
   DirectX::XMVECTOR eye_d3d, lookdir_d3d, target_d3d, up_d3d;
   
@@ -34,6 +35,7 @@ DirectX::XMMATRIX Camera::GetViewMatrix_D3D11() {
 
   return DirectX::XMMatrixLookAtLH(eye_d3d, DirectX::XMVectorAdd(eye_d3d, lookdir_d3d), up_d3d);
 }
+#endif
 
 void Camera::Update(float sec) {
   pos += vel * sec;
@@ -82,6 +84,7 @@ void Camera::RotateAlongPoint(glm::vec3 p, glm::vec3 local_axis, float rad) {
   pos = p - (glm::normalize(lookdir) * dist);
 }
 
+#ifdef WIN32
 DirectX::XMVECTOR Camera::GetPos_D3D11() {
   DirectX::XMVECTOR ret = { };
   ret.m128_f32[0] = pos.x;
@@ -90,3 +93,4 @@ DirectX::XMVECTOR Camera::GetPos_D3D11() {
   ret.m128_f32[3] = 1.0f;
   return ret;
 }
+#endif

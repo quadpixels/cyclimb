@@ -9,20 +9,25 @@ int      Chunk::size = 32;
 unsigned Chunk::program = 0;
 
 extern bool IsGL();
+extern Camera* GetCurrentSceneCamera();
+
+#ifdef WIN32
+extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
 extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11Buffer* g_perobject_cb_default_palette;
-extern Camera* GetCurrentSceneCamera();
 extern DirectX::XMMATRIX g_projection_d3d11;
-extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
 
 struct DefaultPalettePerObjectCB {
   DirectX::XMMATRIX M, V, P;
 };
+#endif
 
 Chunk::Chunk() {
   vao = vbo = tri_count = 0;
+#ifdef WIN32
   d3d11_vertex_buffer = nullptr;
+#endif
   block = new unsigned char[size * size * size];
   light = new int[size * size * size];
   memset(block, 0x00, sizeof(char)*size*size*size);
@@ -40,9 +45,11 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
     }
   }
   else {
+    #ifdef WIN32
     if (d3d11_vertex_buffer != nullptr) {
       //d3d11_vertex_buffer->Release(); // TODO: 为什么导致crash
     }
+    #endif
   }
 
   // axis=0  x=u y=v z=w
@@ -260,6 +267,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
     MyCheckGLError("Chunk::BuildBuffer");
   }
   else {
+    #ifdef WIN32
     if (tri_count > 0) {
       D3D11_BUFFER_DESC desc = { };
       desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
@@ -273,6 +281,7 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
 
       assert(SUCCEEDED(g_device11->CreateBuffer(&desc, &srd, &d3d11_vertex_buffer)));
     }
+    #endif
   }
 
   delete[] tmp_vert; delete[] tmp_norm; delete[] tmp_data; delete[] tmp_ao;
@@ -430,6 +439,7 @@ void Chunk::Render() {
   Render(M);
 }
 
+#ifdef WIN32
 void Chunk::Render_D3D11(const DirectX::XMMATRIX& M) {
   if (tri_count < 1) return;
   UpdateGlobalPerObjectCB(&M, nullptr, nullptr);
@@ -444,6 +454,7 @@ void Chunk::Render_D3D11() {
   M *= DirectX::XMMatrixTranslation(pos.x, pos.y, -pos.z);
   Render_D3D11(M);
 }
+#endif
 
 void Chunk::SetVoxel(unsigned x, unsigned y, unsigned z, int v) {
   block[IX(x,y,z)] = v;

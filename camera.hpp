@@ -6,14 +6,18 @@
 #include <glm/gtc/matrix_transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/transform.hpp>
+#ifdef WIN32
 #include <DirectXMath.h>
+#endif
 
 class Camera {
 public:
   Camera();
   glm::mat4 GetViewMatrix();
+#ifdef WIN32
   DirectX::XMMATRIX GetViewMatrix_D3D11();
   DirectX::XMVECTOR GetPos_D3D11();
+#endif
   void Update(float);
   glm::vec3 pos, lookdir, up, vel; // in world coordinates
 

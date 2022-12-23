@@ -29,7 +29,9 @@ public:
   glm::vec3 scale, anchor;
   DrawMode draw_mode;
   virtual void Render() = 0;
+#ifdef WIN32
   virtual void Render_D3D11() = 0;
+#endif
   virtual void Update(float);
   virtual bool IntersectPoint(const glm::vec3& p_world) = 0;
   virtual bool IntersectPoint(const glm::vec3& p_world, int tolerance) = 0;
@@ -52,7 +54,9 @@ public:
   virtual bool IntersectPoint(const glm::vec3& p_world, int tolerance);
   ChunkIndex* chunk;
   virtual void Render();
+#ifdef WIN32
   virtual void Render_D3D11();
+#endif
   AABB GetAABBInWorld();
 };
 

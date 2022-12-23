@@ -16,11 +16,13 @@ public:
   virtual void                  PrepareSpriteListForRender() = 0;
   virtual void                  PreRender()  = 0;
   virtual std::vector<Sprite*>* GetSpriteListForRender() = 0;
+#ifdef WIN32
   virtual void                  PrepareLights() = 0;
   virtual void                  RenderLights();
+  virtual void                  RenderHUD_D3D11() = 0;
+#endif
   virtual void                  PostRender() = 0;
   virtual void                  RenderHUD() = 0;
-  virtual void                  RenderHUD_D3D11() = 0;
   virtual void                  Update(float) = 0;
   virtual void                  OnKeyPressed(char key) { };
   virtual void                  OnKeyReleased(char key) { };
@@ -43,8 +45,10 @@ public:
   std::vector<Sprite*>* GetSpriteListForRender();
   void Update(float secs) { };
   void RenderHUD() { };
+#ifdef WIN32
   void RenderHUD_D3D11() { };
   void PrepareLights() { };
+#endif
   bool CanHideMenu() {
     return true;
   }
@@ -193,9 +197,10 @@ public:
   static void InitStatic();
   
   // 资源
+#ifdef WIN32
   static ID3D11Resource* helpinfo_res, *keys_res;
   static ID3D11ShaderResourceView* helpinfo_srv, *keys_srv;
-
+#endif
   static const float SPRING_K; // 弹力系数
   static const float L0      ; // 绳子的初始长度
   static const float GRAVITY;  // 重力加速度

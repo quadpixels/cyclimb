@@ -46,6 +46,7 @@ void ChunkGrid::Render(
   }
 }
 
+#ifdef WIN32
 extern void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
 void ChunkGrid::Render_D3D11(
   const glm::vec3& pos,  const glm::vec3& scale,
@@ -97,6 +98,7 @@ void ChunkGrid::Render_D3D11(
     }
   }
 }
+#endif
 
 Chunk* ChunkGrid::GetChunk(int x, int y, int z, int* local_x, int* local_y, int* local_z) {
   int xx = x / Chunk::size,

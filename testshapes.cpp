@@ -1,17 +1,17 @@
 #include "testshapes.hpp"
 #include "camera.hpp"
+#ifdef WIN32
 #include <DirectXMath.h>
-
+#endif
 // Shapes for testing purposes
 
 unsigned Triangle::program = 0;
 GLuint Triangle::vao = 0;
 GLuint Triangle::vbo = 0;
+
+#ifdef WIN32
 ID3D11Buffer* Triangle::d3d11buffer = nullptr;
 ID3D11InputLayout* Triangle::d3d11_input_layout = nullptr;
-extern glm::mat4 g_projection;
-extern Camera* GetCurrentSceneCamera();
-
 extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext *g_context11;
 extern ID3D11VertexShader* g_vs_default_palette, *g_vs_simpletexture;
@@ -24,6 +24,10 @@ extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::X
 extern ID3DBlob* g_vs_textrender_blob, * g_ps_textrender_blob;
 extern ID3D11BlendState* g_blendstate11;
 extern ID3D11Buffer* g_simpletexture_cb;
+#endif
+
+extern glm::mat4 g_projection;
+extern Camera* GetCurrentSceneCamera();
 
 float Triangle::base_vertices_and_attrib_ccw[] = {
   0.0f, 0.0f, 0.0f, 0.0f, 128.0f, 0.0f,
@@ -37,10 +41,11 @@ float Triangle::base_vertices_and_attrib_cw[] = {
   9.0f, 0.0f, 0.0f, 240.0f,
 };
 
+#ifdef WIN32
 struct DefaultPalettePerObjectCB {
   DirectX::XMMATRIX M, V, P;
 };
-
+#endif
 
 void Triangle::Init(unsigned prog) {
   if (vao != 0) return;
@@ -76,6 +81,7 @@ void Triangle::Init(unsigned prog) {
   glBindVertexArray(0);
 }
 
+#ifdef WIN32
 void Triangle::Init_D3D11() {
   D3D11_BUFFER_DESC desc = { };
   desc.Usage = D3D11_USAGE_IMMUTABLE;
@@ -96,6 +102,7 @@ void Triangle::Init_D3D11() {
   assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc1, 4, g_vs_default_palette_blob->GetBufferPointer(),
     g_vs_default_palette_blob->GetBufferSize(), &d3d11_input_layout)));
 }
+#endif
 
 Triangle::Triangle() {
 }
@@ -116,6 +123,7 @@ void Triangle::Render() {
   glUseProgram(0);
 }
 
+#ifdef WIN32
 void Triangle::Render_D3D11() {
   g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   const UINT stride = sizeof(float)*4, zero = 0; // Why do I need to specify the stride here again
@@ -131,13 +139,16 @@ void Triangle::Render_D3D11() {
 
   g_context11->Draw(3, 0);
 }
+#endif
 
 //
 
 unsigned ColorCube::program = 0;
 GLuint   ColorCube::vao = 0, ColorCube::vbo = 0;
+#ifdef WIN32
 ID3D11InputLayout* ColorCube::d3d11_input_layout = nullptr;
 ID3D11Buffer* ColorCube::d3d11_vertex_buffer = nullptr;
+#endif
 float ColorCube::base_vertices_and_attrib[] = {
   -0.5f, -0.5f, -0.5f,  8.0f, 0.0f, 0.0f,
    0.5f,  0.5f, -0.5f,  8.0f, 0.0f, 0.0f,
@@ -262,6 +273,7 @@ void ColorCube::Init(unsigned prog) {
   glBindVertexArray(0);
 }
 
+#ifdef WIN32
 void ColorCube::Init_D3D11() {
   // Vertex Buffer
   D3D11_BUFFER_DESC desc = { };
@@ -283,6 +295,7 @@ void ColorCube::Init_D3D11() {
   assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc1, 4, g_vs_default_palette_blob->GetBufferPointer(),
     g_vs_default_palette_blob->GetBufferSize(), &d3d11_input_layout)));
 }
+#endif
 
 void ColorCube::Render() {
   glUseProgram(program);
@@ -300,6 +313,7 @@ void ColorCube::Render() {
   glUseProgram(0);
 }
 
+#ifdef WIN32
 void ColorCube::Render_D3D11() {
   g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   const UINT stride = sizeof(float) * 6, zero = 0; // I need to specify the stride here again
@@ -318,4 +332,4 @@ void ColorCube::Render_D3D11() {
   g_context11->VSSetConstantBuffers(0, 1, &g_perobject_cb_default_palette);
   g_context11->Draw(36, 0);
 }
-
+#endif

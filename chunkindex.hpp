@@ -86,11 +86,13 @@ public:
       const glm::vec3& scale,
       const glm::mat3& orientation,
       const glm::vec3& anchor) = 0;
+#ifdef WIN32
   virtual void Render_D3D11(
     const glm::vec3& pos,
     const glm::vec3& scale,
     const glm::mat3& orientation,
     const glm::vec3& anchor) = 0;
+#endif
   virtual ~ChunkIndex() {}
   virtual void Fill(int vox) = 0;
   glm::vec3 GetCentroid() { return glm::vec3(x_len*0.5f, z_len*0.5f, y_len*0.5f); }
@@ -110,12 +112,14 @@ public:
     const glm::vec3& scale,
     const glm::mat3& orientation,
     const glm::vec3& anchor);
+#ifdef WIN32
   virtual void Render_D3D11(
     const glm::vec3& pos,
     const glm::vec3& scale,
     const glm::mat3& orientation,
     const glm::vec3& anchor
   );
+#endif
   virtual void SetVoxel(unsigned x, unsigned y, unsigned z, int v);
   virtual void SetVoxel(const glm::vec3& p, int vox);
   virtual void SetVoxelSphere(const glm::vec3& p, float radius, int vox);

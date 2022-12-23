@@ -6,10 +6,11 @@
 #include <math.h>
 #include <assert.h>
 #include <wchar.h>
+#ifdef WIN32
 #include "WICTextureLoader.h"
-
 extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext* g_context11;
+#endif
 
 extern unsigned g_fadein_complete_millis;
 extern unsigned g_last_millis;
@@ -45,8 +46,10 @@ std::vector<Sprite*>* TestShapesScene::GetSpriteListForRender() {
 }
 
 //==========================
+#ifdef WIN32
 ID3D11Resource* ClimbScene::helpinfo_res, *ClimbScene::keys_res;
 ID3D11ShaderResourceView* ClimbScene::helpinfo_srv, *ClimbScene::keys_srv;
+#endif
 ClimbScene* ClimbScene::instance = nullptr;
 std::vector<ChunkGrid*> ClimbScene::model_platforms;
 std::vector<ChunkGrid*> ClimbScene::model_backgrounds1;
@@ -103,6 +106,7 @@ void ClimbScene::InitStatic() {
   model_exit = new ChunkGrid("climb/goal.vox");
 
   if (!IsGL()) {
+#ifdef WIN32
     HRESULT hr = DirectX::CreateWICTextureFromFile(g_device11,
       L"climb\\help.jpg", &helpinfo_res, &helpinfo_srv);
     assert(SUCCEEDED(hr));
@@ -110,6 +114,7 @@ void ClimbScene::InitStatic() {
     hr = DirectX::CreateWICTextureFromFile(g_device11,
       L"climb\\keys.jpg", &keys_res, &keys_srv);
     assert(SUCCEEDED(hr));
+#endif
   }
 }
 
@@ -997,6 +1002,7 @@ void ClimbScene::HideRope() {
 
 // 2019-12-18
 // 2020-01-01 ?????
+#ifdef WIN32
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11InputLayout* g_inputlayout_for_light11;
 extern ID3D11Buffer* g_fsquad_for_light11, *g_perscene_cb_light11;
@@ -1005,7 +1011,6 @@ extern ID3D11PixelShader* g_ps_light;
 extern ID3D11VertexShader* g_vs_light;
 extern ID3D11ShaderResourceView* g_gbuffer_srv11;
 extern ID3D11SamplerState *g_sampler11;
-
 void GameScene::RenderLights() {
   g_context11->IASetInputLayout(g_inputlayout_for_light11);
   g_context11->VSSetShader(g_vs_light, nullptr, 0);
@@ -1020,3 +1025,4 @@ void GameScene::RenderLights() {
   g_context11->IASetVertexBuffers(0, 1, &g_fsquad_for_light11, &stride, &zero);
   g_context11->Draw(6, 0);
 }
+#endif

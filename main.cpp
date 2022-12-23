@@ -806,9 +806,15 @@ int main_opengl(int argc, char** argv) {
   //glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH | GLUT_MULTISAMPLE);
   //glutInitWindowSize(WIN_W, WIN_H);
 
-  glfwInit();
+  int ret = glfwInit();
+  if (ret != true) {
+    const char* desc;
+    int code = glfwGetError(&desc);
+    printf("Cannot initialize glfw, error code %d, description: %s\n",
+      code, desc);
+  }
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
   glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
@@ -830,7 +836,10 @@ int main_opengl(int argc, char** argv) {
 
 
   if (g_window == nullptr) {
-    printf("Failed to create GLFW window\n");
+    const char* desc;
+    int code = glfwGetError(&desc);
+    printf("Failed to create GLFW window, code %d, description %s\n",
+      code, desc);
     glfwTerminate();
     return -1;
   }
@@ -919,5 +928,9 @@ int main(int argc, char** argv) {
   }
 
   if (g_api == ClimbOpenGL) main_opengl(argc, argv);
-  else if (g_api == ClimbD3D11) main_d3d11(argc, argv);
+  else if (g_api == ClimbD3D11) {
+    #ifdef WIN32
+    main_d3d11(argc, argv);
+    #endif
+  }
 }
