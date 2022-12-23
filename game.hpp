@@ -99,6 +99,7 @@ public:
   void ExitMenu();
   bool IsInHelp() { return is_in_help; }
   void DrawHelpScreen();
+  void PrintStatus();
 
   Camera* cam_helpinfo;
   FullScreenQuad* fsquad;

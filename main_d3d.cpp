@@ -837,7 +837,13 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     }
     else {
       bool is_from_exit = true;
-      g_mainmenu->EnterMenu(0, is_from_exit);
+
+      if (g_mainmenu->curr_selection.empty() == false) {
+        is_from_exit = false;
+      }
+      if (is_from_exit) {
+        g_mainmenu->EnterMenu(0, true);
+      }
       g_main_menu_visible = true;
     }
   }

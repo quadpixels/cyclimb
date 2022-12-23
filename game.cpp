@@ -53,6 +53,7 @@ extern ID3D11SamplerState* g_sampler11;
 
 extern void UpdatePerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
 extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
+extern GameScene* GetCurrentGameScene();
 
 bool g_debug = true;
 
@@ -403,6 +404,7 @@ void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
 }
 
 void MainMenu::OnUpDownPressed(int delta) {
+  PrintStatus();
   const int L = int(menuitems.size());
   if (menuitems.empty() == false && curr_selection.empty() == false) {
     int* pCh = &(curr_selection[curr_menu.size()-1]);
@@ -412,6 +414,10 @@ void MainMenu::OnUpDownPressed(int delta) {
 }
 
 void MainMenu::EnterMenu(int idx, bool is_from_exit) {
+  printf("EnterMenu(%d, %d)\n", idx, is_from_exit);
+  if (idx == 0) {
+    printf("");
+  }
   menutitle.clear();
   menuitems.clear();
   const wchar_t* title0 = L"C Y Climb",
@@ -440,11 +446,17 @@ void MainMenu::EnterMenu(int idx, bool is_from_exit) {
     menuitems.push_back(GetMenuItem("antialias"));
     menuitems.push_back(GetMenuItem("shadows"));
   }
+  else if (idx == 3) {
+    menutitle.push_back(L"[Edit Mode Menu]");
+    menuitems.push_back(MenuItem(L"Test Play"));
+    menuitems.push_back(MenuItem(L"Exit Edit Mode"));
+  }
 
   if (!is_from_exit || curr_menu.empty()) {
     curr_menu.push_back(idx);
     curr_selection.push_back(0);
   }
+  PrintStatus();
 }
 
 void MainMenu::OnEnter() {
@@ -454,7 +466,11 @@ void MainMenu::OnEnter() {
       case 0:
         StartGame(); // Start Game
         break;
-      case 1: EnterEditMode(); break;
+      case 1: {
+        EnterMenu(3, false);
+        EnterEditMode();
+        break;
+      }
       case 2: EnterMenu(2, false); break; // Options
       case 3: EnterMenu(1, false); break; // Help
       case 4: {
@@ -472,6 +488,12 @@ void MainMenu::OnEnter() {
     case 1: {
       FadeOutHelpScreen();
       ExitMenu();
+      break;
+    }
+    case 3: {
+      switch (curr_selection[curr_menu.size() - 1]) {
+
+      }
       break;
     }
     case 2:
@@ -592,8 +614,31 @@ void MainMenu::OnEscPressed() {
     ExitMenu();
   }
   else {
+    if (curr_menu.empty() == false) {
+      switch (curr_menu.back()) {
+      case 3:  // 编辑模式
+        g_main_menu_visible = !g_main_menu_visible;
+        return;
+      default: break;
+      }
+    }
+    
+    if (GetCurrentGameScene()->CanHideMenu() == false && curr_menu.size() == 1) return;
     ExitMenu();
   }
+}
+
+void MainMenu::PrintStatus() {
+  printf("curr_selection:");
+  for (const int s : curr_selection) {
+    printf(" %d", s);
+  }
+  printf("\n");
+  printf("curr_menu:");
+  for (const int m : curr_menu) {
+    printf(" %d", m);
+  }
+  printf("\n");
 }
 
 void TextMessage::Render() {

@@ -41,6 +41,7 @@ public:
   Sprite() {
     draw_mode = DrawMode::NORMAL;
   }
+  bool marked_for_removal = false;
 };
 
 class ChunkSprite : public Sprite {

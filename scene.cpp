@@ -116,12 +116,34 @@ void ClimbScene::InitStatic() {
 void ClimbScene::PreRender() { }
 
 void ClimbScene::PrepareSpriteListForRender() {
+  // 在此处理删除掉的coins和platforms
+  std::vector<Platform*> platforms1;
+  std::vector<Sprite*> coins1;
+  for (Platform* p : platforms) {
+    if (p->marked_for_removal == true) {
+    }
+    else {
+      platforms1.push_back(p);
+    }
+  }
+  for (Sprite* c : coins) {
+    if (c->marked_for_removal == true) {
+    }
+    else {
+      coins1.push_back(c);
+    }
+  }
+  platforms = platforms1;
+  coins = coins1;
+
   sprite_render_list.clear();
   for (Platform* p : platforms) {
     Sprite* sp = p->GetSpriteForDisplay();
     sprite_render_list.push_back(sp);
   }
-  for (Sprite* s : coins)       sprite_render_list.push_back(s);
+  for (Sprite* s : coins) {
+    sprite_render_list.push_back(s);
+  }
   sprite_render_list.push_back(player);
   LayoutBackground();
   
@@ -218,6 +240,8 @@ void ClimbScene::Update(float secs) {
   
   switch (game_state) {
     case ClimbGameStateNotStarted: {
+      // 游戏没开始时也要相机追踪
+      CameraFollow(secs);
       break;
     }
     case ClimbGameStateInGame:
@@ -517,14 +541,25 @@ void ClimbScene::OnKeyPressed(char k) {
   if (k == 'g') { 
     is_debug = !is_debug;
     debug_vel = glm::vec3(0, 0, 0);
-  } else if (k >= '1' && k <= '5') {
-    StartLevel(k-'0');
-  } //else if (k == '0') RevealExit();
+  } else if (k >= '1' && k <= '5' && game_state == ClimbGameStateInGame) {
+    if (StartLevel(k - '0')) {
+      SetGameState(ClimbGameStateStartCountdown);
+    }
+  }
+  else if (k >= '1'&& k <= '5' && game_state == ClimbGameStateInEditing) {
+    if (k == '1') {
+      ChunkSprite* s = new ChunkSprite(model_platforms[0]);
+      const float x = camera->pos.x, y = camera->pos.y;
+      s->pos = glm::vec3(x, y, 0);
+      platforms.push_back(new NormalPlatform(s));
+    }
+  }
   else if (k == ' ') {
     if (game_state == ClimbGameStateLevelEndWaitKey) {
       curr_level = (curr_level + 1);
       if (curr_level > 3) curr_level = 1;
       StartLevel(curr_level);
+      SetGameState(ClimbGameStateStartCountdown);
     }
   }
   
@@ -688,21 +723,22 @@ void ClimbScene::LoadLevelData() {
   printf("%zd levels\n", levels.size());
 }
 
-void ClimbScene::StartLevel(int levelid) {
+bool ClimbScene::StartLevel(int levelid) {
   printf("StartLevel %d\n", levelid);
   int idx = levelid - 1;
-  if (idx < 0 || idx >= levels.size()) return;
+  if (idx < 0 || idx >= levels.size()) return false;
 
-  curr_level = idx;
+  curr_level = idx+1; // 1-based
   curr_bgid = 0;
   curr_level_time = 0;
   is_all_rockets_collected = false;
   num_coins = num_coins_total = 0;
   
-  for (Platform* s : platforms) { delete s; }
-  platforms.clear();
-  for (Sprite* c : coins) { delete c; }
+  // 删除物件
+  for (Platform* s : platforms) { s->marked_for_removal = true; }
+  for (Sprite* c : coins) { c->marked_for_removal = true; }
   coins.clear();
+  platforms.clear();
   
   // Platform sprite
   LevelData& ldata = levels.at(idx);
@@ -736,16 +772,17 @@ void ClimbScene::StartLevel(int levelid) {
     }
   }
 
-  SetBackground(ldata.bgid);
-
   initial_coins = coins;
+
+  SetBackground(ldata.bgid);
   
   is_key_pressed = false;
   anchor_levels = 0;
   HideRope();
   SpawnPlayer();
-  SetGameState(ClimbGameStateStartCountdown);
+  SetGameState(ClimbGameStateNotStarted);
   ComputeCamBB();
+  return true;
 }
 
 void ClimbScene::ComputeCamBB() {
@@ -858,6 +895,15 @@ void ClimbScene::SetGameState(ClimbGameState gs) {
   }
 }
 
+bool ClimbScene::CanHideMenu() {
+  switch (game_state) {
+  case ClimbGameStateNotStarted:
+    return false;
+  default:
+    return true;
+  }
+}
+
 int ClimbScene::ExitPlatform::FLY_IN_DURATION = 1000;
 
 void ClimbScene::ExitPlatform::Update(float secs) {
@@ -881,18 +927,19 @@ void ClimbScene::ExitPlatform::Update(float secs) {
 }
 
 void ClimbScene::LayoutRocketsOnExit(const glm::vec3& x) {
+  printf("LayoutRocketsOnExit(%g,%g,%g)\n", x.x, x.y, x.z);
   const float Z_NUDGE = 5;
-  coins = initial_coins; // optimize
+  coins = initial_coins;
   
   // 把 coins 放在 player 周围
   glm::vec3 p0 = x + glm::vec3(0, 12, 0), p1 = p0;
   p0.x -= 20;
   p1.x += 20;
   const int NC = int(coins.size());
-  for (int i=0; i<int(coins.size()); i++) {
+  for (int i=0; i<NC; i++) {
     float t = 1.0f / (NC) * (i+0.5);
     coins[i]->pos = p1 * t + p0 * (1.0f - t);
-    coins[i]->pos.z -= Z_NUDGE;
+    //coins[i]->pos.z -= Z_NUDGE;
     coins[i]->orientation = glm::mat3(1.0f);
     coins[i]->vel = glm::vec3(0, 0, 0);
   }

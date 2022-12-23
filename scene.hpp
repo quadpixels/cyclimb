@@ -28,6 +28,7 @@ public:
   Camera* camera;
   
   GameScene() : camera(&g_cam) { }
+  virtual bool CanHideMenu() = 0;
 };
 
 class TestShapesScene : public GameScene {
@@ -44,6 +45,9 @@ public:
   void RenderHUD() { };
   void RenderHUD_D3D11() { };
   void PrepareLights() { };
+  bool CanHideMenu() {
+    return true;
+  }
 };
 
 class ClimbScene : public GameScene {
@@ -79,7 +83,15 @@ public:
   void LoadLevelData();
   std::vector<LevelData> levels;
 
-  class Platform {
+  class GameObject {
+  public:
+    bool marked_for_removal = false;
+    void Remove() {
+      marked_for_removal = true;
+    }
+  };
+
+  class Platform : public GameObject {
   public:
     Sprite* sprite;
     virtual Sprite* GetSpriteForDisplay() = 0;
@@ -145,7 +157,7 @@ public:
     glm::vec3 GetOriginalPos() { return sprite->pos; }
     void FlyIn();
   };
-  
+
   //
   static ClimbScene* instance;
   
@@ -275,7 +287,7 @@ public:
   glm::vec3 GetPlayerEffectiveRopeEndpoint(); // 头顶
   void SpawnPlayer();
   
-  void StartLevel(int levelid);
+  bool StartLevel(int levelid);
   void ComputeCamBB(); // Cam Bounding Box
   void SetBackground(int bgid);
   void SetGameState(ClimbGameState gs);
@@ -284,6 +296,7 @@ public:
   void BeginLevelCompleteSequence();
 
   Sprite* cursor_sprite;
+  bool CanHideMenu();
 };
 
 class LightTestScene : public GameScene {
@@ -330,4 +343,7 @@ public:
   void PrepareLights();
 
   MacroState GetMacroState(int* curr_sec);
+  bool CanHideMenu() {
+    return true;
+  }
 };

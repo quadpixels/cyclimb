@@ -533,8 +533,11 @@ void keydown(unsigned char key, int x, int y) {
   switch (key) {
     case 27: {
       if (g_main_menu_visible) {
-        g_mainmenu->ExitMenu();
-        g_main_menu_visible = false;
+        // 游戏没开始时，不能隐藏主菜单
+        if (GetCurrentGameScene()->CanHideMenu()) {
+          g_mainmenu->ExitMenu();
+          g_main_menu_visible = false;
+        }
       } else {
         if (g_mainmenu->curr_menu.empty())
           g_mainmenu->EnterMenu(0, false);

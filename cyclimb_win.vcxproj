@@ -69,8 +69,8 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>C:\Users\nitroglycerine\Downloads\glad\include\;$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;C:\Users\nitroglycerine\Downloads\glfw-3.1.2.bin.WIN64\include;$(ProjectDir)\windows_lib\DirectxTK\Inc;$(IncludePath)</IncludePath>
-    <LibraryPath>$(ProjectDir)\windows_lib\freetype-2.10.0\win32;$(ProjectDir)\windows_lib\glew-2.0.0\lib\Release\Win32;$(ProjectDir)\windows_lib\freeglut\lib;$(ProjectDir)\windows_lib\DirectxTK\Bin\Win32;$(LibraryPath)</LibraryPath>
+    <IncludePath>C:\Users\nitroglycerine\Downloads\glad\include\;$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;$(ProjectDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(ProjectDir)\windows_lib\DirectxTK\Inc;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)\windows_lib\freetype-2.10.0\win32;$(ProjectDir)\windows_lib\glew-2.0.0\lib\Release\Win32;$(ProjectDir)\windows_lib\freeglut\lib;$(ProjectDir)\windows_lib\DirectxTK\Bin\Win32;$(ProjectDir)\windows_lib\glfw-3.2.1.bin.WIN64\lib-vc2015;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>true</LinkIncremental>
@@ -78,8 +78,8 @@
     <LibraryPath>$(ProjectDir)\windows_lib\freetype-2.10.0\win32;$(ProjectDir)\windows_lib\glew-2.0.0\lib\Release\Win32;$(ProjectDir)\windows_lib\glfw-3.3.2.bin.WIN32\lib-vc2019;$(ProjectDir)\windows_lib\freeglut\lib;$(ProjectDir)\windows_lib\DirectxTK\Bin\Win32;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;$(ProjectDir)\windows_lib\glfw-3.3.2.bin.WIN64\include;$(ProjectDir)\windows_lib\DirectxTK\Inc;$(IncludePath)</IncludePath>
-    <LibraryPath>$(ProjectDir)\windows_lib\freetype-2.10.0\win64;$(ProjectDir)\windows_lib\freeglut\lib\x64;$(ProjectDir)\windows_lib\glew-2.0.0\lib\Release\x64;$(ProjectDir)\windows_lib\glfw-3.3.2.bin.WIN64\lib-vc2019;$(ProjectDir)\windows_lib\DirectxTK\Bin\x64;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;$(ProjectDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(ProjectDir)\windows_lib\DirectxTK\Inc;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)\windows_lib\freetype-2.10.0\win64;$(ProjectDir)\windows_lib\freeglut\lib\x64;$(ProjectDir)\windows_lib\glew-2.0.0\lib\Release\x64;$(ProjectDir)\windows_lib\glfw-3.2.1.bin.WIN64\lib-vc2015;$(ProjectDir)\windows_lib\DirectxTK\Bin\x64;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IncludePath>$(ProjectDir)\windows_lib\glfw-3.3.2.bin.WIN64\include;C:\Users\nitroglycerine\Downloads\DirectXTK-master\Inc;$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;$(IncludePath)</IncludePath>
