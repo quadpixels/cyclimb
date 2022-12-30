@@ -300,6 +300,7 @@ public:
   void LayoutRocketsOnExit(const glm::vec3& exit_pos);
   void BeginLevelCompleteSequence();
 
+  bool is_test_playing;  // 是否是从试玩模式进入
   Sprite* cursor_sprite;
   bool CanHideMenu();
 };

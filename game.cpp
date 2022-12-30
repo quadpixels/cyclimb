@@ -60,11 +60,13 @@ extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::X
 #endif
 
 extern GameScene* GetCurrentGameScene();
+extern ClimbScene* g_climbscene;
 
 bool g_debug = true;
 
 void StartGame();
 void EnterEditMode();
+void ExitEditMode();
 Particles* GetGlobalParticles();
 
 //======================== Particles =======
@@ -481,6 +483,8 @@ void MainMenu::OnEnter() {
     case 0: {
       switch (curr_selection[curr_menu.size()-1]) {
       case 0:
+        g_climbscene->is_test_playing = false;
+        g_climbscene->StartLevel(g_climbscene->curr_level);
         StartGame(); // Start Game
         break;
       case 1: {
@@ -511,7 +515,11 @@ void MainMenu::OnEnter() {
     }
     case 3: {
       switch (curr_selection[curr_menu.size() - 1]) {
-
+      case 0: 
+        g_climbscene->is_test_playing = true;
+        StartGame();
+        break;  // Test Play
+      case 1: ExitEditMode();  ExitMenu(); break;
       }
       break;
     }

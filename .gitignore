@@ -9,3 +9,4 @@ Debug
 Release
 *.o
 cyclimb
+cyclimb_win.vcxproj.user

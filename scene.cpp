@@ -184,6 +184,7 @@ ClimbScene::ClimbScene() {
   lights[0] = new DirectionalLight(glm::vec3(1, -1, 0), glm::vec3(-100, 200, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
   lights[1] = new DirectionalLight(glm::vec3(-1, -1, 0), glm::vec3(100, 200, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
   lights[2] = new DirectionalLight(glm::vec3(0, -1, 0), glm::vec3(0, 200, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
+  is_test_playing = false;
 }
 
 void ClimbScene::Init() {

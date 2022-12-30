@@ -916,6 +916,10 @@ void EnterEditMode() {
   g_climbscene->SetGameState(ClimbScene::ClimbGameStateInEditing);
 }
 
+void ExitEditMode() {
+  g_climbscene->SetGameState(ClimbScene::ClimbGameStateNotStarted);
+}
+
 extern int main_d3d11(int argc, char** argv);
 
 int main(int argc, char** argv) {
