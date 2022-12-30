@@ -809,9 +809,8 @@ int main_opengl(int argc, char** argv) {
   int ret = glfwInit();
   if (ret != true) {
     const char* desc;
-    int code = glfwGetError(&desc);
-    printf("Cannot initialize glfw, error code %d, description: %s\n",
-      code, desc);
+    printf("Cannot initialize glfw.\n"); // glfwGetError is available only since 3.3
+    exit(1);
   }
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
@@ -836,10 +835,7 @@ int main_opengl(int argc, char** argv) {
 
 
   if (g_window == nullptr) {
-    const char* desc;
-    int code = glfwGetError(&desc);
-    printf("Failed to create GLFW window, code %d, description %s\n",
-      code, desc);
+    printf("Failed to create GLFW window\n"); // glfwGetError is available only since 3.3
     glfwTerminate();
     return -1;
   }
