@@ -19,6 +19,7 @@
 class Chunk {
 public:
   glm::vec3 pos;
+  int idx;
   static int size;
   Chunk();
   Chunk(Chunk& other);

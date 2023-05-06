@@ -38,6 +38,7 @@ void ChunkGrid::Render(
         Chunk* chk = chunks[ix];
         if (chk->is_dirty) {
           Chunk* neighs[26] = { NULL };
+          GetNeighbors(chk, neighs);
           chk->BuildBuffers(neighs);
         }
         chunks[ix]->Render(M_chunk);
@@ -88,6 +89,7 @@ void ChunkGrid::Render_D3D11(
         Chunk* chk = chunks[ix];
         if (chk->is_dirty) {
           Chunk* neighs[26] = { NULL };
+          GetNeighbors(chk, neighs);
           chk->BuildBuffers(neighs);
         }
 
@@ -134,8 +136,9 @@ void ChunkGrid::SetVoxel(const glm::vec3& p, int vox) {
   if (ix >= 0 && ix < chunks.size()) {
     Chunk* chk = chunks.at(ix);
     chk->SetVoxel(local_x, local_y, local_z, vox);
-    Chunk* dummy[26] = { NULL };
-    chk->BuildBuffers(dummy);
+    Chunk* neighs[26] = { NULL };
+    GetNeighbors(chk, neighs);
+    chk->BuildBuffers(neighs);
   }
 }
 
@@ -152,8 +155,43 @@ int ChunkGrid::GetVoxel(unsigned x, unsigned y, unsigned z) {
   } else return 0;
 }
 
-bool ChunkGrid::GetNeighbors(Chunk*, Chunk* neigh[26]) {
-  return false;
+bool ChunkGrid::GetNeighbors(Chunk* chunk, Chunk* neighs[26]) {
+  int xx, yy, zz;
+  FromIX(chunk->idx, xx, yy, zz);
+  const int xyzs[] = {
+    IX(xx + 1, yy, zz),      // [0]
+    IX(xx - 1, yy, zz),      // [1]
+    IX(xx, yy + 1, zz),      // [2]
+    IX(xx, yy - 1, zz),      // [3]
+    IX(xx, yy, zz + 1),      // [4]
+    IX(xx, yy, zz - 1),      // [5]
+    IX(xx + 1, yy + 1, zz + 1),  // [6]
+    IX(xx + 1, yy + 1, zz),    // [7]
+    IX(xx + 1, yy + 1, zz - 1),  // [8]
+    IX(xx + 1, yy, zz + 1),    // [9]
+    IX(xx + 1, yy, zz - 1),    // [10]
+    IX(xx + 1, yy - 1, zz + 1),  // [11]
+    IX(xx + 1, yy - 1, zz),    // [12]
+    IX(xx + 1, yy - 1, zz - 1),  // [13]
+    IX(xx, yy + 1, zz + 1),    // [14]
+    IX(xx, yy + 1, zz - 1),    // [15]
+    IX(xx, yy - 1, zz + 1),    // [16]
+    IX(xx, yy - 1, zz - 1),    // [17]
+    IX(xx - 1, yy + 1, zz + 1),  // [18]
+    IX(xx - 1, yy + 1, zz),    // [19]
+    IX(xx - 1, yy + 1, zz - 1),  // [20]
+    IX(xx - 1, yy, zz + 1),    // [21]
+    IX(xx - 1, yy, zz - 1),    // [22]
+    IX(xx - 1, yy - 1, zz + 1),  // [23]
+    IX(xx - 1, yy - 1, zz),    // [24]
+    IX(xx - 1, yy - 1, zz - 1),  // [25]
+  };
+  const unsigned xyzdim = xdim * ydim * zdim;
+  for (int i = 0; i < 26; i++) {
+    const unsigned xyz = xyzs[i];
+    if (xyz < xyzdim) { neighs[i] = chunks[xyz]; }
+  }
+  return true;
 }
 
 void ChunkGrid::Init(unsigned _xlen, unsigned _ylen, unsigned _zlen) {
@@ -171,6 +209,7 @@ void ChunkGrid::Init(unsigned _xlen, unsigned _ylen, unsigned _zlen) {
   chunks.resize(xyzdim);
   for (unsigned i=0; i<xyzdim; i++) {
     chunks[i] = new Chunk();
+    chunks[i]->idx = i;
   }
 }
 
@@ -311,4 +350,11 @@ void ChunkGrid::SetVoxelSphere(const glm::vec3& p, float radius, int v) {
     Chunk* dummy[26] = { NULL };
     c->BuildBuffers(dummy);
   }
+}
+
+void ChunkGrid::FromIX(int ix, int& x, int& y, int& z) {
+  x = ix / (ydim * zdim);
+  ix -= x * ydim * zdim;
+  y = ix / zdim;
+  z = ix % zdim;
 }

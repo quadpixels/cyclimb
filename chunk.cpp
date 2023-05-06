@@ -349,6 +349,16 @@ int Chunk::GetOcclusionFactor(const float x0, const float y0, const float z0, co
         } else {
           if (neighs[9] && neighs[9]->block[IX(0, y1, 0)]) occ++;
         }
+      } else {
+        if (z1 < 0) {
+          if (neighs[8] && neighs[8]->block[IX(x1, 0, size - 1)]) occ++;
+        }
+        else if (z1 < size) {
+          if (neighs[7] && neighs[7]->block[IX(x1, 0, z1)]) occ++;
+        }
+        else {
+          if (neighs[6] && neighs[6]->block[IX(x1, 0, 0)]) occ++;
+        }
       }
     } else if (x1 >= 0) { // Cases [2:5], [14:17]
       if (y1 < 0) {
