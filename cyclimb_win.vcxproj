@@ -156,6 +156,7 @@
     <ClInclude Include="camera.hpp" />
     <ClInclude Include="chunk.hpp" />
     <ClInclude Include="chunkindex.hpp" />
+    <ClInclude Include="d3dx12.h" />
     <ClInclude Include="DDS.h" />
     <ClInclude Include="DDSTextureLoader.h" />
     <ClInclude Include="DirectXHelpers.h" />
