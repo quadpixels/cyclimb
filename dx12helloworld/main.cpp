@@ -6,6 +6,7 @@
 void InitDeviceAndCommandQ();
 void InitSwapChain();
 void InitPipeline();
+void Render_DX12();
 
 unsigned WIN_W = 800, WIN_H = 480;
 HWND g_hwnd;
@@ -20,10 +21,6 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   }
 }
 
-void Render() {
-  return;
-}
-
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
   case WM_CREATE:
@@ -36,7 +33,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     OnKeyDown(wParam, lParam);
     return 0;
   case WM_PAINT:
-    Render();
+    Render_DX12();
     return 0;
   case WM_DESTROY:
     PostQuitMessage(0);

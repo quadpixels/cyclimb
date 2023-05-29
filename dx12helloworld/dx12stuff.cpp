@@ -17,6 +17,9 @@ IDXGIFactory4* g_factory;
 ID3D12CommandQueue* g_command_queue;
 ID3D12CommandAllocator* g_command_allocator;
 ID3D12GraphicsCommandList* g_command_list;
+ID3D12Fence* g_fence;
+int g_fence_value = 0;
+HANDLE g_fence_event;
 
 IDXGISwapChain3* g_swapchain;
 
@@ -38,6 +41,8 @@ extern HWND g_hwnd;
 extern unsigned WIN_W, WIN_H;
 
 using Microsoft::WRL::ComPtr;
+
+void WaitForPreviousFrame();
 
 void CE(HRESULT x) {
   if (FAILED(x)) {
@@ -97,6 +102,11 @@ void InitDeviceAndCommandQ() {
 
   CE(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
     g_command_allocator, nullptr, IID_PPV_ARGS(&g_command_list)));
+  CE(g_command_list->Close());
+
+  CE(g_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence)));
+  g_fence_value = 1;
+  g_fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 }
 
 // 2. IDXGISwapChain
@@ -144,6 +154,16 @@ void InitSwapChain() {
     g_rendertargets[i]->SetName(buf);
   }
   printf("Created RTV and pointed RTVs to backbuffers.\n");
+}
+
+void WaitForPreviousFrame() {
+  int fence = g_fence_value ++;
+  CE(g_command_queue->Signal(g_fence, fence));
+  if (g_fence->GetCompletedValue() < fence) {
+    CE(g_fence->SetEventOnCompletion(fence, g_fence_event));
+    CE(WaitForSingleObject(g_fence_event, INFINITE));
+  }
+  g_frame_index = g_swapchain->GetCurrentBackBufferIndex();
 }
 
 void InitPipeline() {
@@ -225,7 +245,33 @@ void InitPipeline() {
 
 // 4. 
 
+// https://stackoverflow.com/questions/65315241/how-can-i-fix-requires-l-value
+template <class T>
+constexpr auto& keep(T&& x) noexcept {
+  return x;
+}
+
 void Render_DX12() {
   CE(g_command_allocator->Reset());
-
+  CE(g_command_list->Reset(g_command_allocator, g_pipeline_state));
+  g_command_list->SetGraphicsRootSignature(g_root_signature);
+  
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
+    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    g_frame_index, g_rtv_descriptor_size);
+  float bg_color[] = { 1.0f, 1.0f, 0.8f, 1.0f };
+  g_command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_PRESENT,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+  g_command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+  g_command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_PRESENT)));
+  CE(g_command_list->Close());
+  g_command_queue->ExecuteCommandLists(1,
+    (ID3D12CommandList* const*)&g_command_list);
+  CE(g_swapchain->Present(1, 0));
+  WaitForPreviousFrame();
 }
