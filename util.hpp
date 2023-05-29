@@ -22,6 +22,7 @@
 enum GraphicsAPI {
   ClimbOpenGL,
   ClimbD3D11,
+  ClimbD3D12,
 };
 
 #ifdef WIN32

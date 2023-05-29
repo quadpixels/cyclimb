@@ -19,6 +19,7 @@
 
 #include "WICTextureLoader.h"
 
+extern GraphicsAPI g_api;
 extern Character_D3D11 GetCharacter_D3D11(wchar_t ch);
 
 extern int WIN_W, WIN_H, SHADOW_RES;
@@ -462,7 +463,7 @@ void InitAssets11() {
   CoInitialize(nullptr);
 }
 
-int main_d3d11(int argc, char** argv) {
+void CreateCyclimbWindow() {
   AllocConsole();
   freopen_s((FILE**)stdin, "CONIN$", "r", stderr);
   freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
@@ -477,7 +478,7 @@ int main_d3d11(int argc, char** argv) {
   //when creating the window as well
   windowClass.style = CS_HREDRAW | CS_VREDRAW;
 
-  LPCSTR window_name = "ChaoyueClimb (D3D11)";
+  LPCSTR window_name = (g_api == GraphicsAPI::ClimbD3D11) ? "ChaoyueClimb (D3D11)" : "ChaoyueClimb (D3D12)";
   LPCSTR class_name = "ChaoyueClimb_class";
   HINSTANCE hinstance = GetModuleHandle(nullptr);
 
@@ -489,12 +490,15 @@ int main_d3d11(int argc, char** argv) {
     windowClass.lpszClassName,
     window_name,
     WS_OVERLAPPEDWINDOW,
-    16, 
-    16, 
+    16,
+    16,
     WIN_W, WIN_H,
     nullptr, nullptr,
     hinstance, nullptr);
+}
 
+int main_d3d11(int argc, char** argv) {
+  CreateCyclimbWindow();
   InitDevice11();
   InitAssets11(); // Will call CoInitialize(nullptr) here, needed for loading images
   MyInit_D3D11();

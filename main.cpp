@@ -27,10 +27,10 @@
 #pragma comment(linker, "/SUBSYSTEM:windows /ENTRY:mainCRTStartup")
 #endif
 
-GraphicsAPI g_api = ClimbD3D11;
+GraphicsAPI g_api = GraphicsAPI::ClimbD3D11;
 bool IsGL() { return (g_api == ClimbOpenGL); }
 
-void StartGame();
+void StartGame(bool);
 extern void MyInit_D3D11();
 
 int WIN_W = 1280, WIN_H = 720;
@@ -902,8 +902,9 @@ int main_opengl(int argc, char** argv) {
   return 0;
 }
 
-void StartGame() {
+void StartGame(bool spawn_player = false) {
   g_main_menu_visible = false;
+  if (spawn_player) g_climbscene->SpawnPlayer();
   g_climbscene->SetGameState(ClimbScene::ClimbGameStateStartCountdown);
 }
 
@@ -922,13 +923,14 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "opengl")) { g_api = ClimbOpenGL; }
     else if (!strcmp(argv[i], "d3d11")) { g_api = ClimbD3D11; }
+    else if (!strcmp(argv[1], "d3d12")) { g_api = ClimbD3D12; }
     else if (!strcmp(argv[i], "testscene")) { g_scene_idx = 0; }
     else if (!strcmp(argv[i], "cyclimb")) { g_scene_idx = 1; }
     else if (!strcmp(argv[i], "lighttest")) { g_scene_idx = 2; }
   }
 
   if (g_api == ClimbOpenGL) main_opengl(argc, argv);
-  else if (g_api == ClimbD3D11) {
+  else if (g_api == ClimbD3D11 || g_api == ClimbD3D12) {
     #ifdef WIN32
     main_d3d11(argc, argv);
     #endif
