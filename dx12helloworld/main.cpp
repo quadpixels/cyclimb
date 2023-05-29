@@ -2,14 +2,12 @@
 
 #include <windows.h>
 
-// dx12stuff
-void InitDeviceAndCommandQ();
-void InitSwapChain();
-void InitPipeline();
-void Render_DX12();
+#include "scene.hpp"
 
 unsigned WIN_W = 800, WIN_H = 480;
 HWND g_hwnd;
+
+DX12ClearScreenScene* g_scene;
 
 void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   if (lParam & 0x40000000) return;
@@ -33,7 +31,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     OnKeyDown(wParam, lParam);
     return 0;
   case WM_PAINT:
-    Render_DX12();
+    g_scene->Render();
     return 0;
   case WM_DESTROY:
     PostQuitMessage(0);
@@ -86,9 +84,7 @@ int main() {
   CreateCyclimbWindow();
   ShowWindow(g_hwnd, SW_RESTORE);
 
-  InitDeviceAndCommandQ();
-  InitSwapChain();
-  InitPipeline();
+  g_scene = new DX12ClearScreenScene();
 
   // Main message loop
   MSG msg = { 0 };
