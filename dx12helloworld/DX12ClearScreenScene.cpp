@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdexcept>
 
+#include <d3d12.h>
+#include <dxgi1_4.h>
 #include <wrl/client.h>
 
 #include "utils.hpp"
@@ -13,110 +15,33 @@ using Microsoft::WRL::ComPtr;
 extern HWND g_hwnd;
 extern unsigned WIN_W, WIN_H;
 
+extern ID3D12Device* g_device;
+extern IDXGIFactory4* g_factory;
+extern ID3D12CommandQueue* g_command_queue;
+extern ID3D12Fence* g_fence;
+extern int g_fence_value;
+extern HANDLE g_fence_event;
+extern IDXGISwapChain3* g_swapchain;
+extern ID3D12DescriptorHeap* g_rtv_heap;
+extern ID3D12Resource* g_rendertargets[];
+extern unsigned g_rtv_descriptor_size;
+extern int g_frame_index;
+
+void InitDeviceAndCommandQ();
+void InitSwapChain();
+void WaitForPreviousFrame();
+
 void DX12ClearScreenScene::Update(float secs) {
 }
 
-void DX12ClearScreenScene::InitDeviceAndCommandQ() {
-  unsigned dxgi_factory_flags = 0;
-  bool use_warp_device = false;
-
-  ID3D12Debug* debug_controller;
-  if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug_controller)))) {
-    debug_controller->EnableDebugLayer();
-    dxgi_factory_flags |= DXGI_CREATE_FACTORY_DEBUG;
-    printf("Enabling debug layer\n");
-  }
-
-  CE(CreateDXGIFactory2(dxgi_factory_flags, IID_PPV_ARGS(&factory)));
-  if (use_warp_device) {
-    IDXGIAdapter* warp_adapter;
-    CE(factory->EnumWarpAdapter(IID_PPV_ARGS(&warp_adapter)));
-    CE(D3D12CreateDevice(warp_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
-    printf("Created a WARP device=%p\n", device);;
-  }
-  else {
-    IDXGIAdapter1* hw_adapter;
-    for (int idx = 0; factory->EnumAdapters1(idx, &hw_adapter) != DXGI_ERROR_NOT_FOUND; idx++) {
-      DXGI_ADAPTER_DESC1 desc;
-      hw_adapter->GetDesc1(&desc);
-      if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-      else {
-        CE(D3D12CreateDevice(hw_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device)));
-        printf("Created a hardware device = %p\n", device);
-        break;
-      }
-    }
-  }
-
-  assert(device != nullptr);
-
-  {
-    D3D12_COMMAND_QUEUE_DESC desc = {
-      .Type = D3D12_COMMAND_LIST_TYPE_DIRECT,
-      .Flags = D3D12_COMMAND_QUEUE_FLAG_NONE,
-    };
-    CE(device->CreateCommandQueue(&desc, IID_PPV_ARGS(&command_queue)));
-  }
-
-  CE(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+void DX12ClearScreenScene::InitPipelineAndCommandList() {
+  CE(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
     IID_PPV_ARGS(&command_allocator)));
 
-  CE(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+  CE(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
     command_allocator, nullptr, IID_PPV_ARGS(&command_list)));
   CE(command_list->Close());
 
-  CE(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
-  fence_value = 1;
-  fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-}
-
-void DX12ClearScreenScene::InitSwapChain() {
-  DXGI_SWAP_CHAIN_DESC1 desc = {
-    .Width = WIN_W,
-    .Height = WIN_H,
-    .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
-    .SampleDesc = {
-      .Count = 1,
-    },
-    .BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
-    .BufferCount = 2,
-    .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
-  };
-  IDXGISwapChain1* swapchain1;
-  CE(factory->CreateSwapChainForHwnd(command_queue,
-    g_hwnd, &desc, nullptr, nullptr, &swapchain1));
-  swapchain = (IDXGISwapChain3*)swapchain1;
-  CE(factory->MakeWindowAssociation(g_hwnd, DXGI_MWA_NO_ALT_ENTER));
-  frame_index = swapchain->GetCurrentBackBufferIndex();
-
-  printf("Created swapchain.\n");
-
-  {
-    D3D12_DESCRIPTOR_HEAP_DESC desc = {
-      .Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
-      .NumDescriptors = 2,
-      .Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
-    };
-    CE(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rtv_heap)));
-    printf("Created RTV heap.\n");
-  }
-
-  rtv_descriptor_size = device->GetDescriptorHandleIncrementSize(
-    D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-  CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_handle(rtv_heap->GetCPUDescriptorHandleForHeapStart());
-  for (int i = 0; i < FRAME_COUNT; i++) {
-    CE(swapchain->GetBuffer(i, IID_PPV_ARGS(&rendertargets[i])));
-    device->CreateRenderTargetView(rendertargets[i], nullptr, rtv_handle);
-    rtv_handle.Offset(1, rtv_descriptor_size);
-
-    wchar_t buf[100];
-    _snwprintf_s(buf, sizeof(buf), L"Render Target Frame %d", i);
-    rendertargets[i]->SetName(buf);
-  }
-  printf("Created RTV and pointed RTVs to backbuffers.\n");
-}
-
-void DX12ClearScreenScene::InitPipeline() {
   {
     ID3DBlob* error = nullptr;
     unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
@@ -143,7 +68,7 @@ void DX12ClearScreenScene::InitPipeline() {
         (char*)(error->GetBufferPointer()));
     }
 
-    CE(device->CreateRootSignature(0, signature->GetBufferPointer(),
+    CE(g_device->CreateRootSignature(0, signature->GetBufferPointer(),
       signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
     root_signature->SetName(L"Root signature");
   }
@@ -190,13 +115,13 @@ void DX12ClearScreenScene::InitPipeline() {
     },
   };
 
-  CE(device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
+  CE(g_device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
 }
 
 DX12ClearScreenScene::DX12ClearScreenScene() {
   InitDeviceAndCommandQ();
   InitSwapChain();
-  InitPipeline();
+  InitPipelineAndCommandList();
 }
 
 // https://stackoverflow.com/questions/65315241/how-can-i-fix-requires-l-value
@@ -205,37 +130,27 @@ constexpr auto& keep(T&& x) noexcept {
   return x;
 }
 
-void DX12ClearScreenScene::WaitForPreviousFrame() {
-  int value = fence_value++;
-  CE(command_queue->Signal(fence, value));
-  if (fence->GetCompletedValue() < value) {
-    CE(fence->SetEventOnCompletion(value, fence_event));
-    CE(WaitForSingleObject(fence_event, INFINITE));
-  }
-  frame_index = swapchain->GetCurrentBackBufferIndex();
-}
-
 void DX12ClearScreenScene::Render() {
   CE(command_allocator->Reset());
   CE(command_list->Reset(command_allocator, pipeline_state));
   command_list->SetGraphicsRootSignature(root_signature);
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
-    rtv_heap->GetCPUDescriptorHandleForHeapStart(),
-    frame_index, rtv_descriptor_size);
+    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    g_frame_index, g_rtv_descriptor_size);
   float bg_color[] = { 1.0f, 1.0f, 0.8f, 1.0f };
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    rendertargets[frame_index],
+    g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_PRESENT,
     D3D12_RESOURCE_STATE_RENDER_TARGET)));
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    rendertargets[frame_index],
+    g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATE_PRESENT)));
   CE(command_list->Close());
-  command_queue->ExecuteCommandLists(1,
+  g_command_queue->ExecuteCommandLists(1,
     (ID3D12CommandList* const*)&command_list);
-  CE(swapchain->Present(1, 0));
+  CE(g_swapchain->Present(1, 0));
   WaitForPreviousFrame();
 }
