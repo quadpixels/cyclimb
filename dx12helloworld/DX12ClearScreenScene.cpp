@@ -6,17 +6,12 @@
 
 #include <wrl/client.h>
 
+#include "utils.hpp"
+
 using Microsoft::WRL::ComPtr;
 
 extern HWND g_hwnd;
 extern unsigned WIN_W, WIN_H;
-
-static void CE(HRESULT x) {
-  if (FAILED(x)) {
-    printf("ERROR: %X\n", x);
-    throw std::exception();
-  }
-}
 
 void DX12ClearScreenScene::Update(float secs) {
 }
