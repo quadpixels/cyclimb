@@ -124,12 +124,6 @@ DX12ClearScreenScene::DX12ClearScreenScene() {
   InitPipelineAndCommandList();
 }
 
-// https://stackoverflow.com/questions/65315241/how-can-i-fix-requires-l-value
-template <class T>
-constexpr auto& keep(T&& x) noexcept {
-  return x;
-}
-
 void DX12ClearScreenScene::Render() {
   CE(command_allocator->Reset());
   CE(command_list->Reset(command_allocator, pipeline_state));

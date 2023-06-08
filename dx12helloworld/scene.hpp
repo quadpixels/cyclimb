@@ -18,7 +18,6 @@ public:
   DX12ClearScreenScene();
   void Render() override;
   void Update(float secs) override;
-  static constexpr int FRAME_COUNT = 2;
 private:
   void InitPipelineAndCommandList();
   ID3D12CommandAllocator* command_allocator;
@@ -27,6 +26,17 @@ private:
   ID3DBlob* VS, *PS;
   ID3D12RootSignature* root_signature;
   ID3D12PipelineState* pipeline_state;
+};
+
+class DX12HelloTriangleScene : public Scene {
+public:
+  DX12HelloTriangleScene();
+  void Render() override;
+  void Update(float secs) override;
+  static constexpr int FRAME_COUNT = 2;
+private:
+  void InitPipelineAndCommandList();
+
 };
 
 #endif

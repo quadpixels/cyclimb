@@ -138,6 +138,14 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   case VK_ESCAPE:
     PostQuitMessage(0);
     break;
+  case '0': {
+    printf("Current scene set to 0\n");
+    g_scene_idx = 0; break;
+  }
+  case '1': {
+    printf("Current scene set to 1\n");
+    g_scene_idx = 1; break;
+  }
   default: break;
   }
 }
@@ -208,7 +216,7 @@ int main() {
   ShowWindow(g_hwnd, SW_RESTORE);
 
   g_scenes[0] = new DX12ClearScreenScene();
-  //g_scenes[1] = new DX12HelloTriangleScene();
+  g_scenes[1] = new DX12HelloTriangleScene();
 
   // Main message loop
   MSG msg = { 0 };
