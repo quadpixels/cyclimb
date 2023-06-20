@@ -215,6 +215,8 @@ int main() {
   CreateCyclimbWindow();
   ShowWindow(g_hwnd, SW_RESTORE);
 
+  InitDeviceAndCommandQ();
+  InitSwapChain();
   g_scenes[0] = new DX12ClearScreenScene();
   g_scenes[1] = new DX12HelloTriangleScene();
 

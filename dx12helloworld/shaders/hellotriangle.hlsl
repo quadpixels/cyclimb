@@ -1,6 +1,6 @@
 struct VSInput {
   float3 aPos   : POSITION;
-  float3 aColor : COLOR0;
+  float4 aColor : COLOR0;
 };
 
 struct VSOutput {
@@ -15,7 +15,7 @@ struct PSOutput {
 VSOutput VSMain(VSInput input) {
   VSOutput output;
   output.position = float4(input.aPos,   1.0);
-  output.color    = float4(input.aColor, 1.0);
+  output.color    = input.aColor;
   return output;
 }
 
