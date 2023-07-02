@@ -150,6 +150,21 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   }
 }
 
+// https://gamedev.stackexchange.com/questions/26759/best-way-to-get-elapsed-time-in-miliseconds-in-windows?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+long long MillisecondsNow() {
+  static LARGE_INTEGER s_frequency;
+  static BOOL s_use_qpc = QueryPerformanceFrequency(&s_frequency);
+  if (s_use_qpc) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return (1000LL * now.QuadPart) / s_frequency.QuadPart;
+  }
+  else {
+    return GetTickCount();
+  }
+}
+static long long g_last_ms;
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
   case WM_CREATE:
@@ -161,9 +176,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
   case WM_KEYDOWN:
     OnKeyDown(wParam, lParam);
     return 0;
-  case WM_PAINT:
+  case WM_PAINT: {
+    long long ms = MillisecondsNow();
+    g_scenes[g_scene_idx]->Update((ms - g_last_ms) / 1000.0f);
+    g_last_ms = ms;
     g_scenes[g_scene_idx]->Render();
     return 0;
+  }
   case WM_DESTROY:
     PostQuitMessage(0);
     return 0;
@@ -221,6 +240,7 @@ int main() {
   g_scenes[1] = new DX12HelloTriangleScene();
 
   // Main message loop
+  g_last_ms = MillisecondsNow();
   MSG msg = { 0 };
   while (msg.message != WM_QUIT) {
     if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {

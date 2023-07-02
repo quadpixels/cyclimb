@@ -49,6 +49,10 @@ private:
   ID3D12RootSignature* root_signature;
   ID3D12PipelineState* pipeline_state;
   D3D12_VERTEX_BUFFER_VIEW vertex_buffer_view;
+
+  ID3D12DescriptorHeap* cbv_heap;
+  int cbv_descriptor_size;
+  ID3D12Resource* cbvs;  // CBV resource, N copies of the CBV for N triangles.
 };
 
 #endif

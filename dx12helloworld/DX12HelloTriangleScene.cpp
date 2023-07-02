@@ -17,6 +17,10 @@ extern ID3D12DescriptorHeap* g_rtv_heap;
 extern ID3D12Resource* g_rendertargets[];
 extern unsigned g_rtv_descriptor_size;
 
+struct PerTriangleCB {
+  DirectX::XMFLOAT2 pos;
+};
+
 void WaitForPreviousFrame();
 
 DX12HelloTriangleScene::DX12HelloTriangleScene() {
@@ -41,12 +45,20 @@ void DX12HelloTriangleScene::Render() {
   D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
 
   command_list->SetGraphicsRootSignature(root_signature);
+
+  ID3D12DescriptorHeap* ppHeaps[] = { cbv_heap };
+  command_list->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+  command_list->SetGraphicsRootConstantBufferView(1, cbvs->GetGPUVirtualAddress());
+
   command_list->RSSetViewports(1, &viewport);
   command_list->RSSetScissorRects(1, &scissor);
   command_list->OMSetRenderTargets(1, &handle_rtv, FALSE, nullptr);
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
   command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   command_list->IASetVertexBuffers(0, 1, &vertex_buffer_view);
+  command_list->DrawInstanced(3, 1, 0, 0);
+
+  command_list->SetGraphicsRootConstantBufferView(1, cbvs->GetGPUVirtualAddress() + 256);
   command_list->DrawInstanced(3, 1, 0, 0);
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
@@ -62,6 +74,17 @@ void DX12HelloTriangleScene::Render() {
 }
 
 void DX12HelloTriangleScene::Update(float secs) {
+  CD3DX12_RANGE read_range(0, 0);
+  char* ptr;
+  CE(cbvs->Map(0, &read_range, (void**)&ptr));
+  PerTriangleCB cbs[2];
+  cbs[0].pos.x = -0.25;
+  cbs[0].pos.y = 0;
+  cbs[1].pos.x = 0.25;
+  cbs[1].pos.y = 0;
+  memcpy(ptr, &cbs[0], sizeof(cbs));
+  memcpy(ptr + 256, &cbs[1], sizeof(cbs));
+  cbvs->Unmap(0, nullptr);
 }
 
 void DX12HelloTriangleScene::InitPipelineAndCommandList() {
@@ -84,8 +107,18 @@ void DX12HelloTriangleScene::InitPipelineAndCommandList() {
   }
 
   {
+    CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
+    ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0,
+      D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
+
+    CD3DX12_ROOT_PARAMETER1 rootParameters[2];
+    rootParameters[0].InitAsDescriptorTable(1, &ranges[0],
+      D3D12_SHADER_VISIBILITY_VERTEX);
+    rootParameters[1].InitAsConstantBufferView(0, 0,
+      D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+
     CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_sig_desc;
-    root_sig_desc.Init_1_1(0, NULL, 0, NULL,
+    root_sig_desc.Init_1_1(_countof(rootParameters), rootParameters, 0, NULL,
       D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
     ComPtr<ID3DBlob> signature, error;
@@ -160,4 +193,30 @@ void DX12HelloTriangleScene::InitResources() {
   vertex_buffer_view.BufferLocation = vertex_buffer->GetGPUVirtualAddress();
   vertex_buffer_view.StrideInBytes = sizeof(Vertex);
   vertex_buffer_view.SizeInBytes = sizeof(verts);
+
+  // CBV's heap
+  D3D12_DESCRIPTOR_HEAP_DESC cbv_heap_desc = {};
+  cbv_heap_desc.NumDescriptors = 1;  // Just 1 constant buffer
+  cbv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+  cbv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  CE(g_device->CreateDescriptorHeap(&cbv_heap_desc, IID_PPV_ARGS(&cbv_heap)));
+  cbv_descriptor_size = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+  // CBV's resource
+  CE(g_device->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(512)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&cbvs)));
+
+  // CBV's resource view
+  D3D12_CONSTANT_BUFFER_VIEW_DESC cbv_desc = {};
+  cbv_desc.BufferLocation = cbvs->GetGPUVirtualAddress();
+  cbv_desc.SizeInBytes = 256;
+
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle1(cbv_heap->GetCPUDescriptorHandleForHeapStart(),
+    0, cbv_descriptor_size);
+  g_device->CreateConstantBufferView(&cbv_desc, handle1);
 }

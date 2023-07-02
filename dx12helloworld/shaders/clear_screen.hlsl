@@ -12,15 +12,10 @@ struct PSOutput {
   float4 color : SV_Target;
 };
 
-cbuffer PerTriangleCB : register(b0) {
-  float2 pos;
-};
-
-
 VSOutput VSMain(VSInput input) {
   VSOutput output;
-  output.position = float4(input.aPos + float3(pos, 0.0), 1.0);
-  output.color    = input.aColor;
+  output.position = float4(input.aPos, 1.0);
+  output.color = input.aColor;
   return output;
 }
 

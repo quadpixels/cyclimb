@@ -46,11 +46,11 @@ void DX12ClearScreenScene::InitPipelineAndCommandList() {
   {
     ID3DBlob* error = nullptr;
     unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-    D3DCompileFromFile(L"shaders/hellotriangle.hlsl", nullptr, nullptr,
+    D3DCompileFromFile(L"shaders/clear_screen.hlsl", nullptr, nullptr,
       "VSMain", "vs_5_0", compile_flags, 0, &VS, &error);
     if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
 
-    D3DCompileFromFile(L"shaders/hellotriangle.hlsl", nullptr, nullptr,
+    D3DCompileFromFile(L"shaders/clear_screen.hlsl", nullptr, nullptr,
       "PSMain", "ps_5_0", compile_flags, 0, &PS, &error);
     if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
   }

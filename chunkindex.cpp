@@ -71,7 +71,8 @@ void ChunkGrid::Render_D3D11(
   M = glm::translate(M, anchor1);
   */
 
-  M = glm::scale(M, scale);
+  const float eps = 0.01f;
+  M = glm::scale(M, scale + glm::vec3(eps, eps, eps));
   glm::vec3 t = glm::inverse(orientation1) * pos11 / scale;
 
   M = glm::translate(M, t);

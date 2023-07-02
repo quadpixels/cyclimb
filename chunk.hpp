@@ -8,6 +8,7 @@
 #include <vector>
 #ifdef WIN32
 #include <d3d11.h>
+#include <d3d12.h>
 #include <DirectXMath.h>
 #endif
 #undef max
@@ -42,6 +43,7 @@ private:
 
 #ifdef WIN32
   ID3D11Buffer* d3d11_vertex_buffer;
+  ID3D12Resource* d3d12_vertex_buffer;
 #endif
 
   static float l0;
