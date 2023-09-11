@@ -48,7 +48,7 @@ void DX12HelloTriangleScene::Render() {
 
   ID3D12DescriptorHeap* ppHeaps[] = { cbv_heap };
   command_list->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
-  command_list->SetGraphicsRootConstantBufferView(1, cbvs->GetGPUVirtualAddress());
+  command_list->SetGraphicsRootConstantBufferView(0, cbvs->GetGPUVirtualAddress());
 
   command_list->RSSetViewports(1, &viewport);
   command_list->RSSetScissorRects(1, &scissor);
@@ -58,7 +58,7 @@ void DX12HelloTriangleScene::Render() {
   command_list->IASetVertexBuffers(0, 1, &vertex_buffer_view);
   command_list->DrawInstanced(3, 1, 0, 0);
 
-  command_list->SetGraphicsRootConstantBufferView(1, cbvs->GetGPUVirtualAddress() + 256);
+  command_list->SetGraphicsRootConstantBufferView(0, cbvs->GetGPUVirtualAddress() + 256);
   command_list->DrawInstanced(3, 1, 0, 0);
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
@@ -107,14 +107,8 @@ void DX12HelloTriangleScene::InitPipelineAndCommandList() {
   }
 
   {
-    CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
-    ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0,
-      D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
-
-    CD3DX12_ROOT_PARAMETER1 rootParameters[2];
-    rootParameters[0].InitAsDescriptorTable(1, &ranges[0],
-      D3D12_SHADER_VISIBILITY_VERTEX);
-    rootParameters[1].InitAsConstantBufferView(0, 0,
+    CD3DX12_ROOT_PARAMETER1 rootParameters[1];
+    rootParameters[0].InitAsConstantBufferView(0, 0,
       D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
 
     CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_sig_desc;
