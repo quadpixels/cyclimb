@@ -8,7 +8,7 @@
 
 using Microsoft::WRL::ComPtr;
 
-extern unsigned WIN_W, WIN_H;
+extern int WIN_W, WIN_H;
 extern ID3D12Device* g_device;
 extern int g_frame_index;
 extern ID3D12CommandQueue* g_command_queue;

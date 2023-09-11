@@ -14,7 +14,7 @@
 using Microsoft::WRL::ComPtr;
 
 extern HWND g_hwnd;
-extern unsigned WIN_W, WIN_H;
+extern int WIN_W, WIN_H;
 
 extern ID3D12Device* g_device;
 extern IDXGIFactory4* g_factory;

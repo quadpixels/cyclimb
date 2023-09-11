@@ -9,7 +9,7 @@
 #include "scene.hpp"
 #include "utils.hpp"
 
-unsigned WIN_W = 800, WIN_H = 480;
+int WIN_W = 800, WIN_H = 480;
 const int FRAME_COUNT = 2;
 HWND g_hwnd;
 
@@ -27,6 +27,17 @@ int g_frame_index;
 
 static Scene* g_scenes[2];
 static int g_scene_idx = 0;
+
+// Override the following functions for DX12
+bool IsGL() { return false; }
+void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P) {}
+ID3D11Device* g_device11;
+ID3D11DeviceContext* g_context11;
+ID3D11VertexShader* g_vs_simpletexture;
+ID3D11PixelShader* g_ps_simpletexture;
+ID3DBlob* g_vs_textrender_blob, * g_ps_textrender_blob;
+ID3D11BlendState* g_blendstate11;
+ID3D11Buffer* g_simpletexture_cb;
 
 // Shared across all scenes
 void InitDeviceAndCommandQ() {
@@ -78,8 +89,8 @@ void InitDeviceAndCommandQ() {
 
 void InitSwapChain() {
   DXGI_SWAP_CHAIN_DESC1 desc = {
-    .Width = WIN_W,
-    .Height = WIN_H,
+    .Width = (UINT)WIN_W,
+    .Height = (UINT)WIN_H,
     .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
     .SampleDesc = {
       .Count = 1,

@@ -8,6 +8,8 @@
 #include <wrl/client.h>
 #include <dxgi1_4.h>
 
+#include "chunk.hpp"
+
 class Scene {
 public:
   virtual void Render() = 0;
@@ -53,6 +55,22 @@ private:
   ID3D12DescriptorHeap* cbv_heap;
   int cbv_descriptor_size;
   ID3D12Resource* cbvs;  // CBV resource, N copies of the CBV for N triangles.
+};
+
+class DX12ChunksScene : public Scene {
+public:
+  DX12ChunksScene();
+  void Render() override;
+  void Update(float secs) override;
+  static constexpr int FRAME_COUNT = 2;
+private:
+  void InitPipelineAndCommandList();
+  void InitResources();
+  ID3D12CommandAllocator* command_allocator;
+  ID3D12GraphicsCommandList* command_list;
+  ID3DBlob* default_palette_VS, * default_palette_PS;
+  ID3D12RootSignature* root_signature;
+  ID3D12PipelineState* pipeline_state;
 };
 
 #endif

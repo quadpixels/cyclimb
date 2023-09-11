@@ -215,7 +215,8 @@ void ChunkGrid::Init(unsigned _xlen, unsigned _ylen, unsigned _zlen) {
 }
 
 ChunkGrid::ChunkGrid(const char* vox_fn) {
-  FILE* f = fopen(vox_fn, "rb");
+  FILE* f;
+  fopen_s(&f, vox_fn, "rb");
 
   long long file_size;
   fseek(f, 0, SEEK_END);
