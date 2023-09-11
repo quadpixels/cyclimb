@@ -9,6 +9,8 @@
 #include <dxgi1_4.h>
 
 #include "chunk.hpp"
+#include "camera.hpp"
+#include "util.hpp"
 
 class Scene {
 public:
@@ -57,6 +59,16 @@ private:
   ID3D12Resource* cbvs;  // CBV resource, N copies of the CBV for N triangles.
 };
 
+struct PerObjectCB {
+  DirectX::XMMATRIX M, V, P;
+};
+
+struct PerSceneCB {
+  DirectX::XMVECTOR dir_light;
+  DirectX::XMMATRIX lightPV;
+  DirectX::XMVECTOR cam_pos;
+};
+
 class DX12ChunksScene : public Scene {
 public:
   DX12ChunksScene();
@@ -71,6 +83,19 @@ private:
   ID3DBlob* default_palette_VS, * default_palette_PS;
   ID3D12RootSignature* root_signature;
   ID3D12PipelineState* pipeline_state;
+  Chunk* chunk;
+
+  // CB's heap, resource, view and descriptor
+  ID3D12DescriptorHeap* cbv_heap;
+  PerObjectCB per_object_cb;
+  PerSceneCB per_scene_cb;
+  ID3D12Resource* cbs;
+  int cbv_descriptor_size;
+  Camera* camera;
+  DirectionalLight* dir_light;
+  void UpdatePerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
+  void UpdatePerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
+  DirectX::XMMATRIX projection_matrix;
 };
 
 #endif

@@ -289,13 +289,22 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
     }
     else if (IsD3D12()) {
       if (tri_count > 0) {
+        size_t byte_width = sizeof(float) * tri_count * 3 * 6;
         CE(g_device12->CreateCommittedResource(
           &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
           D3D12_HEAP_FLAG_NONE,
-          &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(float)* tri_count * 3 * 6)),
+          &keep(CD3DX12_RESOURCE_DESC::Buffer(byte_width)),
           D3D12_RESOURCE_STATE_GENERIC_READ,
           nullptr,
           IID_PPV_ARGS(&d3d12_vertex_buffer)));
+        char* pData;
+        CD3DX12_RANGE readRange(0, 0);
+        CE(d3d12_vertex_buffer->Map(0, &readRange, (void**)&pData));
+        memcpy(pData, tmp_packed, byte_width);
+        d3d12_vertex_buffer->Unmap(0, nullptr);
+        d3d12_vertex_buffer_view.BufferLocation = d3d12_vertex_buffer->GetGPUVirtualAddress();
+        d3d12_vertex_buffer_view.StrideInBytes = sizeof(float) * 6;
+        d3d12_vertex_buffer_view.SizeInBytes = byte_width;
       }
     }
     #endif

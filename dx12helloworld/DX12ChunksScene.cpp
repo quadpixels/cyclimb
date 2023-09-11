@@ -6,8 +6,15 @@
 
 using Microsoft::WRL::ComPtr;
 
+extern int WIN_W, WIN_H;
 void WaitForPreviousFrame();
 extern ID3D12Device* g_device12;
+extern ID3D12DescriptorHeap* g_rtv_heap;
+extern int g_frame_index;
+extern ID3D12Resource* g_rendertargets[];
+extern unsigned g_rtv_descriptor_size;
+extern ID3D12CommandQueue* g_command_queue;
+extern IDXGISwapChain3* g_swapchain;
 
 /*
 cbuffer CBPerObject : register(b0) {
@@ -23,18 +30,9 @@ cbuffer CBPerScene : register(b1) {
 }
 */
 
-struct PerObjectCB {
-  DirectX::XMMATRIX M, V, P;
-};
-
-struct PerSceneCB {
-  DirectX::XMVECTOR dir_light;
-  DirectX::XMMATRIX lightPV;
-  DirectX::XMVECTOR cam_pos;
-};
-
 DX12ChunksScene::DX12ChunksScene() {
   InitPipelineAndCommandList();
+  InitResources();
 }
 
 void DX12ChunksScene::InitPipelineAndCommandList() {
@@ -47,27 +45,44 @@ void DX12ChunksScene::InitPipelineAndCommandList() {
   {
     ID3DBlob* error = nullptr;
     unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-    D3DCompileFromFile(L"shaders/default_palette.hlsl", nullptr, nullptr,
+    D3DCompileFromFile(L"../shaders_hlsl/default_palette.hlsl", nullptr, nullptr,
       "VSMain", "vs_5_0", compile_flags, 0, &default_palette_VS, &error);
     if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
 
-    D3DCompileFromFile(L"shaders/default_palette.hlsl", nullptr, nullptr,
-      "PSMain", "ps_5_0", compile_flags, 0, &default_palette_PS, &error);
+    D3DCompileFromFile(L"../shaders_hlsl/default_palette.hlsl", nullptr, nullptr,
+      "PSMainWithShadow", "ps_5_0", compile_flags, 0, &default_palette_PS, &error);
     if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
   }
 
   // Root signature
   {
     CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
+    ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
 
-    CD3DX12_ROOT_PARAMETER1 rootParameters[2];
-    rootParameters[0].InitAsConstantBufferView(0, 0,
+    CD3DX12_ROOT_PARAMETER1 rootParameters[3];
+    rootParameters[0].InitAsConstantBufferView(0, 0,  // per-scene CB
       D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
-    rootParameters[1].InitAsConstantBufferView(1, 0,
-      D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_PIXEL);
+    rootParameters[1].InitAsConstantBufferView(1, 0,  // per-object CB
+      D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_ALL);
+    rootParameters[2].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
     
+    D3D12_STATIC_SAMPLER_DESC sampler = {};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.MipLODBias = 0;
+    sampler.MaxAnisotropy = 4;
+    sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+    sampler.MinLOD = 0.0f;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    sampler.ShaderRegister = 0;
+    sampler.RegisterSpace = 0;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_sig_desc;
-    root_sig_desc.Init_1_1(_countof(rootParameters), rootParameters, 0, NULL,
+    root_sig_desc.Init_1_1(_countof(rootParameters), rootParameters, 1, &sampler,
       D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
     ComPtr<ID3DBlob> signature, error;
 
@@ -107,9 +122,10 @@ void DX12ChunksScene::InitPipelineAndCommandList() {
       4
     },
     .PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
-    .NumRenderTargets = 1,
+    .NumRenderTargets = 2,
     .RTVFormats = {
       DXGI_FORMAT_R8G8B8A8_UNORM,
+      DXGI_FORMAT_D32_FLOAT,
     },
     .DSVFormat = DXGI_FORMAT_UNKNOWN,
     .SampleDesc = {
@@ -120,11 +136,122 @@ void DX12ChunksScene::InitPipelineAndCommandList() {
 }
 
 void DX12ChunksScene::InitResources() {
+  // Projection Matrix
+  projection_matrix = DirectX::XMMatrixPerspectiveFovLH(
+    60.0f * 3.14159f / 180.0f,
+    WIN_W * 1.0f / WIN_H, 0.01f, 499.0f);
+
+  // Camera
+  camera = new Camera();
+  camera->pos = glm::vec3(0, 0, 50);
+  camera->lookdir = glm::vec3(0, 0, -1);
+  camera->up = glm::vec3(0, 1, 0);
+
+  // Directional Light
+  dir_light = new DirectionalLight(glm::vec3(-1, -3, -1), glm::vec3(1, 3, -1));
+
+  // Chunk
+  chunk = new Chunk();
+  chunk->LoadDefault();
+  chunk->BuildBuffers(nullptr);
+
+  // Constant buffer
+  const size_t tot_cb_size = sizeof(PerObjectCB) + sizeof(PerSceneCB);
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(tot_cb_size)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&cbs)));
+
+
+  // CBV heap
+  D3D12_DESCRIPTOR_HEAP_DESC cbv_heap_desc{};
+  cbv_heap_desc.NumDescriptors = 2;
+  cbv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+  cbv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  CE(g_device12->CreateDescriptorHeap(&cbv_heap_desc, IID_PPV_ARGS(&cbv_heap)));
+  cbv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+  // Per Scene CB view
+  D3D12_CONSTANT_BUFFER_VIEW_DESC per_scene_cbv_desc{};
+  per_scene_cbv_desc.BufferLocation = cbs->GetGPUVirtualAddress();
+  per_scene_cbv_desc.SizeInBytes = 256;   // Must be a multiple of 256
+
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle1(cbv_heap->GetCPUDescriptorHandleForHeapStart());
+  g_device12->CreateConstantBufferView(&per_scene_cbv_desc, handle1);
+
+  // Per Object CB view
+  D3D12_CONSTANT_BUFFER_VIEW_DESC per_obj_cbv_desc{};
+  per_obj_cbv_desc.BufferLocation = per_scene_cbv_desc.BufferLocation + 256;
+  per_obj_cbv_desc.SizeInBytes = sizeof(PerObjectCB);
+  handle1.Offset(cbv_descriptor_size);
+  g_device12->CreateConstantBufferView(&per_scene_cbv_desc, handle1);
 }
 
 void DX12ChunksScene::Render() {
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, pipeline_state));
+
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
+    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    g_frame_index, g_rtv_descriptor_size);
+  float bg_color[] = { 0.8f, 0.8f, 0.8f, 1.0f };
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_PRESENT,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+
+  command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_PRESENT)));
+
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1,
+    (ID3D12CommandList* const*)&command_list);
+  CE(g_swapchain->Present(1, 0));
+  WaitForPreviousFrame();
 }
 
 void DX12ChunksScene::Update(float secs) {
+  DirectX::XMVECTOR D = dir_light->GetDir_D3D11();
+  DirectX::XMMATRIX PV = dir_light->GetPV_D3D11();
+  DirectX::XMVECTOR pos = camera->GetPos_D3D11();
+  UpdatePerSceneCB(&D, &PV, &pos);
+  DirectX::XMMATRIX M = DirectX::XMMatrixIdentity();
+  M *= DirectX::XMMatrixTranslation(chunk->pos.x, chunk->pos.y, -(chunk->pos.z));
+  DirectX::XMMATRIX V = camera->GetViewMatrix_D3D11();
+  UpdatePerObjectCB(&M, &V, &projection_matrix);
 }
 
+void DX12ChunksScene::UpdatePerSceneCB(
+  const DirectX::XMVECTOR* dir_light,
+  const DirectX::XMMATRIX* lightPV,
+  const DirectX::XMVECTOR* camPos) {
+  CD3DX12_RANGE read_range(0, sizeof(PerSceneCB));
+  char* ptr;
+  CE(cbs->Map(0, &read_range, (void**)&ptr));
+  per_scene_cb.dir_light = *dir_light;
+  per_scene_cb.lightPV = *lightPV;
+  per_scene_cb.cam_pos = *camPos;
+  memcpy(ptr, &per_scene_cb, sizeof(PerSceneCB));
+  cbs->Unmap(0, nullptr);
+}
+
+void DX12ChunksScene::UpdatePerObjectCB(
+  const DirectX::XMMATRIX* M,
+  const DirectX::XMMATRIX* V,
+  const DirectX::XMMATRIX* P) {
+  CD3DX12_RANGE read_range(sizeof(PerSceneCB), sizeof(PerObjectCB));
+  char* ptr;
+  CE(cbs->Map(0, &read_range, (void**)&ptr));
+  per_object_cb.M = *M;
+  per_object_cb.V = *V;
+  per_object_cb.P = *P;
+  memcpy(ptr, &per_object_cb, sizeof(PerObjectCB));
+  cbs->Unmap(0, nullptr);
+}

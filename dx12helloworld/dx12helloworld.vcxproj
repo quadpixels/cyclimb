@@ -150,6 +150,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\camera.cpp" />
     <ClCompile Include="..\chunk.cpp" />
     <ClCompile Include="..\chunkindex.cpp" />
     <ClCompile Include="..\util.cpp" />
@@ -160,6 +161,7 @@
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\camera.hpp" />
     <ClInclude Include="..\chunk.hpp" />
     <ClInclude Include="..\chunkindex.hpp" />
     <ClInclude Include="..\d3dx12.h" />
