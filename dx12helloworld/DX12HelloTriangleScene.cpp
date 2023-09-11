@@ -17,6 +17,9 @@ extern ID3D12DescriptorHeap* g_rtv_heap;
 extern ID3D12Resource* g_rendertargets[];
 extern unsigned g_rtv_descriptor_size;
 
+// Root Parameter的布局方式
+const bool use_descriptor_table = true;
+
 struct PerTriangleCB {
   DirectX::XMFLOAT2 pos;
 };
@@ -48,7 +51,17 @@ void DX12HelloTriangleScene::Render() {
 
   ID3D12DescriptorHeap* ppHeaps[] = { cbv_heap };
   command_list->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
-  command_list->SetGraphicsRootConstantBufferView(0, cbvs->GetGPUVirtualAddress());
+
+  CD3DX12_GPU_DESCRIPTOR_HANDLE cbvHandle(cbv_heap->GetGPUDescriptorHandleForHeapStart(), 0, cbv_descriptor_size);
+
+  // 如果使用Descriptor Table：就把Heap丢给Descriptor Table
+  // 如果使用CBV：就把单个CBV丢给CBV
+  if (use_descriptor_table) {
+    command_list->SetGraphicsRootDescriptorTable(0, cbv_heap->GetGPUDescriptorHandleForHeapStart());
+  }
+  else {
+    command_list->SetGraphicsRootConstantBufferView(0, cbvs->GetGPUVirtualAddress());
+  }
 
   command_list->RSSetViewports(1, &viewport);
   command_list->RSSetScissorRects(1, &scissor);
@@ -58,7 +71,13 @@ void DX12HelloTriangleScene::Render() {
   command_list->IASetVertexBuffers(0, 1, &vertex_buffer_view);
   command_list->DrawInstanced(3, 1, 0, 0);
 
-  command_list->SetGraphicsRootConstantBufferView(0, cbvs->GetGPUVirtualAddress() + 256);
+  if (use_descriptor_table) {
+    cbvHandle.Offset(cbv_descriptor_size);
+    command_list->SetGraphicsRootDescriptorTable(0, cbvHandle);
+  }
+  else {
+    command_list->SetGraphicsRootConstantBufferView(0, cbvs->GetGPUVirtualAddress() + 256);
+  }
   command_list->DrawInstanced(3, 1, 0, 0);
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
@@ -108,8 +127,28 @@ void DX12HelloTriangleScene::InitPipelineAndCommandList() {
 
   {
     CD3DX12_ROOT_PARAMETER1 rootParameters[1];
-    rootParameters[0].InitAsConstantBufferView(0, 0,
-      D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+    if (use_descriptor_table) {
+
+      /*inline void InitAsDescriptorTable(
+        UINT numDescriptorRanges,
+        _In_reads_(numDescriptorRanges) const D3D12_DESCRIPTOR_RANGE1 * pDescriptorRanges,
+        D3D12_SHADER_VISIBILITY visibility = D3D12_SHADER_VISIBILITY_ALL)
+      {
+        InitAsDescriptorTable(*this, numDescriptorRanges, pDescriptorRanges, visibility);
+      }*/
+      D3D12_DESCRIPTOR_RANGE1 dr{};
+      dr.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+      dr.NumDescriptors = 1;
+      dr.BaseShaderRegister = 0;  // 对应 "register(b0)"
+      dr.RegisterSpace = 0;
+      dr.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+      dr.OffsetInDescriptorsFromTableStart = 0;
+      rootParameters[0].InitAsDescriptorTable(1, &dr, D3D12_SHADER_VISIBILITY_VERTEX);
+    }
+    else {
+      rootParameters[0].InitAsConstantBufferView(0, 0,
+        D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+    }
 
     CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_sig_desc;
     root_sig_desc.Init_1_1(_countof(rootParameters), rootParameters, 0, NULL,
@@ -190,7 +229,7 @@ void DX12HelloTriangleScene::InitResources() {
 
   // CBV's heap
   D3D12_DESCRIPTOR_HEAP_DESC cbv_heap_desc = {};
-  cbv_heap_desc.NumDescriptors = 1;  // Just 1 constant buffer
+  cbv_heap_desc.NumDescriptors = 2;  // Just 1 constant buffer
   cbv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   cbv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   CE(g_device->CreateDescriptorHeap(&cbv_heap_desc, IID_PPV_ARGS(&cbv_heap)));
@@ -212,5 +251,9 @@ void DX12HelloTriangleScene::InitResources() {
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle1(cbv_heap->GetCPUDescriptorHandleForHeapStart(),
     0, cbv_descriptor_size);
+  g_device->CreateConstantBufferView(&cbv_desc, handle1);
+
+  handle1.Offset(cbv_descriptor_size);
+  cbv_desc.BufferLocation += 256;
   g_device->CreateConstantBufferView(&cbv_desc, handle1);
 }
