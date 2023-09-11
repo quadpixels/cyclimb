@@ -9,6 +9,8 @@ int      Chunk::size = 32;
 unsigned Chunk::program = 0;
 
 extern bool IsGL();
+extern bool IsD3D11();
+extern bool IsD3D12();
 extern Camera* GetCurrentSceneCamera();
 
 #ifdef WIN32
@@ -17,6 +19,8 @@ extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11Buffer* g_perobject_cb_default_palette;
 extern DirectX::XMMATRIX g_projection_d3d11;
+
+extern ID3D12Device* g_device12;
 
 struct DefaultPalettePerObjectCB {
   DirectX::XMMATRIX M, V, P;
@@ -268,18 +272,31 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
   }
   else {
     #ifdef WIN32
-    if (tri_count > 0) {
-      D3D11_BUFFER_DESC desc = { };
-      desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-      desc.ByteWidth = sizeof(float) * tri_count * 3 * 6;
-      desc.StructureByteStride = sizeof(float) * 6;
-      desc.Usage = D3D11_USAGE_IMMUTABLE;
+    if (IsD3D11()) {
+      if (tri_count > 0) {
+        D3D11_BUFFER_DESC desc = { };
+        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        desc.ByteWidth = sizeof(float) * tri_count * 3 * 6;
+        desc.StructureByteStride = sizeof(float) * 6;
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
 
-      D3D11_SUBRESOURCE_DATA srd = { };
-      srd.pSysMem = tmp_packed;
-      srd.SysMemPitch = sizeof(float) * tri_count * 3 * 6;
+        D3D11_SUBRESOURCE_DATA srd = { };
+        srd.pSysMem = tmp_packed;
+        srd.SysMemPitch = sizeof(float) * tri_count * 3 * 6;
 
-      assert(SUCCEEDED(g_device11->CreateBuffer(&desc, &srd, &d3d11_vertex_buffer)));
+        assert(SUCCEEDED(g_device11->CreateBuffer(&desc, &srd, &d3d11_vertex_buffer)));
+      }
+    }
+    else if (IsD3D12()) {
+      if (tri_count > 0) {
+        CE(g_device12->CreateCommittedResource(
+          &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+          D3D12_HEAP_FLAG_NONE,
+          &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(float)* tri_count * 3 * 6)),
+          D3D12_RESOURCE_STATE_GENERIC_READ,
+          nullptr,
+          IID_PPV_ARGS(&d3d12_vertex_buffer)));
+      }
     }
     #endif
   }

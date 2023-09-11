@@ -9,14 +9,14 @@
 #include <dxgi1_4.h>
 #include <wrl/client.h>
 
-#include "utils.hpp"
+#include "util.hpp"
 
 using Microsoft::WRL::ComPtr;
 
 extern HWND g_hwnd;
 extern int WIN_W, WIN_H;
 
-extern ID3D12Device* g_device;
+extern ID3D12Device* g_device12;
 extern IDXGIFactory4* g_factory;
 extern ID3D12CommandQueue* g_command_queue;
 extern ID3D12Fence* g_fence;
@@ -36,10 +36,10 @@ void DX12ClearScreenScene::Update(float secs) {
 }
 
 void DX12ClearScreenScene::InitPipelineAndCommandList() {
-  CE(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+  CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
     IID_PPV_ARGS(&command_allocator)));
 
-  CE(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+  CE(g_device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
     command_allocator, nullptr, IID_PPV_ARGS(&command_list)));
   CE(command_list->Close());
 
@@ -69,7 +69,7 @@ void DX12ClearScreenScene::InitPipelineAndCommandList() {
         (char*)(error->GetBufferPointer()));
     }
 
-    CE(g_device->CreateRootSignature(0, signature->GetBufferPointer(),
+    CE(g_device12->CreateRootSignature(0, signature->GetBufferPointer(),
       signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
     root_signature->SetName(L"Root signature");
   }
@@ -116,7 +116,7 @@ void DX12ClearScreenScene::InitPipelineAndCommandList() {
     },
   };
 
-  CE(g_device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
 }
 
 DX12ClearScreenScene::DX12ClearScreenScene() {

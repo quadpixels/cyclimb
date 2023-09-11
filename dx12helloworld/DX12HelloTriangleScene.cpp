@@ -1,7 +1,7 @@
 #include "scene.hpp"
 
 #include "d3dx12.h"
-#include "utils.hpp"
+#include "util.hpp"
 #include <Windows.h>
 #include <stdio.h>
 #include <wrl/client.h>
@@ -9,7 +9,7 @@
 using Microsoft::WRL::ComPtr;
 
 extern int WIN_W, WIN_H;
-extern ID3D12Device* g_device;
+extern ID3D12Device* g_device12;
 extern int g_frame_index;
 extern ID3D12CommandQueue* g_command_queue;
 extern IDXGISwapChain3* g_swapchain;
@@ -107,9 +107,9 @@ void DX12HelloTriangleScene::Update(float secs) {
 }
 
 void DX12HelloTriangleScene::InitPipelineAndCommandList() {
-  CE(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+  CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
     IID_PPV_ARGS(&command_allocator)));
-  CE(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+  CE(g_device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
     command_allocator, nullptr, IID_PPV_ARGS(&command_list)));
   CE(command_list->Close());
 
@@ -163,7 +163,7 @@ void DX12HelloTriangleScene::InitPipelineAndCommandList() {
         (char*)(error->GetBufferPointer()));
     }
 
-    CE(g_device->CreateRootSignature(0, signature->GetBufferPointer(),
+    CE(g_device12->CreateRootSignature(0, signature->GetBufferPointer(),
       signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
     root_signature->SetName(L"Root signature");
   }
@@ -201,7 +201,7 @@ void DX12HelloTriangleScene::InitPipelineAndCommandList() {
     },
   };
 
-  CE(g_device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
 }
 
 void DX12HelloTriangleScene::InitResources() {
@@ -210,7 +210,7 @@ void DX12HelloTriangleScene::InitResources() {
     { { 0.25f, -0.25f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
     { { -0.25f, -0.25f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
   };
-  CE(g_device->CreateCommittedResource(
+  CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
     D3D12_HEAP_FLAG_NONE,
     &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(verts))),
@@ -232,11 +232,11 @@ void DX12HelloTriangleScene::InitResources() {
   cbv_heap_desc.NumDescriptors = 2;  // Just 1 constant buffer
   cbv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   cbv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-  CE(g_device->CreateDescriptorHeap(&cbv_heap_desc, IID_PPV_ARGS(&cbv_heap)));
-  cbv_descriptor_size = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+  CE(g_device12->CreateDescriptorHeap(&cbv_heap_desc, IID_PPV_ARGS(&cbv_heap)));
+  cbv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
   // CBV's resource
-  CE(g_device->CreateCommittedResource(
+  CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
     D3D12_HEAP_FLAG_NONE,
     &keep(CD3DX12_RESOURCE_DESC::Buffer(512)),
@@ -251,9 +251,9 @@ void DX12HelloTriangleScene::InitResources() {
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle1(cbv_heap->GetCPUDescriptorHandleForHeapStart(),
     0, cbv_descriptor_size);
-  g_device->CreateConstantBufferView(&cbv_desc, handle1);
+  g_device12->CreateConstantBufferView(&cbv_desc, handle1);
 
   handle1.Offset(cbv_descriptor_size);
   cbv_desc.BufferLocation += 256;
-  g_device->CreateConstantBufferView(&cbv_desc, handle1);
+  g_device12->CreateConstantBufferView(&cbv_desc, handle1);
 }

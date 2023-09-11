@@ -7,13 +7,14 @@
 #include <wrl/client.h>
 
 #include "scene.hpp"
-#include "utils.hpp"
+#include "utils.hpp"  // DX12 tests' utils.hpp
+#include "util.hpp"   // Cyclimb's util.hpp
 
 int WIN_W = 800, WIN_H = 480;
 const int FRAME_COUNT = 2;
 HWND g_hwnd;
 
-ID3D12Device* g_device;
+ID3D12Device* g_device12;
 IDXGIFactory4* g_factory;
 ID3D12CommandQueue* g_command_queue;
 ID3D12Fence* g_fence;
@@ -29,7 +30,10 @@ static Scene* g_scenes[2];
 static int g_scene_idx = 0;
 
 // Override the following functions for DX12
+GraphicsAPI g_api = GraphicsAPI::ClimbD3D12;
 bool IsGL() { return false; }
+bool IsD3D11() { return false; }
+bool IsD3D12() { return true; }
 void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P) {}
 ID3D11Device* g_device11;
 ID3D11DeviceContext* g_context11;
@@ -55,8 +59,8 @@ void InitDeviceAndCommandQ() {
   if (use_warp_device) {
     IDXGIAdapter* warp_adapter;
     CE(g_factory->EnumWarpAdapter(IID_PPV_ARGS(&warp_adapter)));
-    CE(D3D12CreateDevice(warp_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device)));
-    printf("Created a WARP device=%p\n", g_device);;
+    CE(D3D12CreateDevice(warp_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device12)));
+    printf("Created a WARP device=%p\n", g_device12);;
   }
   else {
     IDXGIAdapter1* hw_adapter;
@@ -65,24 +69,24 @@ void InitDeviceAndCommandQ() {
       hw_adapter->GetDesc1(&desc);
       if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
       else {
-        CE(D3D12CreateDevice(hw_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device)));
-        printf("Created a hardware device = %p\n", g_device);
+        CE(D3D12CreateDevice(hw_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device12)));
+        printf("Created a hardware device = %p\n", g_device12);
         break;
       }
     }
   }
 
-  assert(g_device != nullptr);
+  assert(g_device12 != nullptr);
 
   {
     D3D12_COMMAND_QUEUE_DESC desc = {
       .Type = D3D12_COMMAND_LIST_TYPE_DIRECT,
       .Flags = D3D12_COMMAND_QUEUE_FLAG_NONE,
     };
-    CE(g_device->CreateCommandQueue(&desc, IID_PPV_ARGS(&g_command_queue)));
+    CE(g_device12->CreateCommandQueue(&desc, IID_PPV_ARGS(&g_command_queue)));
   }
 
-  CE(g_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence)));
+  CE(g_device12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence)));
   g_fence_value = 1;
   g_fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 }
@@ -114,16 +118,16 @@ void InitSwapChain() {
       .NumDescriptors = 2,
       .Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
     };
-    CE(g_device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&g_rtv_heap)));
+    CE(g_device12->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&g_rtv_heap)));
     printf("Created RTV heap.\n");
   }
 
-  g_rtv_descriptor_size = g_device->GetDescriptorHandleIncrementSize(
+  g_rtv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(
     D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
   CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_handle(g_rtv_heap->GetCPUDescriptorHandleForHeapStart());
   for (int i = 0; i < FRAME_COUNT; i++) {
     CE(g_swapchain->GetBuffer(i, IID_PPV_ARGS(&g_rendertargets[i])));
-    g_device->CreateRenderTargetView(g_rendertargets[i], nullptr, rtv_handle);
+    g_device12->CreateRenderTargetView(g_rendertargets[i], nullptr, rtv_handle);
     rtv_handle.Offset(1, g_rtv_descriptor_size);
 
     wchar_t buf[100];

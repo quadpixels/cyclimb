@@ -1,13 +1,13 @@
 #include "scene.hpp"
 
 #include "d3dx12.h"
-#include "utils.hpp"
+#include "util.hpp"
 #include <wrl/client.h>
 
 using Microsoft::WRL::ComPtr;
 
 void WaitForPreviousFrame();
-extern ID3D12Device* g_device;
+extern ID3D12Device* g_device12;
 
 /*
 cbuffer CBPerObject : register(b0) {
@@ -38,9 +38,9 @@ DX12ChunksScene::DX12ChunksScene() {
 }
 
 void DX12ChunksScene::InitPipelineAndCommandList() {
-  CE(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+  CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
     IID_PPV_ARGS(&command_allocator)));
-  CE(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+  CE(g_device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
     command_allocator, nullptr, IID_PPV_ARGS(&command_list)));
   CE(command_list->Close());
 
@@ -79,7 +79,7 @@ void DX12ChunksScene::InitPipelineAndCommandList() {
         (char*)(error->GetBufferPointer()));
     }
 
-    CE(g_device->CreateRootSignature(0, signature->GetBufferPointer(),
+    CE(g_device12->CreateRootSignature(0, signature->GetBufferPointer(),
       signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
     root_signature->SetName(L"Root signature");
   }
@@ -116,7 +116,7 @@ void DX12ChunksScene::InitPipelineAndCommandList() {
       .Count = 1,
     },
   };
-  CE(g_device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
 }
 
 void DX12ChunksScene::InitResources() {

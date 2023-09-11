@@ -78,7 +78,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)\windows_lib\freetype-2.10.0\include;$(SolutionDir)\windows_lib\glm-0.9.9.5;$(SolutionDir)\windows_lib\glew-2.0.0\include;$(SolutionDir)\windows_lib\freeglut\include;$(SolutionDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(SolutionDir)\windows_lib\DirectxTK\Inc</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)\windows_lib\freetype-2.10.0\include;$(SolutionDir)\windows_lib\glm-0.9.9.5;$(SolutionDir)\windows_lib\glew-2.0.0\include;$(SolutionDir)\windows_lib\freeglut\include;$(SolutionDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(SolutionDir)\windows_lib\DirectxTK\Inc;$(SolutionDir)</IncludePath>
     <LibraryPath>$(SolutionDir)\windows_lib\freetype-2.10.0\win64;$(SolutionDir)\windows_lib\freeglut\lib\x64;$(SolutionDir)\windows_lib\glew-2.0.0\lib\Release\x64;$(SolutionDir)\windows_lib\glfw-3.2.1.bin.WIN64\lib-vc2015;$(SolutionDir)\windows_lib\DirectxTK\Bin\x64;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -162,8 +162,8 @@
   <ItemGroup>
     <ClInclude Include="..\chunk.hpp" />
     <ClInclude Include="..\chunkindex.hpp" />
+    <ClInclude Include="..\d3dx12.h" />
     <ClInclude Include="..\util.hpp" />
-    <ClInclude Include="d3dx12.h" />
     <ClInclude Include="scene.hpp" />
     <ClInclude Include="utils.hpp" />
   </ItemGroup>

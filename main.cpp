@@ -29,6 +29,8 @@
 
 GraphicsAPI g_api = GraphicsAPI::ClimbD3D11;
 bool IsGL() { return (g_api == ClimbOpenGL); }
+bool IsD3D11() { return (g_api == ClimbD3D11); }
+bool IsD3D12() { return (g_api == ClimbD3D12); }
 
 void StartGame(bool);
 extern void MyInit_D3D11();
