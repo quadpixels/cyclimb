@@ -96,6 +96,11 @@ private:
   void UpdatePerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
   void UpdatePerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
   DirectX::XMMATRIX projection_matrix;
+
+  // DSV's heap
+  ID3D12DescriptorHeap* dsv_heap;
+  int dsv_descriptor_size;
+  ID3D12Resource* depth_buffer;
 };
 
 #endif

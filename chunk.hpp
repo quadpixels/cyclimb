@@ -39,13 +39,16 @@ public:
   void Fill(int vox);
   bool is_dirty;
   unsigned char* block;
+  unsigned tri_count;
 private:
-  unsigned vao, vbo, tri_count;
+  unsigned vao, vbo;
 
 #ifdef WIN32
   ID3D11Buffer* d3d11_vertex_buffer;
+public:
   ID3D12Resource* d3d12_vertex_buffer;
   D3D12_VERTEX_BUFFER_VIEW d3d12_vertex_buffer_view;
+private:
 #endif
 
   static float l0;

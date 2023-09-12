@@ -113,10 +113,7 @@ void DX12ChunksScene::InitPipelineAndCommandList() {
     .BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT),
     .SampleMask = UINT_MAX,
     .RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT),
-    .DepthStencilState = {
-      .DepthEnable = false,
-      .StencilEnable = false,
-    },
+    .DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT),
     .InputLayout = {
       input_element_desc,
       4
@@ -125,9 +122,9 @@ void DX12ChunksScene::InitPipelineAndCommandList() {
     .NumRenderTargets = 2,
     .RTVFormats = {
       DXGI_FORMAT_R8G8B8A8_UNORM,
-      DXGI_FORMAT_D32_FLOAT,
+      DXGI_FORMAT_R32G32B32A32_FLOAT,
     },
-    .DSVFormat = DXGI_FORMAT_UNKNOWN,
+    .DSVFormat = DXGI_FORMAT_D32_FLOAT,
     .SampleDesc = {
       .Count = 1,
     },
@@ -143,7 +140,7 @@ void DX12ChunksScene::InitResources() {
 
   // Camera
   camera = new Camera();
-  camera->pos = glm::vec3(0, 0, 50);
+  camera->pos = glm::vec3(0, 0, 80);
   camera->lookdir = glm::vec3(0, 0, -1);
   camera->up = glm::vec3(0, 1, 0);
 
@@ -156,7 +153,7 @@ void DX12ChunksScene::InitResources() {
   chunk->BuildBuffers(nullptr);
 
   // Constant buffer
-  const size_t tot_cb_size = sizeof(PerObjectCB) + sizeof(PerSceneCB);
+  const size_t tot_cb_size = 512;
   CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
     D3D12_HEAP_FLAG_NONE,
@@ -166,7 +163,7 @@ void DX12ChunksScene::InitResources() {
     IID_PPV_ARGS(&cbs)));
 
 
-  // CBV heap
+  // CBV descriptor heap
   D3D12_DESCRIPTOR_HEAP_DESC cbv_heap_desc{};
   cbv_heap_desc.NumDescriptors = 2;
   cbv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -188,6 +185,37 @@ void DX12ChunksScene::InitResources() {
   per_obj_cbv_desc.SizeInBytes = sizeof(PerObjectCB);
   handle1.Offset(cbv_descriptor_size);
   g_device12->CreateConstantBufferView(&per_scene_cbv_desc, handle1);
+
+  // Depth buffer
+  D3D12_CLEAR_VALUE depthOptimizedClearValue = {};
+  depthOptimizedClearValue.Format = DXGI_FORMAT_D32_FLOAT;
+  depthOptimizedClearValue.DepthStencil.Depth = 1.0f;
+  depthOptimizedClearValue.DepthStencil.Stencil = 0;
+
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Tex2D(
+      DXGI_FORMAT_R32_TYPELESS, WIN_W, WIN_H, 1, 0, 1, 0, 
+      D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)),
+    D3D12_RESOURCE_STATE_DEPTH_WRITE,
+    &depthOptimizedClearValue,
+    IID_PPV_ARGS(&depth_buffer)));
+
+  // DSV descriptor heap
+  D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc{};
+  dsv_heap_desc.NumDescriptors = 1;
+  dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+  dsv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+  CE(g_device12->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(&dsv_heap)));
+  dsv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+  // DSV
+  D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc = { };
+  dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
+  dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+  dsv_desc.Flags = D3D12_DSV_FLAG_NONE;
+  g_device12->CreateDepthStencilView(depth_buffer, &dsv_desc, dsv_heap->GetCPUDescriptorHandleForHeapStart());
 }
 
 void DX12ChunksScene::Render() {
@@ -204,6 +232,22 @@ void DX12ChunksScene::Render() {
     D3D12_RESOURCE_STATE_RENDER_TARGET)));
 
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_dsv(
+    dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
+  command_list->ClearDepthStencilView(handle_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+  command_list->SetGraphicsRootSignature(root_signature);
+
+  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
+  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissor);
+  
+  command_list->OMSetRenderTargets(1, &handle_rtv, FALSE, &handle_dsv);
+  command_list->SetGraphicsRootConstantBufferView(0, cbs->GetGPUVirtualAddress());  // Per-scene CB
+  command_list->SetGraphicsRootConstantBufferView(1, cbs->GetGPUVirtualAddress() + 256);  // Per-object CB
+  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  command_list->IASetVertexBuffers(0, 1, &(chunk->d3d12_vertex_buffer_view));
+  command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
