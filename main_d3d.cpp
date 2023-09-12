@@ -73,6 +73,8 @@ ID3D11InputLayout* g_inputlayout_for_light11;
 ID3D11DepthStencilState* g_dsstate_for_text11;
 ID3D11RasterizerState* g_rsstate_normal11, * g_rsstate_wireframe11;
 
+ID3D12Device* g_device12;
+
 struct DefaultPalettePerObjectCB {
   DirectX::XMMATRIX M, V, P;
 };
@@ -938,4 +940,5 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
   default:
     return DefWindowProc(hwnd, message, wparam, lparam);
   }
+  return 0;
 }
