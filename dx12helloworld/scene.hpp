@@ -85,6 +85,8 @@ private:
   ID3D12PipelineState* pipeline_state;
   Chunk* chunk;
 
+  float total_secs;
+
   // CB's heap, resource, view and descriptor
   ID3D12DescriptorHeap* cbv_heap;
   PerObjectCB per_object_cb;

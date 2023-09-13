@@ -33,6 +33,7 @@ cbuffer CBPerScene : register(b1) {
 DX12ChunksScene::DX12ChunksScene() {
   InitPipelineAndCommandList();
   InitResources();
+  total_secs = 0.0f;
 }
 
 void DX12ChunksScene::InitPipelineAndCommandList() {
@@ -262,12 +263,21 @@ void DX12ChunksScene::Render() {
 }
 
 void DX12ChunksScene::Update(float secs) {
+  total_secs += secs;
   DirectX::XMVECTOR D = dir_light->GetDir_D3D11();
   DirectX::XMMATRIX PV = dir_light->GetPV_D3D11();
   DirectX::XMVECTOR pos = camera->GetPos_D3D11();
   UpdatePerSceneCB(&D, &PV, &pos);
   DirectX::XMMATRIX M = DirectX::XMMatrixIdentity();
-  M *= DirectX::XMMatrixTranslation(chunk->pos.x, chunk->pos.y, -(chunk->pos.z));
+
+  const float l = Chunk::size;
+  M *= DirectX::XMMatrixTranslation(-l * 0.5f, -l * 0.5f, l * 0.5f);
+  DirectX::XMVECTOR rot_axis;
+  rot_axis.m128_f32[0] = 0.0f;
+  rot_axis.m128_f32[1] = 1.0f;
+  rot_axis.m128_f32[2] = 0.0f;
+  M *= DirectX::XMMatrixRotationAxis(rot_axis, total_secs * 3.14159f / 2.0f);
+
   DirectX::XMMATRIX V = camera->GetViewMatrix_D3D11();
   UpdatePerObjectCB(&M, &V, &projection_matrix);
 }
