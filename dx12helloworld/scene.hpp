@@ -9,6 +9,7 @@
 #include <dxgi1_4.h>
 
 #include "chunk.hpp"
+#include "chunkindex.hpp"
 #include "camera.hpp"
 #include "util.hpp"
 
@@ -78,6 +79,7 @@ private:
   ID3D12GraphicsCommandList* command_list;
 
   Chunk* chunk;
+  ChunkIndex* chunk_index;
   ChunkPass* chunk_pass;
 
   float total_secs;
