@@ -96,6 +96,10 @@ private:
   ID3D12DescriptorHeap* dsv_heap;
   int dsv_descriptor_size;
   ID3D12Resource* depth_buffer;
+
+  // Rendertarget
+  ID3D12Resource* gbuffer;
+  ID3D12DescriptorHeap* rtv_heap;  // For GBuffer
 };
 
 #endif

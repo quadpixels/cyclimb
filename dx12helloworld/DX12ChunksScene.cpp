@@ -130,6 +130,31 @@ void DX12ChunksScene::InitResources() {
   dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
   dsv_desc.Flags = D3D12_DSV_FLAG_NONE;
   g_device12->CreateDepthStencilView(depth_buffer, &dsv_desc, dsv_heap->GetCPUDescriptorHandleForHeapStart());
+
+  // GBuffer RTV
+  {
+    D3D12_DESCRIPTOR_HEAP_DESC desc = {
+      .Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
+      .NumDescriptors = 1,
+      .Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+    };
+    CE(g_device12->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rtv_heap)));
+
+    D3D12_CLEAR_VALUE zero{};
+    zero.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Tex2D(
+        DXGI_FORMAT_R32G32B32A32_FLOAT, WIN_W, WIN_H, 1, 0, 1, 0,
+        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)),
+      D3D12_RESOURCE_STATE_RENDER_TARGET,
+      &zero,
+      IID_PPV_ARGS(&gbuffer)));
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_handle(rtv_heap->GetCPUDescriptorHandleForHeapStart());
+    g_device12->CreateRenderTargetView(gbuffer, nullptr, rtv_handle);
+  }
 }
 
 void DX12ChunksScene::Render() {
@@ -139,6 +164,10 @@ void DX12ChunksScene::Render() {
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
     g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
     g_frame_index, g_rtv_descriptor_size);
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv_gbuffer(
+    rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    0, 0);
+
   float bg_color[] = { 0.8f, 0.8f, 0.8f, 1.0f };
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
@@ -146,6 +175,9 @@ void DX12ChunksScene::Render() {
     D3D12_RESOURCE_STATE_RENDER_TARGET)));
 
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+  float zero4[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+  command_list->ClearRenderTargetView(handle_rtv_gbuffer, zero4, 0, nullptr);
+
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_dsv(
     dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
   command_list->ClearDepthStencilView(handle_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
@@ -159,7 +191,10 @@ void DX12ChunksScene::Render() {
   command_list->RSSetViewports(1, &viewport);
   command_list->RSSetScissorRects(1, &scissor);
   
-  command_list->OMSetRenderTargets(1, &handle_rtv, FALSE, &handle_dsv);
+  D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] = {
+    handle_rtv, handle_rtv_gbuffer
+  };
+  command_list->OMSetRenderTargets(2, rtvs, FALSE, &handle_dsv);
   command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   command_list->SetGraphicsRootConstantBufferView(1, d_per_scene_cb->GetGPUVirtualAddress());  // Per-scene CB
 
