@@ -79,7 +79,7 @@ void DX12ChunksScene::InitResources() {
 
   // CBV descriptor heap
   D3D12_DESCRIPTOR_HEAP_DESC cbv_heap_desc{};
-  cbv_heap_desc.NumDescriptors = 2;
+  cbv_heap_desc.NumDescriptors = 3;  // Per-object CB, Per-scene CB, Shadow Map SRV
   cbv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   cbv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   CE(g_device12->CreateDescriptorHeap(&cbv_heap_desc, IID_PPV_ARGS(&cbv_heap)));
@@ -131,11 +131,11 @@ void DX12ChunksScene::InitResources() {
   dsv_desc.Flags = D3D12_DSV_FLAG_NONE;
   g_device12->CreateDepthStencilView(depth_buffer, &dsv_desc, dsv_heap->GetCPUDescriptorHandleForHeapStart());
 
-  // GBuffer RTV
+  // GBuffer RTV & Shadow Map SRV & RTV
   {
     D3D12_DESCRIPTOR_HEAP_DESC desc = {
       .Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
-      .NumDescriptors = 1,
+      .NumDescriptors = 2,  // GBuffer 与 ShadowMap
       .Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
     };
     CE(g_device12->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rtv_heap)));
@@ -154,6 +154,35 @@ void DX12ChunksScene::InitResources() {
 
     CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_handle(rtv_heap->GetCPUDescriptorHandleForHeapStart());
     g_device12->CreateRenderTargetView(gbuffer, nullptr, rtv_handle);
+
+    D3D12_CLEAR_VALUE shadow_map_clear{};
+    shadow_map_clear.Format = DXGI_FORMAT_R32_FLOAT;
+    shadow_map_clear.Color[0] = 1.0f;
+
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Tex2D(
+        DXGI_FORMAT_R32_TYPELESS, 512, 512, 1, 0, 1, 0,
+        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      &shadow_map_clear,
+      IID_PPV_ARGS(&shadow_map)));
+    
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+    srv_desc.Format = DXGI_FORMAT_R32_FLOAT;
+    srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv_desc.Texture2D.MostDetailedMip = 0;
+    srv_desc.Texture2D.MipLevels = 1;
+    handle1.Offset(cbv_descriptor_size);
+    g_device12->CreateShaderResourceView(shadow_map, &srv_desc, handle1);
+
+    D3D12_RENDER_TARGET_VIEW_DESC shadow_map_rtv_desc{};
+    shadow_map_rtv_desc.Format = DXGI_FORMAT_R32_FLOAT;
+    shadow_map_rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    rtv_handle.Offset(cbv_descriptor_size);
+    g_device12->CreateRenderTargetView(shadow_map, &shadow_map_rtv_desc, rtv_handle);
   }
 }
 
@@ -167,6 +196,9 @@ void DX12ChunksScene::Render() {
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv_gbuffer(
     rtv_heap->GetCPUDescriptorHandleForHeapStart(),
     0, 0);
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv_shadowmap(
+    rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    1, g_rtv_descriptor_size);
 
   float bg_color[] = { 0.8f, 0.8f, 0.8f, 1.0f };
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
@@ -177,6 +209,12 @@ void DX12ChunksScene::Render() {
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
   float zero4[] = { 0.0f, 0.0f, 0.0f, 0.0f };
   command_list->ClearRenderTargetView(handle_rtv_gbuffer, zero4, 0, nullptr);
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    shadow_map,
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+  float red1[] = { 1.0f, 0.0f, 0.0f, 0.0f };
+  command_list->ClearRenderTargetView(handle_rtv_shadowmap, red1, 0, nullptr);
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_dsv(
     dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
@@ -191,6 +229,8 @@ void DX12ChunksScene::Render() {
   command_list->RSSetViewports(1, &viewport);
   command_list->RSSetScissorRects(1, &scissor);
   
+  CD3DX12_GPU_DESCRIPTOR_HANDLE handle_srv(cbv_heap->GetGPUDescriptorHandleForHeapStart(), 2, cbv_descriptor_size);
+  command_list->SetGraphicsRootDescriptorTable(2, handle_srv);
   D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] = {
     handle_rtv, handle_rtv_gbuffer
   };
@@ -211,6 +251,10 @@ void DX12ChunksScene::Render() {
     g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATE_PRESENT)));
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    shadow_map,
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_GENERIC_READ)));
 
   CE(command_list->Close());
   g_command_queue->ExecuteCommandLists(1,

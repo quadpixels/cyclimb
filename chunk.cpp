@@ -627,29 +627,23 @@ void ChunkPass::InitD3D12() {
     { "COLOR"   , 2, DXGI_FORMAT_R32_FLOAT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
   };
 
-  D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {
-    .pRootSignature = root_signature,
-    .VS = CD3DX12_SHADER_BYTECODE(default_palette_VS),
-    .PS = CD3DX12_SHADER_BYTECODE(default_palette_PS),
-    .BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT),
-    .SampleMask = UINT_MAX,
-    .RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT),
-    .DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT),
-    .InputLayout = {
-      input_element_desc,
-      4
-    },
-    .PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
-    .NumRenderTargets = 2,
-    .RTVFormats = {
-      DXGI_FORMAT_R8G8B8A8_UNORM,
-      DXGI_FORMAT_R32G32B32A32_FLOAT,
-    },
-    .DSVFormat = DXGI_FORMAT_D32_FLOAT,
-    .SampleDesc = {
-      .Count = 1,
-    },
-  };
+  D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
+  pso_desc.pRootSignature = root_signature;
+  pso_desc.VS = CD3DX12_SHADER_BYTECODE(default_palette_VS),
+  pso_desc.PS = CD3DX12_SHADER_BYTECODE(default_palette_PS),
+  pso_desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT),
+  pso_desc.SampleMask = UINT_MAX,
+  pso_desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT),
+  pso_desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT),
+  pso_desc.InputLayout.pInputElementDescs = input_element_desc;
+  pso_desc.InputLayout.NumElements = 4;
+  pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+  pso_desc.NumRenderTargets = 2;
+  pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+  pso_desc.RTVFormats[1] = DXGI_FORMAT_R32G32B32A32_FLOAT;
+  pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+  pso_desc.SampleDesc.Count = 1;
+
   CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
   CE(default_palette_VS->Release());
   CE(default_palette_PS->Release());

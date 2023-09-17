@@ -30,7 +30,7 @@ cbuffer CBPerScene : register(b1) {
   float4 cam_pos;
 }
 
-Texture2D shadow_map;
+Texture2D shadow_map : register(t0);
 SamplerState shadow_map_sampler;
 
 // To hard-code, declare this variable as static const

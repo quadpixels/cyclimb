@@ -100,6 +100,9 @@ private:
   // Rendertarget
   ID3D12Resource* gbuffer;
   ID3D12DescriptorHeap* rtv_heap;  // For GBuffer
+
+  // Empty shadow map
+  ID3D12Resource* shadow_map;
 };
 
 #endif
