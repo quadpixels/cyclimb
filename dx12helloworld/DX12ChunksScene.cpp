@@ -1,4 +1,4 @@
-#include "scene.hpp"
+﻿#include "scene.hpp"
 
 #include "d3dx12.h"
 #include "util.hpp"
@@ -153,7 +153,7 @@ void DX12ChunksScene::InitResources() {
   chunk->LoadDefault();
   chunk->BuildBuffers(nullptr);
 
-  // Per-Scene Constant buffer
+  // Per-Scene Constant buffer's resource
   CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
     D3D12_HEAP_FLAG_NONE,
@@ -161,17 +161,10 @@ void DX12ChunksScene::InitResources() {
     D3D12_RESOURCE_STATE_GENERIC_READ,
     nullptr,
     IID_PPV_ARGS(&d_per_scene_cb)));
-  CE(g_device12->CreateCommittedResource(
-    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
-    D3D12_HEAP_FLAG_NONE,
-    &keep(CD3DX12_RESOURCE_DESC::Buffer(256)),
-    D3D12_RESOURCE_STATE_GENERIC_READ,
-    nullptr,
-    IID_PPV_ARGS(&d_per_object_cb)));
 
   // Chunk pass and per-object constant buffer
   chunk_pass = new ChunkPass();
-  chunk_pass->AllocateConstantBuffers(1);
+  chunk_pass->AllocateConstantBuffers(2);
 
   // CBV descriptor heap
   D3D12_DESCRIPTOR_HEAP_DESC cbv_heap_desc{};
@@ -183,7 +176,7 @@ void DX12ChunksScene::InitResources() {
 
   // Per Scene CB view
   D3D12_CONSTANT_BUFFER_VIEW_DESC per_scene_cbv_desc{};
-  per_scene_cbv_desc.BufferLocation = chunk_pass->cbs->GetGPUVirtualAddress();
+  per_scene_cbv_desc.BufferLocation = d_per_scene_cb->GetGPUVirtualAddress();
   per_scene_cbv_desc.SizeInBytes = 256;   // Must be a multiple of 256
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle1(cbv_heap->GetCPUDescriptorHandleForHeapStart());
@@ -191,7 +184,7 @@ void DX12ChunksScene::InitResources() {
 
   // Per Object CB view
   D3D12_CONSTANT_BUFFER_VIEW_DESC per_obj_cbv_desc{};
-  per_obj_cbv_desc.BufferLocation = d_per_object_cb->GetGPUVirtualAddress();
+  per_obj_cbv_desc.BufferLocation = chunk_pass->d_per_object_cbs->GetGPUVirtualAddress();
   per_obj_cbv_desc.SizeInBytes = 256;
   handle1.Offset(cbv_descriptor_size);
   g_device12->CreateConstantBufferView(&per_obj_cbv_desc, handle1);
@@ -262,7 +255,7 @@ void DX12ChunksScene::Render() {
   const int N = int(chunk_pass->chunk_instances.size());
   for (int i = 0; i < N; i++) {
     Chunk* c = chunk_pass->chunk_instances[i];
-    D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = d_per_object_cb->GetGPUVirtualAddress() + 256 * i;
+    D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = chunk_pass->d_per_object_cbs->GetGPUVirtualAddress() + 256 * i;
     command_list->SetGraphicsRootConstantBufferView(0, cbv0_addr);  // Per-object CB
     command_list->IASetVertexBuffers(0, 1, &(c->d3d12_vertex_buffer_view));
     command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
@@ -294,24 +287,15 @@ void DX12ChunksScene::Update(float secs) {
   rot_axis.m128_f32[0] = 0.0f;
   rot_axis.m128_f32[1] = 1.0f;
   rot_axis.m128_f32[2] = 0.0f;
-  M *= DirectX::XMMatrixRotationAxis(rot_axis, total_secs * 3.14159f / 2.0f);
+  M *= DirectX::XMMatrixRotationAxis(rot_axis, total_secs * 3.14159f / 2.0f);  // 绕着物体原点转
+  M *= DirectX::XMMatrixTranslation(-20.0f, 0.0f, 0.0f);  // 绕世界坐标转（？）
 
   DirectX::XMMATRIX V = camera->GetViewMatrix_D3D11();
 
   chunk_pass->StartPass();
   chunk->RecordRenderCommand_D3D12(chunk_pass, M, V, projection_matrix);
-  
-  {
-    CD3DX12_RANGE read_range(0, sizeof(PerObjectCB));
-    char* ptr;
-    CE(d_per_object_cb->Map(0, &read_range, (void**)&ptr));
-    h_per_object_cb.M = M;
-    h_per_object_cb.V = V;
-    h_per_object_cb.P = projection_matrix;
-    memcpy(ptr, &h_per_object_cb, sizeof(PerObjectCB));
-    d_per_object_cb->Unmap(0, nullptr);
-  }
-
+  M *= DirectX::XMMatrixTranslation(40.0f, 0.0f, 0.0f);
+  chunk->RecordRenderCommand_D3D12(chunk_pass, M, V, projection_matrix);
   chunk_pass->EndPass();
 }
 

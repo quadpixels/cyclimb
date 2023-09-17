@@ -546,16 +546,15 @@ void ChunkPass::AllocateConstantBuffers(int n) {
     &keep(CD3DX12_RESOURCE_DESC::Buffer(num_max_chunks * 256)),
     D3D12_RESOURCE_STATE_GENERIC_READ,
     nullptr,
-    IID_PPV_ARGS(&cbs)));
-  printf("cbs=%p\n", cbs);
+    IID_PPV_ARGS(&d_per_object_cbs)));
 }
 
 void ChunkPass::EndPass() {
   CD3DX12_RANGE read_range(0, 256 * chunk_per_object_cbs.size());
   char* ptr;
-  CE(cbs->Map(0, &read_range, (void**)&ptr));
+  CE(d_per_object_cbs->Map(0, &read_range, (void**)&ptr));
   for (int i = 0; i<int(chunk_per_object_cbs.size()); i++) {
     memcpy(ptr + 256 * i, &(chunk_per_object_cbs[i]), sizeof(PerObjectCB));
   }
-  cbs->Unmap(0, nullptr);
+  d_per_object_cbs->Unmap(0, nullptr);
 }

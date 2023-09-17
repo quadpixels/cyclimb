@@ -86,9 +86,7 @@ private:
 
   // CB's heap, resource, view and descriptor
   ID3D12DescriptorHeap* cbv_heap;
-  PerObjectCB h_per_object_cb;
   PerSceneCB h_per_scene_cb;
-  ID3D12Resource* d_per_object_cb;
   ID3D12Resource* d_per_scene_cb;
   int cbv_descriptor_size;
   Camera* camera;

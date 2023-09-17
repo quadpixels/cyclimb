@@ -36,7 +36,7 @@ public:
 
   // 给不同的Chunk共享的资源
   int num_max_chunks;
-  ID3D12Resource* cbs;
+  ID3D12Resource* d_per_object_cbs;
 
   // 每个Chunk的出现时刻
   std::vector<Chunk*> chunk_instances;
