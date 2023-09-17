@@ -72,13 +72,11 @@ public:
   void Update(float secs) override;
   static constexpr int FRAME_COUNT = 2;
 private:
-  void InitPipelineAndCommandList();
+  void InitCommandList();
   void InitResources();
   ID3D12CommandAllocator* command_allocator;
   ID3D12GraphicsCommandList* command_list;
-  ID3DBlob* default_palette_VS, * default_palette_PS;
-  ID3D12RootSignature* root_signature;
-  ID3D12PipelineState* pipeline_state;
+
   Chunk* chunk;
   ChunkPass* chunk_pass;
 

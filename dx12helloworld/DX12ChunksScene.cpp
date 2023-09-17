@@ -31,106 +31,21 @@ cbuffer CBPerScene : register(b1) {
 */
 
 DX12ChunksScene::DX12ChunksScene() {
-  InitPipelineAndCommandList();
+  // Chunk pass and per-object constant buffer
+  chunk_pass = new ChunkPass();
+  chunk_pass->AllocateConstantBuffers(2);
+  chunk_pass->InitD3D12();
+  InitCommandList();
   InitResources();
   total_secs = 0.0f;
 }
 
-void DX12ChunksScene::InitPipelineAndCommandList() {
+void DX12ChunksScene::InitCommandList() {
   CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
     IID_PPV_ARGS(&command_allocator)));
   CE(g_device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
     command_allocator, nullptr, IID_PPV_ARGS(&command_list)));
   CE(command_list->Close());
-
-  {
-    ID3DBlob* error = nullptr;
-    unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-    D3DCompileFromFile(L"../shaders_hlsl/default_palette.hlsl", nullptr, nullptr,
-      "VSMain", "vs_5_0", compile_flags, 0, &default_palette_VS, &error);
-    if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
-
-    D3DCompileFromFile(L"../shaders_hlsl/default_palette.hlsl", nullptr, nullptr,
-      "PSMainWithShadow", "ps_5_0", compile_flags, 0, &default_palette_PS, &error);
-    if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
-  }
-
-  // Root signature
-  {
-    CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
-    ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
-
-    CD3DX12_ROOT_PARAMETER1 rootParameters[3];
-    rootParameters[0].InitAsConstantBufferView(0, 0,  // per-object CB
-      D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
-    rootParameters[1].InitAsConstantBufferView(1, 0,  // per-scene CB
-      D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_ALL);
-    rootParameters[2].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
-    
-    D3D12_STATIC_SAMPLER_DESC sampler = {};
-    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    sampler.MipLODBias = 0;
-    sampler.MaxAnisotropy = 4;
-    sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-    sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
-    sampler.MinLOD = 0.0f;
-    sampler.MaxLOD = D3D12_FLOAT32_MAX;
-    sampler.ShaderRegister = 0;
-    sampler.RegisterSpace = 0;
-    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-
-    CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_sig_desc;
-    root_sig_desc.Init_1_1(_countof(rootParameters), rootParameters, 1, &sampler,
-      D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
-    ComPtr<ID3DBlob> signature, error;
-
-    HRESULT hr = D3DX12SerializeVersionedRootSignature(&root_sig_desc,
-      D3D_ROOT_SIGNATURE_VERSION_1_1,
-      &signature, &error);
-    if (signature == nullptr) {
-      printf("Could not serialize root signature: %s\n",
-        (char*)(error->GetBufferPointer()));
-    }
-
-    CE(g_device12->CreateRootSignature(0, signature->GetBufferPointer(),
-      signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
-    root_signature->SetName(L"Root signature");
-  }
-
-  D3D12_INPUT_ELEMENT_DESC input_element_desc[] = {
-    { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-    { "COLOR"   , 0, DXGI_FORMAT_R32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-    { "COLOR"   , 1, DXGI_FORMAT_R32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-    { "COLOR"   , 2, DXGI_FORMAT_R32_FLOAT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-  };
-
-  D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {
-    .pRootSignature = root_signature,
-    .VS = CD3DX12_SHADER_BYTECODE(default_palette_VS),
-    .PS = CD3DX12_SHADER_BYTECODE(default_palette_PS),
-    .BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT),
-    .SampleMask = UINT_MAX,
-    .RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT),
-    .DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT),
-    .InputLayout = {
-      input_element_desc,
-      4
-    },
-    .PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
-    .NumRenderTargets = 2,
-    .RTVFormats = {
-      DXGI_FORMAT_R8G8B8A8_UNORM,
-      DXGI_FORMAT_R32G32B32A32_FLOAT,
-    },
-    .DSVFormat = DXGI_FORMAT_D32_FLOAT,
-    .SampleDesc = {
-      .Count = 1,
-    },
-  };
-  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
 }
 
 void DX12ChunksScene::InitResources() {
@@ -161,10 +76,6 @@ void DX12ChunksScene::InitResources() {
     D3D12_RESOURCE_STATE_GENERIC_READ,
     nullptr,
     IID_PPV_ARGS(&d_per_scene_cb)));
-
-  // Chunk pass and per-object constant buffer
-  chunk_pass = new ChunkPass();
-  chunk_pass->AllocateConstantBuffers(2);
 
   // CBV descriptor heap
   D3D12_DESCRIPTOR_HEAP_DESC cbv_heap_desc{};
@@ -223,7 +134,7 @@ void DX12ChunksScene::InitResources() {
 
 void DX12ChunksScene::Render() {
   CE(command_allocator->Reset());
-  CE(command_list->Reset(command_allocator, pipeline_state));
+  CE(command_list->Reset(command_allocator, chunk_pass->pipeline_state));
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
     g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
@@ -238,7 +149,7 @@ void DX12ChunksScene::Render() {
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_dsv(
     dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
   command_list->ClearDepthStencilView(handle_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-  command_list->SetGraphicsRootSignature(root_signature);
+  command_list->SetGraphicsRootSignature(chunk_pass->root_signature);
 
   ID3D12DescriptorHeap* ppHeaps[] = { cbv_heap };
   command_list->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
