@@ -416,6 +416,7 @@ std::vector<std::string> SplitStringBySpace(std::string x) {
   return ret;
 }
 
+#include <d3d12.h>
 void CE(HRESULT x) {
   if (FAILED(x)) {
     printf("ERROR: %X\n", x);

@@ -84,6 +84,7 @@ private:
   ID3D12RootSignature* root_signature;
   ID3D12PipelineState* pipeline_state;
   Chunk* chunk;
+  ChunkPass* chunk_pass;
 
   float total_secs;
 
@@ -91,7 +92,6 @@ private:
   ID3D12DescriptorHeap* cbv_heap;
   PerObjectCB per_object_cb;
   PerSceneCB per_scene_cb;
-  ID3D12Resource* cbs;
   int cbv_descriptor_size;
   Camera* camera;
   DirectionalLight* dir_light;

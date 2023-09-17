@@ -18,6 +18,15 @@
 // Vertex format: 12 floats per vertex
 // X X X Y Y Y Z Z Z NormalIDX Data AO
 
+// For D3D12
+class ChunkPass {
+public:
+  void AllocateConstantBuffers(int n);
+
+  int num_max_chunks;
+  ID3D12Resource* cbs;
+};
+
 class Chunk {
 public:
   glm::vec3 pos;
@@ -30,9 +39,10 @@ public:
   void BuildBuffers(Chunk* neighbors[26]);
   void Render();
   void Render(const glm::mat4& M);
-  void Render_D3D11();
 #ifdef WIN32
+  void Render_D3D11();
   void Render_D3D11(const DirectX::XMMATRIX& M);
+  void RecordRenderCommand_D3D12(ID3D12GraphicsCommandList* cl);
 #endif
   void SetVoxel(unsigned x, unsigned y, unsigned z, int v);
   int  GetVoxel(unsigned x, unsigned y, unsigned z);

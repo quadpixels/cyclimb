@@ -490,6 +490,10 @@ void Chunk::Render_D3D11() {
   M *= DirectX::XMMatrixTranslation(pos.x, pos.y, -pos.z);
   Render_D3D11(M);
 }
+
+void Chunk::RecordRenderCommand_D3D12(ID3D12GraphicsCommandList* cl) {
+
+}
 #endif
 
 void Chunk::SetVoxel(unsigned x, unsigned y, unsigned z, int v) {
@@ -514,4 +518,16 @@ Chunk::Chunk(Chunk& other) {
 void Chunk::Fill(int vox) {
   for (int i=0; i<size*size*size; i++) block[i] = vox;
   is_dirty = true;
+}
+
+void ChunkPass::AllocateConstantBuffers(int n) {
+  num_max_chunks = n;
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(num_max_chunks * 512)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&cbs)));
+  printf("cbs=%p\n", cbs);
 }
