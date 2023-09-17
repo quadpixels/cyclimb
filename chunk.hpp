@@ -1,4 +1,4 @@
-#ifndef _CHUNK_HPP
+﻿#ifndef _CHUNK_HPP
 #define _CHUNK_HPP
 
 #define GLM_FORCE_RADIANS
@@ -15,16 +15,32 @@
 #undef max
 #undef min
 
+struct PerObjectCB {
+  DirectX::XMMATRIX M, V, P;
+};
+
 // Vertex format: 12 floats per vertex
 // X X X Y Y Y Z Z Z NormalIDX Data AO
+
+class Chunk;
 
 // For D3D12
 class ChunkPass {
 public:
   void AllocateConstantBuffers(int n);
+  void StartPass() {
+    chunk_per_object_cbs.clear();
+    chunk_instances.clear();
+  }
+  void EndPass();
 
+  // 给不同的Chunk共享的资源
   int num_max_chunks;
   ID3D12Resource* cbs;
+
+  // 每个Chunk的出现时刻
+  std::vector<Chunk*> chunk_instances;
+  std::vector<PerObjectCB> chunk_per_object_cbs;
 };
 
 class Chunk {
@@ -42,7 +58,8 @@ public:
 #ifdef WIN32
   void Render_D3D11();
   void Render_D3D11(const DirectX::XMMATRIX& M);
-  void RecordRenderCommand_D3D12(ID3D12GraphicsCommandList* cl);
+  void RecordRenderCommand_D3D12(ChunkPass* pass, const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P);
+  void RecordRenderCommand_D3D12(ChunkPass* pass, const DirectX::XMMATRIX& M, const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P);
 #endif
   void SetVoxel(unsigned x, unsigned y, unsigned z, int v);
   int  GetVoxel(unsigned x, unsigned y, unsigned z);

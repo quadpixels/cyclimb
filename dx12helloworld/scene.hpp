@@ -59,10 +59,6 @@ private:
   ID3D12Resource* cbvs;  // CBV resource, N copies of the CBV for N triangles.
 };
 
-struct PerObjectCB {
-  DirectX::XMMATRIX M, V, P;
-};
-
 struct PerSceneCB {
   DirectX::XMVECTOR dir_light;
   DirectX::XMMATRIX lightPV;
@@ -90,13 +86,14 @@ private:
 
   // CB's heap, resource, view and descriptor
   ID3D12DescriptorHeap* cbv_heap;
-  PerObjectCB per_object_cb;
-  PerSceneCB per_scene_cb;
+  PerObjectCB h_per_object_cb;
+  PerSceneCB h_per_scene_cb;
+  ID3D12Resource* d_per_object_cb;
+  ID3D12Resource* d_per_scene_cb;
   int cbv_descriptor_size;
   Camera* camera;
   DirectionalLight* dir_light;
   void UpdatePerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
-  void UpdatePerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
   DirectX::XMMATRIX projection_matrix;
 
   // DSV's heap

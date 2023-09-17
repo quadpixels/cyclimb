@@ -2,6 +2,7 @@
 #include "chunk.hpp"
 #include "util.hpp"
 #include "camera.hpp"
+#include "scene.hpp"
 #include <string.h>
 
 float    Chunk::l0 = 1.0f;
@@ -491,9 +492,26 @@ void Chunk::Render_D3D11() {
   Render_D3D11(M);
 }
 
-void Chunk::RecordRenderCommand_D3D12(ID3D12GraphicsCommandList* cl) {
-
+void Chunk::RecordRenderCommand_D3D12(ChunkPass* pass, const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P) {
+  pass->chunk_instances.push_back(this);
+  DirectX::XMMATRIX M = DirectX::XMMatrixIdentity();
+  M *= DirectX::XMMatrixTranslation(pos.x, pos.y, -pos.z);
+  PerObjectCB cb;
+  cb.M = M;
+  cb.V = V;
+  cb.P = P;
+  pass->chunk_per_object_cbs.push_back(cb);
 }
+
+void Chunk::RecordRenderCommand_D3D12(ChunkPass* pass, const DirectX::XMMATRIX& M, const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P) {
+  pass->chunk_instances.push_back(this);
+  PerObjectCB cb;
+  cb.M = M;
+  cb.V = V;
+  cb.P = P;
+  pass->chunk_per_object_cbs.push_back(cb);
+}
+
 #endif
 
 void Chunk::SetVoxel(unsigned x, unsigned y, unsigned z, int v) {
@@ -525,9 +543,19 @@ void ChunkPass::AllocateConstantBuffers(int n) {
   CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
     D3D12_HEAP_FLAG_NONE,
-    &keep(CD3DX12_RESOURCE_DESC::Buffer(num_max_chunks * 512)),
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(num_max_chunks * 256)),
     D3D12_RESOURCE_STATE_GENERIC_READ,
     nullptr,
     IID_PPV_ARGS(&cbs)));
   printf("cbs=%p\n", cbs);
+}
+
+void ChunkPass::EndPass() {
+  CD3DX12_RANGE read_range(0, 256 * chunk_per_object_cbs.size());
+  char* ptr;
+  CE(cbs->Map(0, &read_range, (void**)&ptr));
+  for (int i = 0; i<int(chunk_per_object_cbs.size()); i++) {
+    memcpy(ptr + 256 * i, &(chunk_per_object_cbs[i]), sizeof(PerObjectCB));
+  }
+  cbs->Unmap(0, nullptr);
 }

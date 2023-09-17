@@ -61,9 +61,9 @@ void DX12ChunksScene::InitPipelineAndCommandList() {
     ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
 
     CD3DX12_ROOT_PARAMETER1 rootParameters[3];
-    rootParameters[0].InitAsConstantBufferView(0, 0,  // per-scene CB
+    rootParameters[0].InitAsConstantBufferView(0, 0,  // per-object CB
       D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
-    rootParameters[1].InitAsConstantBufferView(1, 0,  // per-object CB
+    rootParameters[1].InitAsConstantBufferView(1, 0,  // per-scene CB
       D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_ALL);
     rootParameters[2].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
     
@@ -153,7 +153,23 @@ void DX12ChunksScene::InitResources() {
   chunk->LoadDefault();
   chunk->BuildBuffers(nullptr);
 
-  // Constant buffer
+  // Per-Scene Constant buffer
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(256)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&d_per_scene_cb)));
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(256)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&d_per_object_cb)));
+
+  // Chunk pass and per-object constant buffer
   chunk_pass = new ChunkPass();
   chunk_pass->AllocateConstantBuffers(1);
 
@@ -175,7 +191,7 @@ void DX12ChunksScene::InitResources() {
 
   // Per Object CB view
   D3D12_CONSTANT_BUFFER_VIEW_DESC per_obj_cbv_desc{};
-  per_obj_cbv_desc.BufferLocation = per_scene_cbv_desc.BufferLocation + 256;
+  per_obj_cbv_desc.BufferLocation = d_per_object_cb->GetGPUVirtualAddress();
   per_obj_cbv_desc.SizeInBytes = 256;
   handle1.Offset(cbv_descriptor_size);
   g_device12->CreateConstantBufferView(&per_obj_cbv_desc, handle1);
@@ -240,11 +256,17 @@ void DX12ChunksScene::Render() {
   command_list->RSSetScissorRects(1, &scissor);
   
   command_list->OMSetRenderTargets(1, &handle_rtv, FALSE, &handle_dsv);
-  command_list->SetGraphicsRootConstantBufferView(0, chunk_pass->cbs->GetGPUVirtualAddress());  // Per-scene CB
-  command_list->SetGraphicsRootConstantBufferView(1, chunk_pass->cbs->GetGPUVirtualAddress() + 256);  // Per-object CB
   command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  command_list->IASetVertexBuffers(0, 1, &(chunk->d3d12_vertex_buffer_view));
-  command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
+  command_list->SetGraphicsRootConstantBufferView(1, d_per_scene_cb->GetGPUVirtualAddress());  // Per-scene CB
+
+  const int N = int(chunk_pass->chunk_instances.size());
+  for (int i = 0; i < N; i++) {
+    Chunk* c = chunk_pass->chunk_instances[i];
+    D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = d_per_object_cb->GetGPUVirtualAddress() + 256 * i;
+    command_list->SetGraphicsRootConstantBufferView(0, cbv0_addr);  // Per-object CB
+    command_list->IASetVertexBuffers(0, 1, &(c->d3d12_vertex_buffer_view));
+    command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
+  }
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
@@ -275,7 +297,22 @@ void DX12ChunksScene::Update(float secs) {
   M *= DirectX::XMMatrixRotationAxis(rot_axis, total_secs * 3.14159f / 2.0f);
 
   DirectX::XMMATRIX V = camera->GetViewMatrix_D3D11();
-  UpdatePerObjectCB(&M, &V, &projection_matrix);
+
+  chunk_pass->StartPass();
+  chunk->RecordRenderCommand_D3D12(chunk_pass, M, V, projection_matrix);
+  
+  {
+    CD3DX12_RANGE read_range(0, sizeof(PerObjectCB));
+    char* ptr;
+    CE(d_per_object_cb->Map(0, &read_range, (void**)&ptr));
+    h_per_object_cb.M = M;
+    h_per_object_cb.V = V;
+    h_per_object_cb.P = projection_matrix;
+    memcpy(ptr, &h_per_object_cb, sizeof(PerObjectCB));
+    d_per_object_cb->Unmap(0, nullptr);
+  }
+
+  chunk_pass->EndPass();
 }
 
 void DX12ChunksScene::UpdatePerSceneCB(
@@ -284,24 +321,10 @@ void DX12ChunksScene::UpdatePerSceneCB(
   const DirectX::XMVECTOR* camPos) {
   CD3DX12_RANGE read_range(0, sizeof(PerSceneCB));
   char* ptr;
-  CE(chunk_pass->cbs->Map(0, &read_range, (void**)&ptr));
-  per_scene_cb.dir_light = *dir_light;
-  per_scene_cb.lightPV = *lightPV;
-  per_scene_cb.cam_pos = *camPos;
-  memcpy(ptr, &per_scene_cb, sizeof(PerSceneCB));
-  chunk_pass->cbs->Unmap(0, nullptr);
-}
-
-void DX12ChunksScene::UpdatePerObjectCB(
-  const DirectX::XMMATRIX* M,
-  const DirectX::XMMATRIX* V,
-  const DirectX::XMMATRIX* P) {
-  CD3DX12_RANGE read_range(sizeof(PerSceneCB), sizeof(PerObjectCB));
-  char* ptr;
-  CE(chunk_pass->cbs->Map(0, &read_range, (void**)&ptr));
-  per_object_cb.M = *M;
-  per_object_cb.V = *V;
-  per_object_cb.P = *P;
-  memcpy(ptr, &per_object_cb, sizeof(PerObjectCB));
-  chunk_pass->cbs->Unmap(0, nullptr);
+  CE(d_per_scene_cb->Map(0, &read_range, (void**)&ptr));
+  h_per_scene_cb.dir_light = *dir_light;
+  h_per_scene_cb.lightPV = *lightPV;
+  h_per_scene_cb.cam_pos = *camPos;
+  memcpy(ptr, &h_per_scene_cb, sizeof(PerSceneCB));
+  d_per_scene_cb->Unmap(0, nullptr);
 }
