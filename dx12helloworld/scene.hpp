@@ -11,6 +11,7 @@
 #include "chunk.hpp"
 #include "chunkindex.hpp"
 #include "camera.hpp"
+#include "sprite.hpp"
 #include "util.hpp"
 
 class Scene {
@@ -81,6 +82,7 @@ private:
   Chunk* chunk;
   ChunkIndex* chunk_index;
   ChunkPass* chunk_pass;
+  ChunkSprite* chunk_sprite;
 
   float total_secs;
 

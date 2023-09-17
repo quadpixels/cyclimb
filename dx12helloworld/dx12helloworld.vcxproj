@@ -153,6 +153,7 @@
     <ClCompile Include="..\camera.cpp" />
     <ClCompile Include="..\chunk.cpp" />
     <ClCompile Include="..\chunkindex.cpp" />
+    <ClCompile Include="..\sprite.cpp" />
     <ClCompile Include="..\util.cpp" />
     <ClCompile Include="DX12ChunksScene.cpp" />
     <ClCompile Include="DX12ClearScreenScene.cpp" />
@@ -165,6 +166,7 @@
     <ClInclude Include="..\chunk.hpp" />
     <ClInclude Include="..\chunkindex.hpp" />
     <ClInclude Include="..\d3dx12.h" />
+    <ClInclude Include="..\sprite.hpp" />
     <ClInclude Include="..\util.hpp" />
     <ClInclude Include="scene.hpp" />
     <ClInclude Include="utils.hpp" />

@@ -69,6 +69,7 @@ void DX12ChunksScene::InitResources() {
   chunk->BuildBuffers(nullptr);
 
   chunk_index = new ChunkGrid("../climb/chr.vox");
+  chunk_sprite = new ChunkSprite(chunk_index);
 
   // Per-Scene Constant buffer's resource
   CE(g_device12->CreateCommittedResource(
@@ -280,18 +281,23 @@ void DX12ChunksScene::Update(float secs) {
   rot_axis.m128_f32[1] = 1.0f;
   rot_axis.m128_f32[2] = 0.0f;
   M *= DirectX::XMMatrixRotationAxis(rot_axis, total_secs * 3.14159f / 2.0f);  // 绕着物体原点转
-  M *= DirectX::XMMatrixTranslation(-40.0f, 0.0f, 0.0f);  // 绕世界坐标转（？）
+  M *= DirectX::XMMatrixTranslation(0.0f, -20.0f, 0.0f);  // 绕世界坐标转（？）
 
   DirectX::XMMATRIX V = camera->GetViewMatrix_D3D11();
 
   chunk_pass->StartPass();
   chunk->RecordRenderCommand_D3D12(chunk_pass, M, V, projection_matrix);
-  M *= DirectX::XMMatrixTranslation(80.0f, 0.0f, 0.0f);
+  M *= DirectX::XMMatrixTranslation(0.0f, 40.0f, 0.0f);
   chunk->RecordRenderCommand_D3D12(chunk_pass, M, V, projection_matrix);
   glm::mat3 orientation = glm::rotate(total_secs * 3.14159f / 2.0f, glm::vec3(0, 1, 0));
   chunk_index->RecordRenderCommand_D3D12(chunk_pass,
-    glm::vec3(0, 0, 0), glm::vec3(1, 1, 1), orientation,
+    glm::vec3(30, 0, 0), glm::vec3(1, 1, 1), orientation,
     chunk_index->Size() * 0.5f, V, projection_matrix);
+
+  chunk_sprite->pos = glm::vec3(-30, 0, 0);
+  chunk_sprite->RotateAroundLocalAxis(glm::vec3(0, 1, 0), secs * 180.0f / 2.0f);
+  chunk_sprite->RecordRenderCommand_D3D12(chunk_pass, V, projection_matrix);
+  
   chunk_pass->EndPass();
 }
 
