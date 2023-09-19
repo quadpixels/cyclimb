@@ -72,10 +72,12 @@ void DX12ChunksScene::InitResources() {
   chunk_sprite = new ChunkSprite(chunk_index);
 
   // Per-Scene Constant buffer's resource
+  // 0-255：给所有Chunks共享的Per-Scene Buffer
+  // 256-511：给Backdrop使用的Per-Object Buffer
   CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
     D3D12_HEAP_FLAG_NONE,
-    &keep(CD3DX12_RESOURCE_DESC::Buffer(256)),
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(512)),
     D3D12_RESOURCE_STATE_GENERIC_READ,
     nullptr,
     IID_PPV_ARGS(&d_per_scene_cb)));
@@ -91,7 +93,7 @@ void DX12ChunksScene::InitResources() {
   // Per Scene CB view
   D3D12_CONSTANT_BUFFER_VIEW_DESC per_scene_cbv_desc{};
   per_scene_cbv_desc.BufferLocation = d_per_scene_cb->GetGPUVirtualAddress();
-  per_scene_cbv_desc.SizeInBytes = 256;   // Must be a multiple of 256
+  per_scene_cbv_desc.SizeInBytes = 512;   // Must be a multiple of 256
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle1(cbv_heap->GetCPUDescriptorHandleForHeapStart());
   g_device12->CreateConstantBufferView(&per_scene_cbv_desc, handle1);
@@ -187,6 +189,33 @@ void DX12ChunksScene::InitResources() {
     rtv_handle.Offset(cbv_descriptor_size);
     g_device12->CreateRenderTargetView(shadow_map, &shadow_map_rtv_desc, rtv_handle);
   }
+
+  // Backdrop
+  const float L = 80.0f, H = -35.0f;
+  float backdrop_verts[] = {  // X, Y, Z, nidx, data, ao
+    -L, H, L, 4, 44, 0,
+     L, H, L, 4, 44, 0,
+    -L, H, -L, 4, 44, 0,
+     L, H, L, 4, 44, 0,
+    L, H, -L, 4, 44, 0,
+    -L, H, -L, 4, 44, 0,
+  };
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(backdrop_verts))),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&backdrop_vert_buf)));
+  UINT8* pData;
+  CD3DX12_RANGE readRange(0, 0);
+  CE(backdrop_vert_buf->Map(0, &readRange, (void**)&pData));
+  memcpy(pData, backdrop_verts, sizeof(backdrop_verts));
+  backdrop_vert_buf->Unmap(0, nullptr);
+
+  backdrop_vbv.BufferLocation = backdrop_vert_buf->GetGPUVirtualAddress();
+  backdrop_vbv.StrideInBytes = sizeof(float) * 6;
+  backdrop_vbv.SizeInBytes = sizeof(backdrop_verts);
 }
 
 void DX12ChunksScene::Render() {
@@ -250,6 +279,11 @@ void DX12ChunksScene::Render() {
     command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
   }
 
+  // Draw Backdrop
+  command_list->SetGraphicsRootConstantBufferView(0, d_per_scene_cb->GetGPUVirtualAddress() + sizeof(PerSceneCB));
+  command_list->IASetVertexBuffers(0, 1, &(backdrop_vbv));
+  command_list->DrawInstanced(6, 1, 0, 0);
+
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -312,5 +346,11 @@ void DX12ChunksScene::UpdatePerSceneCB(
   h_per_scene_cb.lightPV = *lightPV;
   h_per_scene_cb.cam_pos = *camPos;
   memcpy(ptr, &h_per_scene_cb, sizeof(PerSceneCB));
+  
+  PerObjectCB backdrop_perobject_cb{};
+  backdrop_perobject_cb.M = DirectX::XMMatrixIdentity();
+  backdrop_perobject_cb.V = camera->GetViewMatrix_D3D11();
+  backdrop_perobject_cb.P = projection_matrix;
+  memcpy(ptr + sizeof(PerSceneCB), &backdrop_perobject_cb, sizeof(PerObjectCB));
   d_per_scene_cb->Unmap(0, nullptr);
 }

@@ -107,6 +107,10 @@ private:
 
   // Empty shadow map
   ID3D12Resource* shadow_map;
+
+  // Backdrop
+  ID3D12Resource* backdrop_vert_buf;
+  D3D12_VERTEX_BUFFER_VIEW backdrop_vbv;
 };
 
 #endif
