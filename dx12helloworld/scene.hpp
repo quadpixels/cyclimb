@@ -81,7 +81,7 @@ private:
 
   Chunk* chunk;
   ChunkIndex* chunk_index;
-  ChunkPass* chunk_pass;
+  ChunkPass *chunk_pass_depth, *chunk_pass_normal;
   ChunkSprite* chunk_sprite;
 
   float total_secs;

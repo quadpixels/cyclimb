@@ -11,6 +11,7 @@
 #include "util.hpp"   // Cyclimb's util.hpp
 
 int WIN_W = 800, WIN_H = 480;
+int SHADOW_RES = 512;
 const int FRAME_COUNT = 2;
 HWND g_hwnd;
 

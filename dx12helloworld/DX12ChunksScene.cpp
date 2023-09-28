@@ -6,7 +6,7 @@
 
 using Microsoft::WRL::ComPtr;
 
-extern int WIN_W, WIN_H;
+extern int WIN_W, WIN_H, SHADOW_RES;
 void WaitForPreviousFrame();
 extern ID3D12Device* g_device12;
 extern ID3D12DescriptorHeap* g_rtv_heap;
@@ -32,9 +32,12 @@ cbuffer CBPerScene : register(b1) {
 
 DX12ChunksScene::DX12ChunksScene() {
   // Chunk pass and per-object constant buffer
-  chunk_pass = new ChunkPass();
-  chunk_pass->AllocateConstantBuffers(20);
-  chunk_pass->InitD3D12();
+  chunk_pass_normal = new ChunkPass();
+  chunk_pass_normal->AllocateConstantBuffers(20);
+  chunk_pass_normal->InitD3D12DefaultPalette();
+  chunk_pass_depth = new ChunkPass();
+  chunk_pass_depth->AllocateConstantBuffers(20);
+  chunk_pass_depth->InitD3D12DefaultPalette();
   InitCommandList();
   InitResources();
   total_secs = 0.0f;
@@ -61,7 +64,7 @@ void DX12ChunksScene::InitResources() {
   camera->up = glm::vec3(0, 1, 0);
 
   // Directional Light
-  dir_light = new DirectionalLight(glm::vec3(-1, -3, -1), glm::vec3(1, 3, -1));
+  dir_light = new DirectionalLight(glm::vec3(-1, -1, -1), glm::vec3(50, 50, 50));
 
   // Chunk
   chunk = new Chunk();
@@ -100,7 +103,7 @@ void DX12ChunksScene::InitResources() {
 
   // Per Object CB view
   D3D12_CONSTANT_BUFFER_VIEW_DESC per_obj_cbv_desc{};
-  per_obj_cbv_desc.BufferLocation = chunk_pass->d_per_object_cbs->GetGPUVirtualAddress();
+  per_obj_cbv_desc.BufferLocation = chunk_pass_normal->d_per_object_cbs->GetGPUVirtualAddress();
   per_obj_cbv_desc.SizeInBytes = 256;
   handle1.Offset(cbv_descriptor_size);
   g_device12->CreateConstantBufferView(&per_obj_cbv_desc, handle1);
@@ -123,7 +126,7 @@ void DX12ChunksScene::InitResources() {
 
   // DSV descriptor heap
   D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc{};
-  dsv_heap_desc.NumDescriptors = 1;
+  dsv_heap_desc.NumDescriptors = 2;
   dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
   dsv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
   CE(g_device12->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(&dsv_heap)));
@@ -161,15 +164,15 @@ void DX12ChunksScene::InitResources() {
     g_device12->CreateRenderTargetView(gbuffer, nullptr, rtv_handle);
 
     D3D12_CLEAR_VALUE shadow_map_clear{};
-    shadow_map_clear.Format = DXGI_FORMAT_R32_FLOAT;
-    shadow_map_clear.Color[0] = 1.0f;
+    shadow_map_clear.Format = DXGI_FORMAT_D32_FLOAT;
+    shadow_map_clear.DepthStencil.Depth = 1.0f;
 
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
       D3D12_HEAP_FLAG_NONE,
       &keep(CD3DX12_RESOURCE_DESC::Tex2D(
         DXGI_FORMAT_R32_TYPELESS, 512, 512, 1, 0, 1, 0,
-        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)),
+        D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)),
       D3D12_RESOURCE_STATE_GENERIC_READ,
       &shadow_map_clear,
       IID_PPV_ARGS(&shadow_map)));
@@ -183,11 +186,9 @@ void DX12ChunksScene::InitResources() {
     handle1.Offset(cbv_descriptor_size);
     g_device12->CreateShaderResourceView(shadow_map, &srv_desc, handle1);
 
-    D3D12_RENDER_TARGET_VIEW_DESC shadow_map_rtv_desc{};
-    shadow_map_rtv_desc.Format = DXGI_FORMAT_R32_FLOAT;
-    shadow_map_rtv_desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-    rtv_handle.Offset(cbv_descriptor_size);
-    g_device12->CreateRenderTargetView(shadow_map, &shadow_map_rtv_desc, rtv_handle);
+    CD3DX12_CPU_DESCRIPTOR_HANDLE handle_dsv(dsv_heap->GetCPUDescriptorHandleForHeapStart());
+    handle_dsv.Offset(dsv_descriptor_size);
+    g_device12->CreateDepthStencilView(shadow_map, &dsv_desc, handle_dsv);
   }
 
   // Backdrop
@@ -219,9 +220,6 @@ void DX12ChunksScene::InitResources() {
 }
 
 void DX12ChunksScene::Render() {
-  CE(command_allocator->Reset());
-  CE(command_list->Reset(command_allocator, chunk_pass->pipeline_state));
-
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
     g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
     g_frame_index, g_rtv_descriptor_size);
@@ -231,6 +229,58 @@ void DX12ChunksScene::Render() {
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv_shadowmap(
     rtv_heap->GetCPUDescriptorHandleForHeapStart(),
     1, g_rtv_descriptor_size);
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_dsv(
+    dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_dsv_shadowmap = handle_dsv;
+  handle_dsv_shadowmap.Offset(dsv_descriptor_size);
+
+  ID3D12DescriptorHeap* ppHeaps[] = { cbv_heap };
+
+  CE(command_allocator->Reset());
+
+  CE(command_list->Reset(command_allocator, chunk_pass_normal->pipeline_state_depth_only));
+  command_list->SetGraphicsRootSignature(chunk_pass_normal->root_signature_default_palette);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    shadow_map,
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    D3D12_RESOURCE_STATE_DEPTH_WRITE)));
+
+  command_list->ClearDepthStencilView(handle_dsv_shadowmap, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+  // Depth pass
+  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  D3D12_VIEWPORT viewport_depth = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * SHADOW_RES, 1.0f * SHADOW_RES, 0.0f, 1.0f);
+  D3D12_RECT scissor_depth = CD3DX12_RECT(0, 0, long(SHADOW_RES), long(SHADOW_RES));
+  command_list->RSSetViewports(1, &viewport_depth);
+  command_list->RSSetScissorRects(1, &scissor_depth);
+  command_list->OMSetRenderTargets(0, nullptr, FALSE, &handle_dsv_shadowmap);
+
+  command_list->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+  command_list->SetGraphicsRootConstantBufferView(1, d_per_scene_cb->GetGPUVirtualAddress());  // Per-scene CB
+
+  {
+    const int N = int(chunk_pass_depth->chunk_instances.size());
+    for (int i = 0; i < N; i++) {
+      Chunk* c = chunk_pass_depth->chunk_instances[i];
+      D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = chunk_pass_depth->d_per_object_cbs->GetGPUVirtualAddress() + 256 * i;
+      command_list->SetGraphicsRootConstantBufferView(0, cbv0_addr);  // Per-object CB
+      command_list->IASetVertexBuffers(0, 1, &(c->d3d12_vertex_buffer_view));
+      command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
+    }
+  }
+
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1,
+    (ID3D12CommandList* const*)&command_list);
+
+  CE(command_list->Reset(command_allocator, chunk_pass_normal->pipeline_state_default_palette));
+  command_list->SetGraphicsRootSignature(chunk_pass_normal->root_signature_default_palette);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    shadow_map,
+    D3D12_RESOURCE_STATE_DEPTH_WRITE,
+    D3D12_RESOURCE_STATE_GENERIC_READ)));
 
   float bg_color[] = { 0.8f, 0.8f, 0.8f, 1.0f };
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
@@ -241,46 +291,39 @@ void DX12ChunksScene::Render() {
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
   float zero4[] = { 0.0f, 0.0f, 0.0f, 0.0f };
   command_list->ClearRenderTargetView(handle_rtv_gbuffer, zero4, 0, nullptr);
-  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    shadow_map,
-    D3D12_RESOURCE_STATE_GENERIC_READ,
-    D3D12_RESOURCE_STATE_RENDER_TARGET)));
-  float red1[] = { 1.0f, 0.0f, 0.0f, 0.0f };
-  command_list->ClearRenderTargetView(handle_rtv_shadowmap, red1, 0, nullptr);
-
-  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_dsv(
-    dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
   command_list->ClearDepthStencilView(handle_dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-  command_list->SetGraphicsRootSignature(chunk_pass->root_signature);
 
-  ID3D12DescriptorHeap* ppHeaps[] = { cbv_heap };
   command_list->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
-
-  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
-  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
-  command_list->RSSetViewports(1, &viewport);
-  command_list->RSSetScissorRects(1, &scissor);
   
   CD3DX12_GPU_DESCRIPTOR_HANDLE handle_srv(cbv_heap->GetGPUDescriptorHandleForHeapStart(), 2, cbv_descriptor_size);
   command_list->SetGraphicsRootDescriptorTable(2, handle_srv);
+  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+
   D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] = {
     handle_rtv, handle_rtv_gbuffer
   };
+  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
+  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
+  command_list->SetGraphicsRootSignature(chunk_pass_normal->root_signature_default_palette);
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissor);
   command_list->OMSetRenderTargets(2, rtvs, FALSE, &handle_dsv);
-  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   command_list->SetGraphicsRootConstantBufferView(1, d_per_scene_cb->GetGPUVirtualAddress());  // Per-scene CB
 
-  const int N = int(chunk_pass->chunk_instances.size());
-  for (int i = 0; i < N; i++) {
-    Chunk* c = chunk_pass->chunk_instances[i];
-    D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = chunk_pass->d_per_object_cbs->GetGPUVirtualAddress() + 256 * i;
-    command_list->SetGraphicsRootConstantBufferView(0, cbv0_addr);  // Per-object CB
-    command_list->IASetVertexBuffers(0, 1, &(c->d3d12_vertex_buffer_view));
-    command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
+  {
+    const int N = int(chunk_pass_normal->chunk_instances.size());
+    for (int i = 0; i < N; i++) {
+      Chunk* c = chunk_pass_normal->chunk_instances[i];
+      D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = chunk_pass_normal->d_per_object_cbs->GetGPUVirtualAddress() + 256 * i;
+      command_list->SetGraphicsRootConstantBufferView(0, cbv0_addr);  // Per-object CB
+      command_list->IASetVertexBuffers(0, 1, &(c->d3d12_vertex_buffer_view));
+      command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
+    }
   }
 
   // Draw Backdrop
-  command_list->SetGraphicsRootConstantBufferView(0, d_per_scene_cb->GetGPUVirtualAddress() + sizeof(PerSceneCB));
+  command_list->SetGraphicsRootConstantBufferView(0, d_per_scene_cb->GetGPUVirtualAddress() + 256);
   command_list->IASetVertexBuffers(0, 1, &(backdrop_vbv));
   command_list->DrawInstanced(6, 1, 0, 0);
 
@@ -288,10 +331,6 @@ void DX12ChunksScene::Render() {
     g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATE_PRESENT)));
-  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    shadow_map,
-    D3D12_RESOURCE_STATE_RENDER_TARGET,
-    D3D12_RESOURCE_STATE_GENERIC_READ)));
 
   CE(command_list->Close());
   g_command_queue->ExecuteCommandLists(1,
@@ -316,23 +355,43 @@ void DX12ChunksScene::Update(float secs) {
   rot_axis.m128_f32[2] = 0.0f;
   M *= DirectX::XMMatrixRotationAxis(rot_axis, total_secs * 3.14159f / 2.0f);  // 绕着物体原点转
   M *= DirectX::XMMatrixTranslation(0.0f, -20.0f, 0.0f);  // 绕世界坐标转（？）
+  DirectX::XMMATRIX M0 = M;
 
   DirectX::XMMATRIX V = camera->GetViewMatrix_D3D11();
 
-  chunk_pass->StartPass();
-  chunk->RecordRenderCommand_D3D12(chunk_pass, M, V, projection_matrix);
+  // Depth-only pass
+  chunk_pass_depth->StartPass();
+  DirectX::XMMATRIX P_dirlight = dir_light->GetP_D3D11_DXMath();
+  DirectX::XMMATRIX V_dirlight = dir_light->GetV_D3D11();
+  M = M0;
+  chunk->RecordRenderCommand_D3D12(chunk_pass_depth, M, V_dirlight, P_dirlight);
   M *= DirectX::XMMatrixTranslation(0.0f, 40.0f, 0.0f);
-  chunk->RecordRenderCommand_D3D12(chunk_pass, M, V, projection_matrix);
-  glm::mat3 orientation = glm::rotate(total_secs * 3.14159f / 2.0f, glm::vec3(0, 1, 0));
-  chunk_index->RecordRenderCommand_D3D12(chunk_pass,
+  chunk->RecordRenderCommand_D3D12(chunk_pass_depth, M, V_dirlight, P_dirlight);
+  const glm::mat3 orientation = glm::rotate(total_secs * 3.14159f / 2.0f, glm::vec3(0, 1, 0));
+  chunk_index->RecordRenderCommand_D3D12(chunk_pass_depth,
+    glm::vec3(30, 0, 0), glm::vec3(1, 1, 1), orientation,
+    chunk_index->Size() * 0.5f, V_dirlight, P_dirlight);
+
+  chunk_sprite->pos = glm::vec3(-30, 0, 0);
+  chunk_sprite->RotateAroundLocalAxis(glm::vec3(0, 1, 0), secs * 180.0f / 2.0f);
+  chunk_sprite->RecordRenderCommand_D3D12(chunk_pass_depth, V, P_dirlight);
+  chunk_pass_depth->EndPass();
+
+  // Normal Pass
+  chunk_pass_normal->StartPass();
+  M = M0;
+  chunk->RecordRenderCommand_D3D12(chunk_pass_normal, M, V, projection_matrix);
+  M *= DirectX::XMMatrixTranslation(0.0f, 40.0f, 0.0f);
+  chunk->RecordRenderCommand_D3D12(chunk_pass_normal, M, V, projection_matrix);
+  chunk_index->RecordRenderCommand_D3D12(chunk_pass_normal,
     glm::vec3(30, 0, 0), glm::vec3(1, 1, 1), orientation,
     chunk_index->Size() * 0.5f, V, projection_matrix);
 
   chunk_sprite->pos = glm::vec3(-30, 0, 0);
   chunk_sprite->RotateAroundLocalAxis(glm::vec3(0, 1, 0), secs * 180.0f / 2.0f);
-  chunk_sprite->RecordRenderCommand_D3D12(chunk_pass, V, projection_matrix);
+  chunk_sprite->RecordRenderCommand_D3D12(chunk_pass_normal, V, projection_matrix);
   
-  chunk_pass->EndPass();
+  chunk_pass_normal->EndPass();
 }
 
 void DX12ChunksScene::UpdatePerSceneCB(
@@ -351,6 +410,6 @@ void DX12ChunksScene::UpdatePerSceneCB(
   backdrop_perobject_cb.M = DirectX::XMMatrixIdentity();
   backdrop_perobject_cb.V = camera->GetViewMatrix_D3D11();
   backdrop_perobject_cb.P = projection_matrix;
-  memcpy(ptr + sizeof(PerSceneCB), &backdrop_perobject_cb, sizeof(PerObjectCB));
+  memcpy(ptr + 256, &backdrop_perobject_cb, sizeof(PerObjectCB));
   d_per_scene_cb->Unmap(0, nullptr);
 }

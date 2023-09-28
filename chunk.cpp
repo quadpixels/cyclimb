@@ -562,7 +562,7 @@ void ChunkPass::EndPass() {
   d_per_object_cbs->Unmap(0, nullptr);
 }
 
-void ChunkPass::InitD3D12() {
+void ChunkPass::InitD3D12DefaultPalette() {
   // 本Pass所用的Root Signature与Pipeline State
   CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
   ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
@@ -603,8 +603,8 @@ void ChunkPass::InitD3D12() {
   }
 
   CE(g_device12->CreateRootSignature(0, signature->GetBufferPointer(),
-    signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
-  root_signature->SetName(L"Chunk Pass Root Signature");
+    signature->GetBufferSize(), IID_PPV_ARGS(&root_signature_default_palette)));
+  root_signature_default_palette->SetName(L"Chunk Pass Root Signature");
 
   ID3DBlob* default_palette_VS;
   ID3DBlob* default_palette_PS;
@@ -628,7 +628,7 @@ void ChunkPass::InitD3D12() {
   };
 
   D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
-  pso_desc.pRootSignature = root_signature;
+  pso_desc.pRootSignature = root_signature_default_palette;
   pso_desc.VS = CD3DX12_SHADER_BYTECODE(default_palette_VS),
   pso_desc.PS = CD3DX12_SHADER_BYTECODE(default_palette_PS),
   pso_desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT),
@@ -644,7 +644,13 @@ void ChunkPass::InitD3D12() {
   pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
   pso_desc.SampleDesc.Count = 1;
 
-  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state_default_palette)));
+
+  pso_desc.NumRenderTargets = 0;
+  pso_desc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
+  pso_desc.RTVFormats[1] = DXGI_FORMAT_UNKNOWN;
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state_depth_only)));
+
   CE(default_palette_VS->Release());
   CE(default_palette_PS->Release());
 }

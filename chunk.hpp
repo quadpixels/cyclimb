@@ -33,11 +33,13 @@ public:
     chunk_instances.clear();
   }
   void EndPass();
-  void InitD3D12();
+  void InitD3D12DefaultPalette();
+  void InitD3D12SimpleDepth();
 
   // 这个Pass所用
-  ID3D12RootSignature* root_signature;
-  ID3D12PipelineState* pipeline_state;
+  ID3D12RootSignature* root_signature_default_palette;
+  ID3D12PipelineState* pipeline_state_default_palette;
+  ID3D12PipelineState* pipeline_state_depth_only;
 
   // 给不同的Chunk共享的资源
   int num_max_chunks;
