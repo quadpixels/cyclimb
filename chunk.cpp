@@ -629,12 +629,12 @@ void ChunkPass::InitD3D12DefaultPalette() {
 
   D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
   pso_desc.pRootSignature = root_signature_default_palette;
-  pso_desc.VS = CD3DX12_SHADER_BYTECODE(default_palette_VS),
-  pso_desc.PS = CD3DX12_SHADER_BYTECODE(default_palette_PS),
-  pso_desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT),
-  pso_desc.SampleMask = UINT_MAX,
-  pso_desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT),
-  pso_desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT),
+  pso_desc.VS = CD3DX12_SHADER_BYTECODE(default_palette_VS);
+  pso_desc.PS = CD3DX12_SHADER_BYTECODE(default_palette_PS);
+  pso_desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+  pso_desc.SampleMask = UINT_MAX;
+  pso_desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+  pso_desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
   pso_desc.InputLayout.pInputElementDescs = input_element_desc;
   pso_desc.InputLayout.NumElements = 4;
   pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
