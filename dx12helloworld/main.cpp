@@ -27,7 +27,7 @@ ID3D12Resource* g_rendertargets[FRAME_COUNT];
 unsigned g_rtv_descriptor_size;
 int g_frame_index;
 
-static Scene* g_scenes[3];
+static Scene* g_scenes[4];
 static int g_scene_idx = 0;
 
 // Override the following functions for DX12
@@ -259,6 +259,7 @@ int main() {
   g_scenes[0] = new DX12ClearScreenScene();
   g_scenes[1] = new DX12HelloTriangleScene();
   g_scenes[2] = new DX12ChunksScene();
+  g_scenes[3] = new DX12TextScene();
 
   // Main message loop
   g_last_ms = MillisecondsNow();

@@ -113,4 +113,20 @@ private:
   D3D12_VERTEX_BUFFER_VIEW backdrop_vbv;
 };
 
+class DX12TextScene : public Scene {
+public:
+  DX12TextScene();
+  void Render() override;
+  void Update(float secs) override;
+  static constexpr int FRAME_COUNT = 2;
+private:
+  void InitCommandList();
+  void InitResources();
+  ID3D12CommandAllocator* command_allocator;
+  ID3D12GraphicsCommandList* command_list;
+  ID3DBlob* VS, * PS;
+  ID3D12RootSignature* root_signature_text_render;
+  ID3D12PipelineState* pipeline_state_text_render;
+};
+
 #endif
