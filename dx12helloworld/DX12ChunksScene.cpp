@@ -266,7 +266,7 @@ void DX12ChunksScene::Render() {
       D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = chunk_pass_depth->d_per_object_cbs->GetGPUVirtualAddress() + 256 * i;
       command_list->SetGraphicsRootConstantBufferView(0, cbv0_addr);  // Per-object CB
       command_list->IASetVertexBuffers(0, 1, &(c->d3d12_vertex_buffer_view));
-      command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
+      command_list->DrawInstanced(c->tri_count * 3, 1, 0, 0);
     }
   }
 
@@ -318,7 +318,7 @@ void DX12ChunksScene::Render() {
       D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = chunk_pass_normal->d_per_object_cbs->GetGPUVirtualAddress() + 256 * i;
       command_list->SetGraphicsRootConstantBufferView(0, cbv0_addr);  // Per-object CB
       command_list->IASetVertexBuffers(0, 1, &(c->d3d12_vertex_buffer_view));
-      command_list->DrawInstanced(chunk->tri_count * 3, 1, 0, 0);
+      command_list->DrawInstanced(c->tri_count * 3, 1, 0, 0);
     }
   }
 
