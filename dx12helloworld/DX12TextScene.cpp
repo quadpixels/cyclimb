@@ -9,6 +9,15 @@
 extern ID3D12Device* g_device12;
 using Microsoft::WRL::ComPtr;
 
+extern ID3D12Resource* g_rendertargets[];
+extern int g_frame_index;
+extern ID3D12DescriptorHeap* g_rtv_heap;
+extern unsigned g_rtv_descriptor_size;
+extern ID3D12CommandQueue* g_command_queue;
+extern IDXGISwapChain3* g_swapchain;
+
+void WaitForPreviousFrame();
+
 DX12TextScene::DX12TextScene() {
   InitCommandList();
   InitResources();
@@ -102,7 +111,27 @@ void DX12TextScene::InitResources() {
 }
 
 void DX12TextScene::Render() {
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, pipeline_state_text_render));
+  command_list->SetGraphicsRootSignature(root_signature_text_render);
 
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
+    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    g_frame_index, g_rtv_descriptor_size);
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_PRESENT,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+  float bg_color[] = { 0.8f, 0.8f, 1.0f, 1.0f };
+  command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_PRESENT)));
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
+  CE(g_swapchain->Present(1, 0));
+  WaitForPreviousFrame();
 }
 
 void DX12TextScene::Update(float secs) {

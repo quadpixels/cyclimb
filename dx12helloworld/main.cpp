@@ -166,6 +166,10 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     printf("Current scene set to 2\n");
     g_scene_idx = 2; break;
   }
+  case '3': {
+    printf("Current scene set to 3\n");
+    g_scene_idx = 3; break;
+  }
   default: break;
   }
 }
