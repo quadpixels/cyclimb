@@ -1,10 +1,15 @@
 #ifndef _SCENE_HPP
 #define _SCENE_HPP
 
+#include <map>
+#include <string>
+#include <vector>
+
 #include <d3d12.h>
 #include <D3Dcompiler.h>
 #include <DirectXMath.h>
 #include "d3dx12.h"
+#include <glm/glm.hpp>
 #include <wrl/client.h>
 #include <dxgi1_4.h>
 
@@ -13,6 +18,9 @@
 #include "camera.hpp"
 #include "sprite.hpp"
 #include "util.hpp"
+
+#include <ft2build.h>
+#include FT_FREETYPE_H
 
 class Scene {
 public:
@@ -119,14 +127,30 @@ public:
   void Render() override;
   void Update(float secs) override;
   static constexpr int FRAME_COUNT = 2;
+  void SetText(const std::wstring& t);
+  struct Character_D3D12 {
+    ID3D12Resource* texture;
+    int offset_in_srv_heap;
+    glm::ivec2 size, bearing;
+    uint32_t advance;
+  };
 private:
   void InitCommandList();
   void InitResources();
+  void InitFreetype();
+  void CreateChar();
   ID3D12CommandAllocator* command_allocator;
   ID3D12GraphicsCommandList* command_list;
   ID3DBlob* VS, * PS;
   ID3D12RootSignature* root_signature_text_render;
   ID3D12PipelineState* pipeline_state_text_render;
+
+  std::vector<ID3D12Resource*> vertex_buffers;
+  std::vector<D3D12_VERTEX_BUFFER_VIEW> vertex_buffer_views;
+
+  std::map<wchar_t, Character_D3D12> characters_d3d12;
+  ID3D12DescriptorHeap* srv_heap;
+  FT_Face face;
 };
 
 #endif

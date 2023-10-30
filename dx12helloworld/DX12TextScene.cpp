@@ -21,6 +21,8 @@ void WaitForPreviousFrame();
 DX12TextScene::DX12TextScene() {
   InitCommandList();
   InitResources();
+  InitFreetype();
+  CreateChar();
 }
 
 void DX12TextScene::InitCommandList() {
@@ -32,6 +34,16 @@ void DX12TextScene::InitCommandList() {
 }
 
 void DX12TextScene::InitResources() {
+  // 0.5. SRV heap
+  {
+    D3D12_DESCRIPTOR_HEAP_DESC desc = {
+      .Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+      .NumDescriptors = 1024,  // Maximum 1024 distinct chars. Hopefully we only use this many
+      .Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+    };
+    CE(g_device12->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&srv_heap)));
+  }
+   
   // 1. Shader
   {
     ID3DBlob* error = nullptr;
@@ -135,4 +147,72 @@ void DX12TextScene::Render() {
 }
 
 void DX12TextScene::Update(float secs) {
+}
+
+void DX12TextScene::SetText(const std::wstring& txt) {
+
+}
+
+void DX12TextScene::InitFreetype() {
+  FT_Library ft;
+  if (FT_Init_FreeType(&ft)) {
+    printf("Error: cannot init FreeType library\n");
+  }
+  const char* ttfs[] = {
+    "/"
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    "C:\\Windows\\Fonts\\simsun.ttc",
+  };
+  for (int i = 0; i < 2; i++) {
+    if (FT_New_Face(ft,
+      ttfs[i],
+      0, &face)) {
+      printf("Font file #%d=%s: cannot load\n", i, ttfs[i]);
+    }
+    else {
+      printf("Font file #%d=%s: load complete\n", i, ttfs[i]);
+      break;
+    }
+  }
+  FT_Set_Pixel_Sizes(face, 0, 20);
+}
+
+void DX12TextScene::CreateChar() {
+  wchar_t ch = L'A';
+  if (FT_Load_Char(face, ch, FT_LOAD_RENDER)) {
+    printf("Oh! Could not load character for rendering.\n");
+  }
+
+  if (face->glyph->bitmap.buffer) {
+    const int W = face->glyph->bitmap.width;
+    const int H = face->glyph->bitmap.rows;
+
+    ID3D12Resource* rsrc;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Tex2D(
+        DXGI_FORMAT_R8_UNORM, W, H, 1, 0, 1, 0,
+        D3D12_RESOURCE_FLAG_NONE)),
+      D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+      nullptr,
+      IID_PPV_ARGS(&rsrc)));
+    CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_heap->GetCPUDescriptorHandleForHeapStart());
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+    srv_desc.Format = DXGI_FORMAT_R8_UNORM;
+    srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv_desc.Texture2D.MostDetailedMip = 0;
+    srv_desc.Texture2D.MipLevels = 1;
+    g_device12->CreateShaderResourceView(rsrc, &srv_desc, srv_handle);
+
+    Character_D3D12 ch12;
+    ch12.texture = rsrc;
+    ch12.size = glm::ivec2(W, H);
+    ch12.bearing = glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top);
+    ch12.advance = face->glyph->advance.x;
+
+    characters_d3d12[ch] = ch12;
+    printf("Created ch.\n");
+  }
 }
