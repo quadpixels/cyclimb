@@ -1,3 +1,6 @@
+#include <chrono>
+#include <iomanip>
+
 #include "scene.hpp"
 
 #include "d3dx12.h"
@@ -233,9 +236,18 @@ void DX12TextScene::Render() {
 }
 
 void DX12TextScene::Update(float secs) {
+  auto t = std::chrono::system_clock::now();
+  std::time_t t1 = std::chrono::system_clock::to_time_t(t);
+  std::wstringstream wss;
+  std::tm tm;
+  ::localtime_s(&tm, &t1);
+  wss << std::put_time(&tm, L"%F %T");
+  AddText(wss.str(), glm::vec2(WIN_W / 2.0f, WIN_H / 2.0f));
 }
 
 void DX12TextScene::AddText(const std::wstring& txt, glm::vec2 pos) {
+  if (txt == text_to_display && pos == text_pos) return;
+  ClearCharactersToDisplay();
   float scale = 1.0f;
   float x = pos.x;
   float y = pos.y;
@@ -251,7 +263,7 @@ void DX12TextScene::AddText(const std::wstring& txt, glm::vec2 pos) {
     float ypos = y - ch12->bearing.y * scale;
     float w = ch12->size.x * scale;
     float h = ch12->size.y * scale;
-    x += w;
+    x = xpos + w;
 
     float vertices[6][4] = {
         { xpos,     ypos + h,   0.0, 1.0 }, //  +-------> +X
@@ -383,4 +395,11 @@ DX12TextScene::Character_D3D12* DX12TextScene::CreateOrGetChar(wchar_t ch) {
     return &(characters_d3d12.at(ch));
   }
   else return nullptr;
+}
+
+void DX12TextScene::ClearCharactersToDisplay() {
+  for (CharacterToDisplay& ctd : characters_to_display) {
+    ctd.vb->Release();
+  }
+  characters_to_display.clear();
 }

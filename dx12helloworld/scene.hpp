@@ -146,6 +146,7 @@ private:
   void InitCommandList();
   void InitResources();
   void InitFreetype();
+  void ClearCharactersToDisplay();
   Character_D3D12* CreateOrGetChar(wchar_t ch);
   ID3D12CommandAllocator* command_allocator;
   ID3D12GraphicsCommandList* command_list;
@@ -154,6 +155,8 @@ private:
   ID3D12PipelineState* pipeline_state_text_render;
 
   std::vector<CharacterToDisplay> characters_to_display;
+  std::wstring text_to_display;
+  glm::vec2 text_pos;
 
   std::vector<ID3D12Resource*> constant_buffers;
   ID3D12DescriptorHeap* cbv_heap;
