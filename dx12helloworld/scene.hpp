@@ -147,9 +147,12 @@ private:
 
   std::vector<ID3D12Resource*> vertex_buffers;
   std::vector<D3D12_VERTEX_BUFFER_VIEW> vertex_buffer_views;
+  std::vector<ID3D12Resource*> constant_buffers;
+  ID3D12DescriptorHeap* cbv_heap;
 
   std::map<wchar_t, Character_D3D12> characters_d3d12;
   ID3D12DescriptorHeap* srv_heap;
+  int srv_descriptor_size;
   FT_Face face;
 };
 
