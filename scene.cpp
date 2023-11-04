@@ -79,6 +79,8 @@ const int   ClimbScene::LEVEL_FINISH_JUMP_PERIOD = 500;
 const float ClimbScene::INVERSE_INERTIA = 0.05f;
 
 extern bool IsGL();
+extern bool IsD3D11();
+extern bool IsD3D12();
 
 const glm::vec3 ClimbScene::PLAYER_ROPE_ENDPOINT[8] = 
   {
@@ -107,13 +109,18 @@ void ClimbScene::InitStatic() {
 
   if (!IsGL()) {
 #ifdef WIN32
-    HRESULT hr = DirectX::CreateWICTextureFromFile(g_device11,
-      L"climb\\help.jpg", &helpinfo_res, &helpinfo_srv);
-    assert(SUCCEEDED(hr));
+    if (IsD3D11()) {
+      HRESULT hr = DirectX::CreateWICTextureFromFile(g_device11,
+        L"climb\\help.jpg", &helpinfo_res, &helpinfo_srv);
+      assert(SUCCEEDED(hr));
 
-    hr = DirectX::CreateWICTextureFromFile(g_device11,
-      L"climb\\keys.jpg", &keys_res, &keys_srv);
-    assert(SUCCEEDED(hr));
+      hr = DirectX::CreateWICTextureFromFile(g_device11,
+        L"climb\\keys.jpg", &keys_res, &keys_srv);
+      assert(SUCCEEDED(hr));
+    }
+    else if (IsD3D12()) {
+      printf("(Todo: load texture from file\n");
+    }
 #endif
   }
 }

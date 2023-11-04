@@ -61,6 +61,8 @@ extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::X
 
 extern GameScene* GetCurrentGameScene();
 extern ClimbScene* g_climbscene;
+extern bool IsD3D11();
+extern bool IsD3D12();
 
 bool g_debug = true;
 
@@ -196,7 +198,12 @@ MainMenu::MainMenu() {
     RECT tex{ 32 * i, 0, 32 * (i + 1), 32 };
     const glm::vec2 he{ 40, 40 };
     const glm::vec2 p{ 640 + 42 * dx[i], 186 + 42 * dy[i] };
-    keys_sprites.push_back(new ImageSprite2D(ClimbScene::keys_srv, tex, p, he));
+    if (IsD3D11()) {
+      keys_sprites.push_back(new ImageSprite2D(ClimbScene::keys_srv, tex, p, he));
+    }
+    else {
+      // TODO
+    }
   }
 #endif
 

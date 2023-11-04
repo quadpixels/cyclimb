@@ -21,6 +21,7 @@
 
 extern GraphicsAPI g_api;
 extern Character_D3D11 GetCharacter_D3D11(wchar_t ch);
+extern void Render_D3D12();
 
 extern int WIN_W, WIN_H, SHADOW_RES;
 extern Triangle *g_triangle[];
@@ -731,7 +732,7 @@ void MyInit_D3D11() {
   g_mainmenu = new MainMenu();
 }
 
-void Render() {
+void Render_D3D11() {
   bool USE_EXPANDED_DRAWCALLS = false;
   if (USE_EXPANDED_DRAWCALLS && (g_scene_idx == 0)) {
     expanded_draw_calls();
@@ -933,8 +934,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     PostQuitMessage(0);
     break;
   case WM_PAINT:
-    if (init_done)
-      Render();
+    if (init_done) {
+      switch (g_api) {
+      case ClimbD3D11:
+        Render_D3D11();
+        break;
+      case ClimbD3D12:
+        Render_D3D12();
+        break;
+      }
+    }
     update();
     break;
   default:

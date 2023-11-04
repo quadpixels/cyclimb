@@ -442,63 +442,65 @@ void update() {
   g_mainmenu->Update(secs);
   GetCurrentGameScene()->Update(secs);
 
-  // 这是当时为了解答以下知乎问题而做的演示场景而准备的
-  // https://www.zhihu.com/question/313691919/answer/619138757
-  const char* msgs[] = {
-    "绕局部X轴 逆时针旋转",
-    "绕局部X轴 顺时针旋转",
-    "绕局部Y轴 逆时针旋转",
-    "绕局部Y轴 顺时针旋转",
-    "绕局部Z轴 逆时针旋转",
-    "绕局部Z轴 顺时针旋转",
-    "绕世界X轴 逆时针旋转",
-    "绕世界X轴 顺时针旋转",
-    "绕世界Y轴 逆时针旋转",
-    "绕世界Y轴 顺时针旋转",
-    "绕世界Z轴 逆时针旋转",
-    "绕世界Z轴 顺时针旋转",
-    "摄像机绕自身局部X轴逆时针旋转 同时保持面向物体",
-    "摄像机绕自身局部X轴顺时针旋转 同时保持面向物体",
-    "摄像机绕自身局部Y轴逆时针旋转 同时保持面向物体",
-    "摄像机绕自身局部Y轴顺时针旋转 同时保持面向物体",
-    "摄像机绕自身局部Z轴逆时针旋转 同时保持面向物体",
-    "摄像机绕自身局部Z轴顺时针旋转 同时保持面向物体",
-  };
-  std::string msg;
-  static std::string msg_prev;
-  for (int i=0; i<18; i++) {
-    ChunkSprite* test_sprite = (ChunkSprite*)(g_testscene->test_sprite);
-    if (g_cam_flags.test(i)) {
-      switch (i) {
-        case 0: test_sprite->RotateAroundLocalAxis(glm::vec3( 1, 0, 0), 2.0f); break;
+  if (IsD3D11()) {
+    // 这是当时为了解答以下知乎问题而做的演示场景而准备的
+    // https://www.zhihu.com/question/313691919/answer/619138757
+    const char* msgs[] = {
+      "绕局部X轴 逆时针旋转",
+      "绕局部X轴 顺时针旋转",
+      "绕局部Y轴 逆时针旋转",
+      "绕局部Y轴 顺时针旋转",
+      "绕局部Z轴 逆时针旋转",
+      "绕局部Z轴 顺时针旋转",
+      "绕世界X轴 逆时针旋转",
+      "绕世界X轴 顺时针旋转",
+      "绕世界Y轴 逆时针旋转",
+      "绕世界Y轴 顺时针旋转",
+      "绕世界Z轴 逆时针旋转",
+      "绕世界Z轴 顺时针旋转",
+      "摄像机绕自身局部X轴逆时针旋转 同时保持面向物体",
+      "摄像机绕自身局部X轴顺时针旋转 同时保持面向物体",
+      "摄像机绕自身局部Y轴逆时针旋转 同时保持面向物体",
+      "摄像机绕自身局部Y轴顺时针旋转 同时保持面向物体",
+      "摄像机绕自身局部Z轴逆时针旋转 同时保持面向物体",
+      "摄像机绕自身局部Z轴顺时针旋转 同时保持面向物体",
+    };
+    std::string msg;
+    static std::string msg_prev;
+    for (int i = 0; i < 18; i++) {
+      ChunkSprite* test_sprite = (ChunkSprite*)(g_testscene->test_sprite);
+      if (g_cam_flags.test(i)) {
+        switch (i) {
+        case 0: test_sprite->RotateAroundLocalAxis(glm::vec3(1, 0, 0), 2.0f); break;
         case 1: test_sprite->RotateAroundLocalAxis(glm::vec3(-1, 0, 0), 2.0f); break;
-        case 2: test_sprite->RotateAroundLocalAxis(glm::vec3( 0, 1, 0), 2.0f); break;
-        case 3: test_sprite->RotateAroundLocalAxis(glm::vec3( 0,-1, 0), 2.0f); break;
-        case 4: test_sprite->RotateAroundLocalAxis(glm::vec3( 0, 0, 1), 2.0f); break;
-        case 5: test_sprite->RotateAroundLocalAxis(glm::vec3( 0, 0,-1), 2.0f); break;
+        case 2: test_sprite->RotateAroundLocalAxis(glm::vec3(0, 1, 0), 2.0f); break;
+        case 3: test_sprite->RotateAroundLocalAxis(glm::vec3(0, -1, 0), 2.0f); break;
+        case 4: test_sprite->RotateAroundLocalAxis(glm::vec3(0, 0, 1), 2.0f); break;
+        case 5: test_sprite->RotateAroundLocalAxis(glm::vec3(0, 0, -1), 2.0f); break;
 
-        case 6:  test_sprite->RotateAroundGlobalAxis(glm::vec3( 1, 0, 0), 2.0f); break;
+        case 6:  test_sprite->RotateAroundGlobalAxis(glm::vec3(1, 0, 0), 2.0f); break;
         case 7:  test_sprite->RotateAroundGlobalAxis(glm::vec3(-1, 0, 0), 2.0f); break;
-        case 8:  test_sprite->RotateAroundGlobalAxis(glm::vec3( 0, 1, 0), 2.0f); break;
-        case 9:  test_sprite->RotateAroundGlobalAxis(glm::vec3( 0,-1, 0), 2.0f); break;
-        case 10: test_sprite->RotateAroundGlobalAxis(glm::vec3( 0, 0, 1), 2.0f); break;
-        case 11: test_sprite->RotateAroundGlobalAxis(glm::vec3( 0, 0,-1), 2.0f); break;
+        case 8:  test_sprite->RotateAroundGlobalAxis(glm::vec3(0, 1, 0), 2.0f); break;
+        case 9:  test_sprite->RotateAroundGlobalAxis(glm::vec3(0, -1, 0), 2.0f); break;
+        case 10: test_sprite->RotateAroundGlobalAxis(glm::vec3(0, 0, 1), 2.0f); break;
+        case 11: test_sprite->RotateAroundGlobalAxis(glm::vec3(0, 0, -1), 2.0f); break;
 
-        case 12: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(1,0,0),  2.0f/57.5f); break;
-        case 13: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(1,0,0), -2.0f/57.5f); break;
-        case 14: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(0,1,0), -2.0f/57.5f); break;
-        case 15: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(0,1,0),  2.0f/57.5f); break;
-        case 16: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(0,0,1), -2.0f/57.5f); break;
-        case 17: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(0,0,1),  2.0f/57.5f); break;
+        case 12: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(1, 0, 0), 2.0f / 57.5f); break;
+        case 13: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(1, 0, 0), -2.0f / 57.5f); break;
+        case 14: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(0, 1, 0), -2.0f / 57.5f); break;
+        case 15: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(0, 1, 0), 2.0f / 57.5f); break;
+        case 16: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(0, 0, 1), -2.0f / 57.5f); break;
+        case 17: cam->RotateAlongPoint(g_testscene->test_sprite->pos, glm::vec3(0, 0, 1), 2.0f / 57.5f); break;
 
         default: break;
+        }
+        msg = std::string(msgs[i]);
       }
-      msg = std::string(msgs[i]);
     }
-  }
-  if (msg.size() > 0 && msg_prev != msg) {
-    printf("%s\n", msg.c_str());
-    msg_prev = msg;
+    if (msg.size() > 0 && msg_prev != msg) {
+      printf("%s\n", msg.c_str());
+      msg_prev = msg;
+    }
   }
 
   g_last_millis = elapsed;
@@ -920,6 +922,7 @@ void ExitEditMode() {
 }
 
 extern int main_d3d11(int argc, char** argv);
+extern int main_d3d12(int argc, char** argv);
 
 int main(int argc, char** argv) {
   for (int i = 1; i < argc; i++) {
@@ -931,10 +934,18 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "lighttest")) { g_scene_idx = 2; }
   }
 
-  if (g_api == ClimbOpenGL) main_opengl(argc, argv);
-  else if (g_api == ClimbD3D11 || g_api == ClimbD3D12) {
-    #ifdef WIN32
-    main_d3d11(argc, argv);
-    #endif
+  switch (g_api) {
+    case ClimbOpenGL: {
+      main_opengl(argc, argv);
+      break;
+    }
+    case ClimbD3D11: {
+      main_d3d11(argc, argv);
+      break;
+    }
+    case ClimbD3D12: {
+      main_d3d12(argc, argv);
+      break;
+    }
   }
 }
