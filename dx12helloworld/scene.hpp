@@ -127,26 +127,34 @@ public:
   void Render() override;
   void Update(float secs) override;
   static constexpr int FRAME_COUNT = 2;
-  void SetText(const std::wstring& t);
+  void AddText(const std::wstring& t, glm::vec2 pos);
+
+  // Texture atlas 中的Character
   struct Character_D3D12 {
     ID3D12Resource* texture;
-    int offset_in_srv_heap;
+    int offset_in_srv_heap;  // Offset in the number of descriptors
     glm::ivec2 size, bearing;
     uint32_t advance;
+  };
+  // 要显示的Character
+  struct CharacterToDisplay {
+    Character_D3D12* character;
+    D3D12_VERTEX_BUFFER_VIEW vbv;
+    ID3D12Resource* vb;
   };
 private:
   void InitCommandList();
   void InitResources();
   void InitFreetype();
-  void CreateChar();
+  Character_D3D12* CreateOrGetChar(wchar_t ch);
   ID3D12CommandAllocator* command_allocator;
   ID3D12GraphicsCommandList* command_list;
   ID3DBlob* VS, * PS;
   ID3D12RootSignature* root_signature_text_render;
   ID3D12PipelineState* pipeline_state_text_render;
 
-  std::vector<ID3D12Resource*> vertex_buffers;
-  std::vector<D3D12_VERTEX_BUFFER_VIEW> vertex_buffer_views;
+  std::vector<CharacterToDisplay> characters_to_display;
+
   std::vector<ID3D12Resource*> constant_buffers;
   ID3D12DescriptorHeap* cbv_heap;
 
