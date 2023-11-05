@@ -101,12 +101,12 @@ void DX12ChunksScene::InitResources() {
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle1(cbv_heap->GetCPUDescriptorHandleForHeapStart());
   g_device12->CreateConstantBufferView(&per_scene_cbv_desc, handle1);
 
-  // Per Object CB view
+  // Per Object CB view (Deprecated, it's now in ChunkPass)
+  /*handle1.Offset(cbv_descriptor_size);
   D3D12_CONSTANT_BUFFER_VIEW_DESC per_obj_cbv_desc{};
   per_obj_cbv_desc.BufferLocation = chunk_pass_normal->d_per_object_cbs->GetGPUVirtualAddress();
   per_obj_cbv_desc.SizeInBytes = 256;
-  handle1.Offset(cbv_descriptor_size);
-  g_device12->CreateConstantBufferView(&per_obj_cbv_desc, handle1);
+  g_device12->CreateConstantBufferView(&per_obj_cbv_desc, handle1);*/
 
   // Depth buffer
   D3D12_CLEAR_VALUE depthOptimizedClearValue = {};
@@ -295,7 +295,7 @@ void DX12ChunksScene::Render() {
 
   command_list->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
   
-  CD3DX12_GPU_DESCRIPTOR_HANDLE handle_srv(cbv_heap->GetGPUDescriptorHandleForHeapStart(), 2, cbv_descriptor_size);
+  CD3DX12_GPU_DESCRIPTOR_HANDLE handle_srv(cbv_heap->GetGPUDescriptorHandleForHeapStart(), 1, cbv_descriptor_size);
   command_list->SetGraphicsRootDescriptorTable(2, handle_srv);
   command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
