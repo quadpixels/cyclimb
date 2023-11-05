@@ -606,18 +606,33 @@ void ChunkPass::InitD3D12DefaultPalette() {
     signature->GetBufferSize(), IID_PPV_ARGS(&root_signature_default_palette)));
   root_signature_default_palette->SetName(L"Chunk Pass Root Signature");
 
-  ID3DBlob* default_palette_VS;
-  ID3DBlob* default_palette_PS;
+  ID3DBlob* default_palette_VS = nullptr;
+  ID3DBlob* default_palette_PS = nullptr;
   {
     ID3DBlob* error = nullptr;
     unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-    D3DCompileFromFile(L"../shaders_hlsl/default_palette.hlsl", nullptr, nullptr,
-      "VSMain", "vs_5_0", compile_flags, 0, &default_palette_VS, &error);
-    if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
 
-    D3DCompileFromFile(L"../shaders_hlsl/default_palette.hlsl", nullptr, nullptr,
-      "PSMainWithShadow", "ps_5_0", compile_flags, 0, &default_palette_PS, &error);
-    if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
+    const wchar_t* paths[] = {
+      L"../shaders_hlsl/default_palette.hlsl",
+      L"shaders_hlsl/default_palette.hlsl"
+    };
+
+    for (int i = 0; i < 2; i++) {
+      const wchar_t* path = paths[i];
+      D3DCompileFromFile(path, nullptr, nullptr,
+        "VSMain", "vs_5_0", compile_flags, 0, &default_palette_VS, &error);
+      if (error) {
+        printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
+        continue;
+      }
+
+      D3DCompileFromFile(path, nullptr, nullptr,
+        "PSMainWithShadow", "ps_5_0", compile_flags, 0, &default_palette_PS, &error);
+      if (error) {
+        printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
+        continue;
+      }
+    }
   }
 
   D3D12_INPUT_ELEMENT_DESC input_element_desc[] = {
