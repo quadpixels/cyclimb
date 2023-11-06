@@ -92,6 +92,14 @@ public:
     const glm::vec3& scale,
     const glm::mat3& orientation,
     const glm::vec3& anchor) = 0;
+  virtual void RecordRenderCommand_D3D12(
+    ChunkPass* chunk_pass,
+    const glm::vec3& pos,
+    const glm::vec3& scale,
+    const glm::mat3& orientation,
+    const glm::vec3& anchor,
+    const DirectX::XMMATRIX& V,
+    const DirectX::XMMATRIX& P) = 0;
 #endif
   virtual ~ChunkIndex() {}
   virtual void Fill(int vox) = 0;
@@ -119,6 +127,14 @@ public:
     const glm::mat3& orientation,
     const glm::vec3& anchor
   );
+  virtual void RecordRenderCommand_D3D12(
+    ChunkPass* chunk_pass,
+    const glm::vec3& pos,
+    const glm::vec3& scale,
+    const glm::mat3& orientation,
+    const glm::vec3& anchor,
+    const DirectX::XMMATRIX& V,
+    const DirectX::XMMATRIX& P);
 #endif
   virtual void SetVoxel(unsigned x, unsigned y, unsigned z, int v);
   virtual void SetVoxel(const glm::vec3& p, int vox);

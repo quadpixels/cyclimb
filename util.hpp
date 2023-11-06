@@ -22,6 +22,7 @@
 enum GraphicsAPI {
   ClimbOpenGL,
   ClimbD3D11,
+  ClimbD3D12,
 };
 
 #ifdef WIN32
@@ -117,5 +118,14 @@ public:
 unsigned GetElapsedMillis();
 std::vector<std::string> ReadLinesFromFile(const char* fn);
 std::vector<std::string> SplitStringBySpace(std::string x);
+
+
+// https://stackoverflow.com/questions/65315241/how-can-i-fix-requires-l-value
+template <class T>
+constexpr auto& keep(T&& x) noexcept {
+  return x;
+}
+
+void CE(HRESULT x);
 
 #endif

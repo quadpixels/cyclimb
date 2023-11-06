@@ -41,6 +41,13 @@ void ChunkSprite::Render() {
 void ChunkSprite::Render_D3D11() {
   chunk->Render_D3D11(pos, scale, orientation, anchor);
 }
+
+void ChunkSprite::RecordRenderCommand_D3D12(
+  ChunkPass* chunk_pass,
+  const DirectX::XMMATRIX& V,
+  const DirectX::XMMATRIX& P) {
+  chunk->RecordRenderCommand_D3D12(chunk_pass, pos, scale, orientation, anchor, V, P);
+}
 #endif
 
 glm::vec3 Sprite::GetVoxelCoord(const glm::vec3& p_world) {

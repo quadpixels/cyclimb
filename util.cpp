@@ -24,6 +24,8 @@ extern ID3D11Buffer* g_simpletexture_cb;
 #endif
 
 extern bool IsGL();
+extern bool IsD3D11();
+extern bool IsD3D12();
 
 #ifdef WIN32
 void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m) {
@@ -412,4 +414,12 @@ std::vector<std::string> SplitStringBySpace(std::string x) {
     } else idx1++;
   }
   return ret;
+}
+
+#include <d3d12.h>
+void CE(HRESULT x) {
+  if (FAILED(x)) {
+    printf("ERROR: %X\n", x);
+    throw std::exception();
+  }
 }

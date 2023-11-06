@@ -2,6 +2,7 @@
 #include "chunk.hpp"
 #include "util.hpp"
 #include "camera.hpp"
+#include "scene.hpp"
 #include <string.h>
 
 float    Chunk::l0 = 1.0f;
@@ -9,18 +10,25 @@ int      Chunk::size = 32;
 unsigned Chunk::program = 0;
 
 extern bool IsGL();
+extern bool IsD3D11();
+extern bool IsD3D12();
 extern Camera* GetCurrentSceneCamera();
 
 #ifdef WIN32
+#include <wrl/client.h>
+#include <d3dcompiler.h>
 extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
 extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11Buffer* g_perobject_cb_default_palette;
 extern DirectX::XMMATRIX g_projection_d3d11;
 
+extern ID3D12Device* g_device12;
+
 struct DefaultPalettePerObjectCB {
   DirectX::XMMATRIX M, V, P;
 };
+using Microsoft::WRL::ComPtr;
 #endif
 
 Chunk::Chunk() {
@@ -268,18 +276,40 @@ void Chunk::BuildBuffers(Chunk* neighbors[26]) {
   }
   else {
     #ifdef WIN32
-    if (tri_count > 0) {
-      D3D11_BUFFER_DESC desc = { };
-      desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-      desc.ByteWidth = sizeof(float) * tri_count * 3 * 6;
-      desc.StructureByteStride = sizeof(float) * 6;
-      desc.Usage = D3D11_USAGE_IMMUTABLE;
+    if (IsD3D11()) {
+      if (tri_count > 0) {
+        D3D11_BUFFER_DESC desc = { };
+        desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+        desc.ByteWidth = sizeof(float) * tri_count * 3 * 6;
+        desc.StructureByteStride = sizeof(float) * 6;
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
 
-      D3D11_SUBRESOURCE_DATA srd = { };
-      srd.pSysMem = tmp_packed;
-      srd.SysMemPitch = sizeof(float) * tri_count * 3 * 6;
+        D3D11_SUBRESOURCE_DATA srd = { };
+        srd.pSysMem = tmp_packed;
+        srd.SysMemPitch = sizeof(float) * tri_count * 3 * 6;
 
-      assert(SUCCEEDED(g_device11->CreateBuffer(&desc, &srd, &d3d11_vertex_buffer)));
+        assert(SUCCEEDED(g_device11->CreateBuffer(&desc, &srd, &d3d11_vertex_buffer)));
+      }
+    }
+    else if (IsD3D12()) {
+      if (tri_count > 0) {
+        size_t byte_width = sizeof(float) * tri_count * 3 * 6;
+        CE(g_device12->CreateCommittedResource(
+          &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+          D3D12_HEAP_FLAG_NONE,
+          &keep(CD3DX12_RESOURCE_DESC::Buffer(byte_width)),
+          D3D12_RESOURCE_STATE_GENERIC_READ,
+          nullptr,
+          IID_PPV_ARGS(&d3d12_vertex_buffer)));
+        char* pData;
+        CD3DX12_RANGE readRange(0, 0);
+        CE(d3d12_vertex_buffer->Map(0, &readRange, (void**)&pData));
+        memcpy(pData, tmp_packed, byte_width);
+        d3d12_vertex_buffer->Unmap(0, nullptr);
+        d3d12_vertex_buffer_view.BufferLocation = d3d12_vertex_buffer->GetGPUVirtualAddress();
+        d3d12_vertex_buffer_view.StrideInBytes = sizeof(float) * 6;
+        d3d12_vertex_buffer_view.SizeInBytes = byte_width;
+      }
     }
     #endif
   }
@@ -464,6 +494,27 @@ void Chunk::Render_D3D11() {
   M *= DirectX::XMMatrixTranslation(pos.x, pos.y, -pos.z);
   Render_D3D11(M);
 }
+
+void Chunk::RecordRenderCommand_D3D12(ChunkPass* pass, const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P) {
+  pass->chunk_instances.push_back(this);
+  DirectX::XMMATRIX M = DirectX::XMMatrixIdentity();
+  M *= DirectX::XMMatrixTranslation(pos.x, pos.y, -pos.z);
+  PerObjectCB cb;
+  cb.M = M;
+  cb.V = V;
+  cb.P = P;
+  pass->chunk_per_object_cbs.push_back(cb);
+}
+
+void Chunk::RecordRenderCommand_D3D12(ChunkPass* pass, const DirectX::XMMATRIX& M, const DirectX::XMMATRIX& V, const DirectX::XMMATRIX& P) {
+  pass->chunk_instances.push_back(this);
+  PerObjectCB cb;
+  cb.M = M;
+  cb.V = V;
+  cb.P = P;
+  pass->chunk_per_object_cbs.push_back(cb);
+}
+
 #endif
 
 void Chunk::SetVoxel(unsigned x, unsigned y, unsigned z, int v) {
@@ -488,4 +539,133 @@ Chunk::Chunk(Chunk& other) {
 void Chunk::Fill(int vox) {
   for (int i=0; i<size*size*size; i++) block[i] = vox;
   is_dirty = true;
+}
+
+void ChunkPass::AllocateConstantBuffers(int n) {
+  num_max_chunks = n;
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(num_max_chunks * 256)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&d_per_object_cbs)));
+}
+
+void ChunkPass::EndPass() {
+  CD3DX12_RANGE read_range(0, 256 * chunk_per_object_cbs.size());
+  char* ptr;
+  CE(d_per_object_cbs->Map(0, &read_range, (void**)&ptr));
+  for (int i = 0; i<int(chunk_per_object_cbs.size()); i++) {
+    memcpy(ptr + 256 * i, &(chunk_per_object_cbs[i]), sizeof(PerObjectCB));
+  }
+  d_per_object_cbs->Unmap(0, nullptr);
+}
+
+void ChunkPass::InitD3D12DefaultPalette() {
+  // 本Pass所用的Root Signature与Pipeline State
+  CD3DX12_DESCRIPTOR_RANGE1 ranges[1];
+  ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC);
+
+  CD3DX12_ROOT_PARAMETER1 rootParameters[3];
+  rootParameters[0].InitAsConstantBufferView(0, 0,  // per-object CB
+    D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+  rootParameters[1].InitAsConstantBufferView(1, 0,  // per-scene CB
+    D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_ALL);
+  rootParameters[2].InitAsDescriptorTable(1, &ranges[0], D3D12_SHADER_VISIBILITY_PIXEL);
+
+  D3D12_STATIC_SAMPLER_DESC sampler = {};
+  sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+  sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+  sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+  sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+  sampler.MipLODBias = 0;
+  sampler.MaxAnisotropy = 4;
+  sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+  sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+  sampler.MinLOD = 0.0f;
+  sampler.MaxLOD = D3D12_FLOAT32_MAX;
+  sampler.ShaderRegister = 0;
+  sampler.RegisterSpace = 0;
+  sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+  CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_sig_desc;
+  root_sig_desc.Init_1_1(_countof(rootParameters), rootParameters, 1, &sampler,
+    D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+  ComPtr<ID3DBlob> signature, error;
+
+  HRESULT hr = D3DX12SerializeVersionedRootSignature(&root_sig_desc,
+    D3D_ROOT_SIGNATURE_VERSION_1_1,
+    &signature, &error);
+  if (signature == nullptr) {
+    printf("Could not serialize root signature: %s\n",
+      (char*)(error->GetBufferPointer()));
+  }
+
+  CE(g_device12->CreateRootSignature(0, signature->GetBufferPointer(),
+    signature->GetBufferSize(), IID_PPV_ARGS(&root_signature_default_palette)));
+  root_signature_default_palette->SetName(L"Chunk Pass Root Signature");
+
+  ID3DBlob* default_palette_VS = nullptr;
+  ID3DBlob* default_palette_PS = nullptr;
+  {
+    ID3DBlob* error = nullptr;
+    unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+
+    const wchar_t* paths[] = {
+      L"../shaders_hlsl/default_palette.hlsl",
+      L"shaders_hlsl/default_palette.hlsl"
+    };
+
+    for (int i = 0; i < 2; i++) {
+      const wchar_t* path = paths[i];
+      D3DCompileFromFile(path, nullptr, nullptr,
+        "VSMain", "vs_5_0", compile_flags, 0, &default_palette_VS, &error);
+      if (error) {
+        printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
+        continue;
+      }
+
+      D3DCompileFromFile(path, nullptr, nullptr,
+        "PSMainWithShadow", "ps_5_0", compile_flags, 0, &default_palette_PS, &error);
+      if (error) {
+        printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
+        continue;
+      }
+    }
+  }
+
+  D3D12_INPUT_ELEMENT_DESC input_element_desc[] = {
+    { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    { "COLOR"   , 0, DXGI_FORMAT_R32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    { "COLOR"   , 1, DXGI_FORMAT_R32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    { "COLOR"   , 2, DXGI_FORMAT_R32_FLOAT, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+  };
+
+  D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
+  pso_desc.pRootSignature = root_signature_default_palette;
+  pso_desc.VS = CD3DX12_SHADER_BYTECODE(default_palette_VS);
+  pso_desc.PS = CD3DX12_SHADER_BYTECODE(default_palette_PS);
+  pso_desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+  pso_desc.SampleMask = UINT_MAX;
+  pso_desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+  pso_desc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+  pso_desc.InputLayout.pInputElementDescs = input_element_desc;
+  pso_desc.InputLayout.NumElements = 4;
+  pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+  pso_desc.NumRenderTargets = 2;
+  pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+  pso_desc.RTVFormats[1] = DXGI_FORMAT_R32G32B32A32_FLOAT;
+  pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+  pso_desc.SampleDesc.Count = 1;
+
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state_default_palette)));
+
+  pso_desc.NumRenderTargets = 0;
+  pso_desc.RTVFormats[0] = DXGI_FORMAT_UNKNOWN;
+  pso_desc.RTVFormats[1] = DXGI_FORMAT_UNKNOWN;
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state_depth_only)));
+
+  CE(default_palette_VS->Release());
+  CE(default_palette_PS->Release());
 }

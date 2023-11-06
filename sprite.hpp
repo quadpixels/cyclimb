@@ -5,8 +5,10 @@
 #include <gl/glew.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include "chunkindex.hpp"
 #include <map>
+
+#include "chunkindex.hpp"
+#include "chunk.hpp"
 
 enum SpriteFaction {
   SPRITE_FRIENDLY,
@@ -31,6 +33,10 @@ public:
   virtual void Render() = 0;
 #ifdef WIN32
   virtual void Render_D3D11() = 0;
+  virtual void RecordRenderCommand_D3D12(
+    ChunkPass* chunk_pass,
+    const DirectX::XMMATRIX& V,
+    const DirectX::XMMATRIX& P) = 0;
 #endif
   virtual void Update(float);
   virtual bool IntersectPoint(const glm::vec3& p_world) = 0;
@@ -56,6 +62,10 @@ public:
   virtual void Render();
 #ifdef WIN32
   virtual void Render_D3D11();
+  virtual void RecordRenderCommand_D3D12(
+    ChunkPass* chunk_pass,
+    const DirectX::XMMATRIX& V,
+    const DirectX::XMMATRIX& P);
 #endif
   AABB GetAABBInWorld();
 };

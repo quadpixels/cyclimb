@@ -78,11 +78,11 @@
     <LibraryPath>$(ProjectDir)\windows_lib\freetype-2.10.0\win32;$(ProjectDir)\windows_lib\glew-2.0.0\lib\Release\Win32;$(ProjectDir)\windows_lib\glfw-3.3.2.bin.WIN32\lib-vc2019;$(ProjectDir)\windows_lib\freeglut\lib;$(ProjectDir)\windows_lib\DirectxTK\Bin\Win32;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;$(ProjectDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(ProjectDir)\windows_lib\DirectxTK\Inc;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;$(ProjectDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(ProjectDir)\windows_lib\DirectxTK\Inc;$(SolutionDir)dx12helloworld;$(IncludePath)</IncludePath>
     <LibraryPath>$(ProjectDir)\windows_lib\freetype-2.10.0\win64;$(ProjectDir)\windows_lib\freeglut\lib\x64;$(ProjectDir)\windows_lib\glew-2.0.0\lib\Release\x64;$(ProjectDir)\windows_lib\glfw-3.2.1.bin.WIN64\lib-vc2015;$(ProjectDir)\windows_lib\DirectxTK\Bin\x64;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(ProjectDir)\windows_lib\glfw-3.3.2.bin.WIN64\include;C:\Users\nitroglycerine\Downloads\DirectXTK-master\Inc;$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)\windows_lib\glfw-3.3.2.bin.WIN64\include;C:\Users\nitroglycerine\Downloads\DirectXTK-master\Inc;$(ProjectDir)\windows_lib\freetype-2.10.0\include;$(ProjectDir)\windows_lib\glm-0.9.9.5;$(ProjectDir)\windows_lib\glew-2.0.0\include;$(ProjectDir)\windows_lib\freeglut\include;$(SolutionDir)\dx12helloworld;$(IncludePath)</IncludePath>
     <LibraryPath>$(ProjectDir)\windows_lib\glfw-3.3.2.bin.WIN64\lib-vc2015;C:\Users\nitroglycerine\Downloads\DirectXTK-master\Bin\Desktop_2019_Win10\x64\Release;$(ProjectDir)\windows_lib\freeglut\lib\x64;$(ProjectDir)\windows_lib\freetype-2.10.0\win64;$(ProjectDir)\windows_lib\glew-2.0.0\lib\Release\x64;$(ProjectDir)\windows_lib\DirectxTK\Bin\x64;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -118,17 +118,18 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <AdditionalDependencies>glfw3.lib;glew32.lib;freetype.lib;d3d11.lib;d3dcompiler.lib;dxgi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3.lib;glew32.lib;freetype.lib;d3d11.lib;d3d12.lib;d3dcompiler.lib;dxgi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Console</SubSystem>
     </Link>
     <ClCompile>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);WIN32</PreprocessorDefinitions>
+      <LanguageStandard>Default</LanguageStandard>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
-      <AdditionalDependencies>directxtk.lib;glfw3.lib;d3d11.lib;d3dcompiler.lib;glew32.lib;freetype.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>directxtk.lib;glfw3.lib;d3d11.lib;d3d12.lib;d3dcompiler.lib;glew32.lib;freetype.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
     </Link>
     <ClCompile>
@@ -142,6 +143,7 @@
     <ClCompile Include="game.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="main_d3d.cpp" />
+    <ClCompile Include="main_d3d12.cpp" />
     <ClCompile Include="rendertarget.cpp" />
     <ClCompile Include="scene.cpp" />
     <ClCompile Include="scene_lighttest.cpp" />
@@ -156,6 +158,7 @@
     <ClInclude Include="camera.hpp" />
     <ClInclude Include="chunk.hpp" />
     <ClInclude Include="chunkindex.hpp" />
+    <ClInclude Include="d3dx12.h" />
     <ClInclude Include="DDS.h" />
     <ClInclude Include="DDSTextureLoader.h" />
     <ClInclude Include="DirectXHelpers.h" />

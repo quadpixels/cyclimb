@@ -61,10 +61,12 @@ extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::X
 
 extern GameScene* GetCurrentGameScene();
 extern ClimbScene* g_climbscene;
+extern bool IsD3D11();
+extern bool IsD3D12();
 
 bool g_debug = true;
 
-void StartGame();
+void StartGame(bool);
 void EnterEditMode();
 void ExitEditMode();
 Particles* GetGlobalParticles();
@@ -196,7 +198,12 @@ MainMenu::MainMenu() {
     RECT tex{ 32 * i, 0, 32 * (i + 1), 32 };
     const glm::vec2 he{ 40, 40 };
     const glm::vec2 p{ 640 + 42 * dx[i], 186 + 42 * dy[i] };
-    keys_sprites.push_back(new ImageSprite2D(ClimbScene::keys_srv, tex, p, he));
+    if (IsD3D11()) {
+      keys_sprites.push_back(new ImageSprite2D(ClimbScene::keys_srv, tex, p, he));
+    }
+    else {
+      // TODO
+    }
   }
 #endif
 
@@ -485,7 +492,7 @@ void MainMenu::OnEnter() {
       case 0:
         g_climbscene->is_test_playing = false;
         g_climbscene->StartLevel(g_climbscene->curr_level);
-        StartGame(); // Start Game
+        StartGame(false); // Start Game
         break;
       case 1: {
         EnterMenu(3, false);
@@ -515,11 +522,17 @@ void MainMenu::OnEnter() {
     }
     case 3: {
       switch (curr_selection[curr_menu.size() - 1]) {
-      case 0: 
-        g_climbscene->is_test_playing = true;
-        StartGame();
-        break;  // Test Play
-      case 1: ExitEditMode();  ExitMenu(); break;
+        case 0: 
+          g_climbscene->is_test_playing = true;
+          StartGame(true);
+          break;  // Test Play
+        case 1: {
+          g_climbscene->SpawnPlayer();
+          g_climbscene->StartLevel(g_climbscene->curr_level);
+          ExitEditMode();
+          ExitMenu();
+          break;
+        }
       }
       break;
     }
