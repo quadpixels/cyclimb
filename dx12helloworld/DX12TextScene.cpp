@@ -185,6 +185,14 @@ void DX12TextScene::InitResources() {
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle1(cbv_heap->GetCPUDescriptorHandleForHeapStart());
   g_device12->CreateConstantBufferView(&cbv_desc, handle1);
+
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(float) * 24 * 1024)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&vertex_buffers)));
 }
 
 void DX12TextScene::Render() {
@@ -273,28 +281,23 @@ void DX12TextScene::AddText(const std::wstring& txt, glm::vec2 pos) {
         { xpos + w, ypos,       1.0, 0.0 }, //  
         { xpos + w, ypos + h,   1.0, 1.0 }, //  +Y
     };
-    ID3D12Resource* vb;
-    CE(g_device12->CreateCommittedResource(
-      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
-      D3D12_HEAP_FLAG_NONE,
-      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(vertices))),
-      D3D12_RESOURCE_STATE_GENERIC_READ,
-      nullptr,
-      IID_PPV_ARGS(&vb)));
+
+    const int size = sizeof(vertices);
+    const int offset = characters_to_display.size() * size;
     UINT8* pData;
     CD3DX12_RANGE readRange(0, 0);
-    CE(vb->Map(0, &readRange, (void**)&pData));
-    memcpy(pData, vertices, sizeof(vertices));
-    vb->Unmap(0, nullptr);
+    CE(vertex_buffers->Map(0, &readRange, (void**)&pData));
+    memcpy(pData + offset, vertices, size);
+    CD3DX12_RANGE writeRange(offset, offset + size);
+    vertex_buffers->Unmap(0, &writeRange);
 
     D3D12_VERTEX_BUFFER_VIEW vbv{};
-    vbv.BufferLocation = vb->GetGPUVirtualAddress();
+    vbv.BufferLocation = vertex_buffers->GetGPUVirtualAddress() + offset;
     vbv.StrideInBytes = sizeof(float) * 4;
     vbv.SizeInBytes = sizeof(vertices);
 
     CharacterToDisplay ctd{};
     ctd.character = ch12;
-    ctd.vb = vb;
     ctd.vbv = vbv;
     characters_to_display.push_back(ctd);
   }
@@ -398,8 +401,5 @@ DX12TextScene::Character_D3D12* DX12TextScene::CreateOrGetChar(wchar_t ch) {
 }
 
 void DX12TextScene::ClearCharactersToDisplay() {
-  for (CharacterToDisplay& ctd : characters_to_display) {
-    ctd.vb->Release();
-  }
   characters_to_display.clear();
 }

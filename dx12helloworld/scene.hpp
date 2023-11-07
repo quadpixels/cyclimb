@@ -140,7 +140,6 @@ public:
   struct CharacterToDisplay {
     Character_D3D12* character;
     D3D12_VERTEX_BUFFER_VIEW vbv;
-    ID3D12Resource* vb;
   };
 private:
   void InitCommandList();
@@ -162,6 +161,7 @@ private:
   ID3D12DescriptorHeap* cbv_heap;
 
   std::map<wchar_t, Character_D3D12> characters_d3d12;
+  ID3D12Resource* vertex_buffers;
   ID3D12DescriptorHeap* srv_heap;
   int srv_descriptor_size;
   FT_Face face;
