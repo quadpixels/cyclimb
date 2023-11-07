@@ -36,6 +36,12 @@ DX12TextScene::DX12TextScene() {
   InitResources();
   InitFreetype();
   AddText(L"Hello world", glm::vec2(WIN_W / 2.0f, WIN_H / 2.0f));
+  text_pass = new TextPass(g_device12, g_command_queue, command_list, command_allocator);
+  text_pass->InitD3D12();
+  text_pass->InitFreetype();
+  text_pass->AllocateConstantBuffers(1024);
+  text_pass->AddText(L"Hello world", WIN_W / 2.0f, WIN_H / 2.0f + 20, 1.0f, glm::vec3(1.0f, 0.5f, 0.5f), glm::mat4(1));
+  text_pass->AddText(L"Hello world", WIN_W / 2.0f, WIN_H / 2.0f + 40, 1.5f, glm::vec3(1.0f, 0.8f, 0.5f), glm::mat4(1));
 }
 
 void DX12TextScene::InitCommandList() {
@@ -228,6 +234,29 @@ void DX12TextScene::Render() {
     command_list->SetGraphicsRootConstantBufferView(0, constant_buffers[0]->GetGPUVirtualAddress());
     CD3DX12_GPU_DESCRIPTOR_HANDLE srv_handle(
       srv_heap->GetGPUDescriptorHandleForHeapStart(),
+      ctd.character->offset_in_srv_heap, srv_descriptor_size);
+    command_list->SetGraphicsRootDescriptorTable(1, srv_handle);
+    command_list->DrawInstanced(6, 1, 0, 0);
+  }
+
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
+
+  // TextPass's rendering procedure
+  CE(command_list->Reset(command_allocator, text_pass->pipeline_state));
+  command_list->SetGraphicsRootSignature(text_pass->root_signature);
+  ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
+  command_list->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
+  command_list->OMSetRenderTargets(1, &handle_rtv, FALSE, nullptr);
+  command_list->OMSetBlendFactor(blend_factor);
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissor);
+  for (size_t i = 0; i < text_pass->characters_to_display.size(); i++) {
+    const TextPass::CharacterToDisplay& ctd = text_pass->characters_to_display[i];
+    command_list->IASetVertexBuffers(0, 1, &ctd.vbv);
+    command_list->SetGraphicsRootConstantBufferView(0, text_pass->per_scene_cbs->GetGPUVirtualAddress() + sizeof(TextCbPerScene) * ctd.per_scene_cb_index);
+    CD3DX12_GPU_DESCRIPTOR_HANDLE srv_handle(
+      text_pass->srv_heap->GetGPUDescriptorHandleForHeapStart(),
       ctd.character->offset_in_srv_heap, srv_descriptor_size);
     command_list->SetGraphicsRootDescriptorTable(1, srv_handle);
     command_list->DrawInstanced(6, 1, 0, 0);

@@ -43,6 +43,10 @@ ID3D11PixelShader* g_ps_simpletexture;
 ID3DBlob* g_vs_textrender_blob, * g_ps_textrender_blob;
 ID3D11BlendState* g_blendstate11;
 ID3D11Buffer* g_simpletexture_cb;
+int g_font_size;
+ID3D11VertexShader* g_vs_textrender;
+ID3D11PixelShader* g_ps_textrender;
+GLuint g_programs[10];
 
 // Shared across all scenes
 void InitDeviceAndCommandQ() {

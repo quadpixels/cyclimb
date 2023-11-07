@@ -17,6 +17,7 @@
 #include "chunkindex.hpp"
 #include "camera.hpp"
 #include "sprite.hpp"
+#include "textrender.hpp"
 #include "util.hpp"
 
 #include <ft2build.h>
@@ -165,6 +166,9 @@ private:
   ID3D12DescriptorHeap* srv_heap;
   int srv_descriptor_size;
   FT_Face face;
+
+  // Testing text pass
+  TextPass* text_pass;
 };
 
 #endif

@@ -154,6 +154,7 @@
     <ClCompile Include="..\chunk.cpp" />
     <ClCompile Include="..\chunkindex.cpp" />
     <ClCompile Include="..\sprite.cpp" />
+    <ClCompile Include="..\textrender.cpp" />
     <ClCompile Include="..\util.cpp" />
     <ClCompile Include="DX12ChunksScene.cpp" />
     <ClCompile Include="DX12ClearScreenScene.cpp" />
