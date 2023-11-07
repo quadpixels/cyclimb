@@ -241,6 +241,16 @@ static void InitResources() {
   // Shadow map's DSV
   g_device12->CreateDepthStencilView(g_shadow_map, &dsv_desc, dsv_handle);
 
+  // Shadow map's SRV
+  D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+  srv_desc.Format = DXGI_FORMAT_R32_FLOAT;
+  srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+  srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  srv_desc.Texture2D.MostDetailedMip = 0;
+  srv_desc.Texture2D.MipLevels = 1;
+  g_device12->CreateShaderResourceView(g_shadow_map, &srv_desc,
+    CD3DX12_CPU_DESCRIPTOR_HANDLE(g_cbv_heap->GetCPUDescriptorHandleForHeapStart(), 1, g_cbv_descriptor_size));
+
   // GBuffer's resource
   D3D12_CLEAR_VALUE zero{};
   zero.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
@@ -298,6 +308,7 @@ void Render_D3D12() {
   CD3DX12_CPU_DESCRIPTOR_HANDLE gbuffer_rtv_handle(g_rtv_heap->GetCPUDescriptorHandleForHeapStart(), FRAME_COUNT, g_rtv_descriptor_size);
   CD3DX12_CPU_DESCRIPTOR_HANDLE main_dsv_handle(g_dsv_heap->GetCPUDescriptorHandleForHeapStart());
   CD3DX12_CPU_DESCRIPTOR_HANDLE shadow_map_dsv_handle(g_dsv_heap->GetCPUDescriptorHandleForHeapStart(), 1, g_dsv_descriptor_size);
+  CD3DX12_GPU_DESCRIPTOR_HANDLE shadow_map_srv_handle(g_cbv_heap->GetGPUDescriptorHandleForHeapStart(), 1, g_cbv_descriptor_size);
 
   ID3D12DescriptorHeap* ppHeaps[] = { g_cbv_heap };
 
@@ -326,7 +337,7 @@ void Render_D3D12() {
     chunk_pass_depth->StartPass();
     for (Sprite* s : *sprites) {
       if (s && s->draw_mode == Sprite::DrawMode::NORMAL)
-        s->RecordRenderCommand_D3D12(chunk_pass_depth, cam->GetViewMatrix_D3D11(), g_projection_d3d11);
+        s->RecordRenderCommand_D3D12(chunk_pass_depth, g_dir_light->GetV_D3D11(), g_dir_light->GetP_D3D11_DXMath());
     }
     chunk_pass_depth->EndPass();
     const int N = int(chunk_pass_depth->chunk_instances.size());
@@ -353,6 +364,7 @@ void Render_D3D12() {
 
   float bg_color[] = { 1.0f, 1.0f, 0.8f, 1.0f };
   g_command_list->ClearRenderTargetView(backbuffer_rtv_handle, bg_color, 0, nullptr);
+  g_command_list->ClearDepthStencilView(main_dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
   g_command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_shadow_map,
@@ -360,7 +372,34 @@ void Render_D3D12() {
     D3D12_RESOURCE_STATE_GENERIC_READ)));
 
   // Main color pass
+  D3D12_VIEWPORT main_viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
+  D3D12_RECT main_scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
+  g_command_list->RSSetViewports(1, &main_viewport);
+  g_command_list->RSSetScissorRects(1, &main_scissor);
   D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] = { backbuffer_rtv_handle, gbuffer_rtv_handle };
+  g_command_list->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+  g_command_list->SetGraphicsRootDescriptorTable(2, shadow_map_srv_handle);
+  g_command_list->OMSetRenderTargets(2, rtvs, FALSE, &main_dsv_handle);
+  g_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  g_command_list->SetGraphicsRootConstantBufferView(1, d_per_scene_cb->GetGPUVirtualAddress());
+  
+
+  if (sprites != nullptr) {
+    chunk_pass_normal->StartPass();
+    for (Sprite* s : *sprites) {
+      if (s && s->draw_mode == Sprite::DrawMode::NORMAL)
+        s->RecordRenderCommand_D3D12(chunk_pass_normal, cam->GetViewMatrix_D3D11(), g_projection_d3d11);
+    }
+    chunk_pass_normal->EndPass();
+    const int N = int(chunk_pass_depth->chunk_instances.size());
+    for (int i = 0; i < N; i++) {
+      Chunk* c = chunk_pass_normal->chunk_instances[i];
+      D3D12_GPU_VIRTUAL_ADDRESS cbv0_addr = chunk_pass_normal->d_per_object_cbs->GetGPUVirtualAddress() + 256 * i;
+      g_command_list->SetGraphicsRootConstantBufferView(0, cbv0_addr);  // Per-object CB
+      g_command_list->IASetVertexBuffers(0, 1, &(c->d3d12_vertex_buffer_view));
+      g_command_list->DrawInstanced(c->tri_count * 3, 1, 0, 0);
+    }
+  }
 
   g_command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     render_target,
