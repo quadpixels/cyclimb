@@ -19,6 +19,7 @@ extern ID3D11VertexShader* g_vs_textrender;
 extern ID3D11PixelShader* g_ps_textrender;
 extern ID3DBlob *g_vs_textrender_blob;
 extern void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
+extern void do_RenderText_D3D12(const std::wstring& text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform);
 ID3D11InputLayout *input_layout11;
 
 #endif
@@ -32,12 +33,6 @@ std::map<wchar_t, Character_D3D11> g_characters_d3d11;
 FT_Face g_face;
 
 #ifdef WIN32
-struct TextCbPerScene {
-  DirectX::XMVECTOR screensize; // Assume alignment at float4 boundary
-  DirectX::XMMATRIX transform;
-  DirectX::XMMATRIX projection;
-  DirectX::XMVECTOR textcolor;
-};
 static ID3D11Buffer* vertex_buffer11;
 static ID3D11Buffer* textcb_perscene11;
 extern ID3D11BlendState* g_blendstate11;
@@ -357,18 +352,18 @@ void TextPass::InitD3D12() {
     ID3DBlob* error = nullptr;
     unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
     const wchar_t* filenames[] = {
-      L"shaders/textrender.hlsl",
-      L"../shaders/textrender.hlsl",
+      L"shaders_hlsl/textrender.hlsl",
+      L"../shaders_hlsl/textrender.hlsl",
     };
     for (size_t i = 0; i < 2; i++) {
-      D3DCompileFromFile(filenames[i], nullptr, nullptr,
+      HRESULT hr = D3DCompileFromFile(filenames[i], nullptr, nullptr,
         "VSMain", "vs_5_0", compile_flags, 0, &VS, &error);
       if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
 
-      D3DCompileFromFile(filenames[i], nullptr, nullptr,
+      hr = D3DCompileFromFile(filenames[i], nullptr, nullptr,
         "PSMain", "ps_5_0", compile_flags, 0, &PS, &error);
       if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
-      else break;
+      if (error == nullptr && hr == 0) break;
     }
   }
 
@@ -475,6 +470,7 @@ void TextPass::InitFreetype() {
     }
   }
   FT_Set_Pixel_Sizes(face, 0, 20);
+  g_face = face;
 }
 
 Character_D3D12* TextPass::CreateOrGetChar(wchar_t ch) {
@@ -633,6 +629,7 @@ void RenderText(GraphicsAPI api, std::wstring text, GLfloat x, GLfloat y, GLfloa
   switch (api) {
 #ifdef WIN32
     case ClimbD3D11: do_RenderText_D3D11(text, x, y, scale, color, transform); break;
+    case ClimbD3D12: do_RenderText_D3D12(text, x, y, scale, color, transform); break;
 #endif
     case ClimbOpenGL: do_RenderText(g_programs[6], text, x, y, scale, color, transform); break;
     default: break;

@@ -21,15 +21,9 @@ extern ID3D12CommandQueue* g_command_queue;
 extern IDXGISwapChain3* g_swapchain;
 extern void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
 
-// From textrender.cpp
-struct TextCbPerScene {
-  DirectX::XMVECTOR screensize; // Assume alignment at float4 boundary
-  DirectX::XMMATRIX transform;
-  DirectX::XMMATRIX projection;
-  DirectX::XMVECTOR textcolor;
-};
-
 void WaitForPreviousFrame();
+// Dummy
+void do_RenderText_D3D12(const std::wstring& text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform) {}
 
 DX12TextScene::DX12TextScene() {
   InitCommandList();
@@ -40,8 +34,6 @@ DX12TextScene::DX12TextScene() {
   text_pass->InitD3D12();
   text_pass->InitFreetype();
   text_pass->AllocateConstantBuffers(1024);
-  text_pass->AddText(L"Hello world", WIN_W / 2.0f, WIN_H / 2.0f + 20, 1.0f, glm::vec3(1.0f, 0.5f, 0.5f), glm::mat4(1));
-  text_pass->AddText(L"Hello world", WIN_W / 2.0f, WIN_H / 2.0f + 40, 1.5f, glm::vec3(1.0f, 0.8f, 0.5f), glm::mat4(1));
 }
 
 void DX12TextScene::InitCommandList() {
@@ -251,6 +243,7 @@ void DX12TextScene::Render() {
   command_list->OMSetBlendFactor(blend_factor);
   command_list->RSSetViewports(1, &viewport);
   command_list->RSSetScissorRects(1, &scissor);
+  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   for (size_t i = 0; i < text_pass->characters_to_display.size(); i++) {
     const TextPass::CharacterToDisplay& ctd = text_pass->characters_to_display[i];
     command_list->IASetVertexBuffers(0, 1, &ctd.vbv);
@@ -280,6 +273,11 @@ void DX12TextScene::Update(float secs) {
   ::localtime_s(&tm, &t1);
   wss << std::put_time(&tm, L"%F %T");
   AddText(wss.str(), glm::vec2(WIN_W / 2.0f, WIN_H / 2.0f));
+
+  text_pass->StartPass();
+  text_pass->AddText(L"Hello world", WIN_W / 2.0f, WIN_H / 2.0f + 20, 1.0f, glm::vec3(1.0f, 0.5f, 0.5f), glm::mat4(1));
+  text_pass->AddText(L"Hello world", WIN_W / 2.0f, WIN_H / 2.0f + 48, 1.5f, glm::vec3(1.0f, 0.8f, 0.5f), glm::mat4(1));
+  text_pass->AddText(wss.str(), WIN_W / 2.0f, WIN_H / 2.0f + 90, 1.5f, glm::vec3(0.3f, 0.3f, 1.0f), glm::mat4(1));
 }
 
 void DX12TextScene::AddText(const std::wstring& txt, glm::vec2 pos) {

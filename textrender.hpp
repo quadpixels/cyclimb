@@ -22,6 +22,13 @@ struct Character {
 };
 
 #ifdef WIN32
+struct TextCbPerScene {
+  DirectX::XMVECTOR screensize; // Assume alignment at float4 boundary
+  DirectX::XMMATRIX transform;
+  DirectX::XMMATRIX projection;
+  DirectX::XMVECTOR textcolor;
+};
+
 struct Character_D3D11 {
   ID3D11Texture2D *texture;
   ID3D11ShaderResourceView *srv;

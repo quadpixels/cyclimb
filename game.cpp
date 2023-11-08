@@ -380,6 +380,14 @@ void MainMenu::DrawHelpScreen() {
 }
 
 void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
+  do_Render(ClimbD3D11, uitransform);
+}
+
+void MainMenu::Render_D3D12(const glm::mat4& uitransform) {
+  do_Render(ClimbD3D12, uitransform);
+}
+
+void MainMenu::do_Render(GraphicsAPI api, const glm::mat4& uitransform) {
   // Copy & paste from Render()
   const int ymin = 200, textsize = 24;
   int y = ymin;
@@ -390,7 +398,7 @@ void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
     float w;
     MeasureTextWidth(line, &w);
     glm::vec3 c = glm::vec3(1.0f, 1.0f, 0.5f);
-    RenderText(ClimbD3D11, line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
+    RenderText(api, line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
     y += textsize;
   }
 
@@ -406,17 +414,27 @@ void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
     glm::vec3 c;
     if (i == curr_selection.back()) c = glm::vec3(1.0f, 0.2f, 0.2f);
     else c = glm::vec3(1.0f, 1.0f, 0.1f);
-    RenderText(ClimbD3D11, line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
+    RenderText(api, line, WIN_W / 2 - w / 2, y, 1.0f, c, uitransform);
     y += textsize;
   }
 
   // Background
 #ifdef WIN32
-  UpdateSimpleTexturePerSceneCB(0, 0, fade_alpha);
-  fsquad->Render_D3D11();
+  if (IsD3D11()) {
+    UpdateSimpleTexturePerSceneCB(0, 0, fade_alpha);
+    fsquad->Render_D3D11();
+  }
+  else {
+    // TODO
+  }
 #endif
   if (is_in_help) {
-    DrawHelpScreen();
+    if (IsD3D11()) {
+      DrawHelpScreen();
+    }
+    else {
+      // TODO
+    }
   }
 
   // DBG
@@ -424,7 +442,7 @@ void MainMenu::Render_D3D11(const glm::mat4& uitransform) {
   {
     std::wstringstream ws;
     ws << std::to_wstring(curr_menu.size()) << " | " << std::to_wstring(curr_selection.size());
-    RenderText(ClimbD3D11, ws.str(), 20, 700, 1, glm::vec3(0, 1, 1), uitransform);
+    RenderText(api, ws.str(), 20, 700, 1, glm::vec3(0, 1, 1), uitransform);
   }
   #endif
 }

@@ -41,7 +41,7 @@ public:
   ID3D12PipelineState* pipeline_state_default_palette;
   ID3D12PipelineState* pipeline_state_depth_only;
 
-  // 给不同的Chunk共享的资源
+  // Per-Object CBs
   int num_max_chunks;
   ID3D12Resource* d_per_object_cbs;
 

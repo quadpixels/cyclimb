@@ -93,6 +93,7 @@ public:
 
   void Render(const glm::mat4& uitransform);
   void Render_D3D11(const glm::mat4& uitransform);
+  void Render_D3D12(const glm::mat4& uitransform);
   void OnUpDownPressed(int delta); // -1: up;  +1: down
   void OnLeftRightPressed(int delta); // -1: left; +1: right
   void OnEscPressed();
@@ -128,6 +129,8 @@ public:
 
   static void InitStatic(unsigned p) { program = p; }
   static unsigned program;
+private:
+  void do_Render(GraphicsAPI api, const glm::mat4& uitransform);
 };
 
 class TextMessage {

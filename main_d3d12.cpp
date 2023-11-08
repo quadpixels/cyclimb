@@ -35,6 +35,7 @@ extern Camera* GetCurrentSceneCamera();
 extern GameScene* GetCurrentGameScene();
 extern DirectX::XMMATRIX g_projection_d3d11;
 extern Particles* g_particles;
+extern float g_cam_rot_x, g_cam_rot_y;
 
 static ChunkPass* chunk_pass_depth, * chunk_pass_normal;
 const static int NUM_SPRITES = 1024;
@@ -44,9 +45,9 @@ static int g_frame_index;
 static ID3D12Fence* g_fence;
 static int g_fence_value = 0;
 static HANDLE g_fence_event;
-static ID3D12CommandQueue* g_command_queue;
-static ID3D12CommandAllocator* g_command_allocator;
-static ID3D12GraphicsCommandList* g_command_list;
+ID3D12CommandQueue* g_command_queue; // Shared with textrender.cpp
+ID3D12CommandAllocator* g_command_allocator; // Shared with textrender.cpp
+ID3D12GraphicsCommandList* g_command_list; // Shared with textrender.cpp
 static IDXGISwapChain3* g_swapchain;
 static ID3D12DescriptorHeap* g_rtv_heap;
 static ID3D12Resource* g_rendertargets[FRAME_COUNT];
@@ -56,6 +57,8 @@ static ID3D12DescriptorHeap* g_dsv_heap;
 static unsigned g_dsv_descriptor_size;
 static ID3D12Resource* g_gbuffer12;
 static ID3D12Resource* g_shadow_map;
+static TextPass* text_pass;
+const static int NUM_CHARS = 1024;
 
 // For ChunkPass
 static ID3D12Resource* d_per_scene_cb;
@@ -284,7 +287,12 @@ void UpdatePerSceneCB_D3D12(const DirectX::XMVECTOR* dir_light, const DirectX::X
   d_per_scene_cb->Unmap(0, nullptr);
 }
 
+void do_RenderText_D3D12(const std::wstring& text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform) {
+  text_pass->AddText(text, x, y, scale, color, transform);
+}
+
 void Render_D3D12() {
+  text_pass->StartPass();
   GetCurrentGameScene()->PreRender();
   GetCurrentGameScene()->PrepareSpriteListForRender();
   UpdatePerSceneCB_D3D12(&(g_dir_light->GetDir_D3D11()), &(g_dir_light->GetPV_D3D11()), &(GetCurrentSceneCamera()->GetPos_D3D11()));
@@ -401,14 +409,49 @@ void Render_D3D12() {
     }
   }
 
+  CE(g_command_list->Close());
+  g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&g_command_list);
+
+  {
+    glm::mat4 uitransform(1);
+    uitransform *= glm::rotate(uitransform, g_cam_rot_x, glm::vec3(0.0f, 1.0f, 0.0f));
+    uitransform *= glm::rotate(uitransform, g_cam_rot_y, glm::vec3(1.0f, 0.0f, 0.0f));
+    if (g_main_menu_visible) {
+      g_mainmenu->Render_D3D12(uitransform);
+    }
+  }
+
+  // TextPass's rendering procedure
+  CE(g_command_list->Reset(g_command_allocator, text_pass->pipeline_state));
+  g_command_list->SetGraphicsRootSignature(text_pass->root_signature);
+  ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
+  g_command_list->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
+  g_command_list->RSSetViewports(1, &main_viewport);
+  g_command_list->RSSetScissorRects(1, &main_scissor);
+  g_command_list->OMSetRenderTargets(2, rtvs, FALSE, &main_dsv_handle);
+  float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  g_command_list->OMSetBlendFactor(blend_factor);
+
+  g_command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  for (size_t i = 0; i < text_pass->characters_to_display.size(); i++) {
+    const TextPass::CharacterToDisplay& ctd = text_pass->characters_to_display[i];
+    g_command_list->IASetVertexBuffers(0, 1, &ctd.vbv);
+    g_command_list->SetGraphicsRootConstantBufferView(0, text_pass->per_scene_cbs->GetGPUVirtualAddress() + sizeof(TextCbPerScene) * ctd.per_scene_cb_index);
+    CD3DX12_GPU_DESCRIPTOR_HANDLE srv_handle(
+      text_pass->srv_heap->GetGPUDescriptorHandleForHeapStart(),
+      ctd.character->offset_in_srv_heap, text_pass->srv_descriptor_size);
+    g_command_list->SetGraphicsRootDescriptorTable(1, srv_handle);
+    g_command_list->DrawInstanced(6, 1, 0, 0);
+  }
+
   g_command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     render_target,
     D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATE_PRESENT
     )));
-
   CE(g_command_list->Close());
   g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&g_command_list);
+  
   CE(g_swapchain->Present(1, 0));
   WaitForPreviousFrame();
 }
@@ -436,6 +479,10 @@ void MyInit_D3D12() {
   chunk_pass_normal = new ChunkPass();
   chunk_pass_normal->AllocateConstantBuffers(NUM_SPRITES);
   chunk_pass_normal->InitD3D12DefaultPalette();
+  text_pass = new TextPass(g_device12, g_command_queue, g_command_list, g_command_allocator);
+  text_pass->AllocateConstantBuffers(NUM_CHARS);
+  text_pass->InitD3D12();
+  text_pass->InitFreetype();
 
   g_projection_d3d11 = DirectX::XMMatrixPerspectiveFovLH(60.0f * 3.14159f / 180.0f, WIN_W * 1.0f / WIN_H, 0.01f, 499.0f);
   Particles::InitStatic(g_chunkgrid[3]);

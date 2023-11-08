@@ -30,7 +30,7 @@ VSOutput VSMain(VSInput input) {
   const float half_yext = Z * tan(fovy);
   float half_xext = half_yext / screensize.y * screensize.x;
   
-  float2 xy = input.position.xy / screensize;
+  float2 xy = input.position.xy / screensize.xy;
   xy.y = 1.0 - xy.y;
   xy = xy * 2.0f - float2(1.0f, 1.0f);
   xy = xy * float2(half_xext, half_yext);
