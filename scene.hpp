@@ -20,6 +20,7 @@ public:
   virtual void                  PrepareLights() = 0;
   virtual void                  RenderLights();
   virtual void                  RenderHUD_D3D11() = 0;
+  virtual void                  RenderHUD_D3D12() = 0;
 #endif
   virtual void                  PostRender() = 0;
   virtual void                  RenderHUD() = 0;
@@ -47,6 +48,7 @@ public:
   void RenderHUD() { };
 #ifdef WIN32
   void RenderHUD_D3D11() { };
+  void RenderHUD_D3D12() { };
   void PrepareLights() { };
 #endif
   bool CanHideMenu() {
@@ -271,6 +273,7 @@ public:
   void Update(float secs);
   void RenderHUD();
   void RenderHUD_D3D11();
+  void RenderHUD_D3D12();
   void do_RenderHUD(GraphicsAPI api);
   virtual void OnKeyPressed(char);
   virtual void OnKeyReleased(char);
@@ -346,6 +349,7 @@ public:
   void Update(float secs);
   void RenderHUD() { };
   void RenderHUD_D3D11() { };
+  void RenderHUD_D3D12() { };
   void PrepareLights();
 
   MacroState GetMacroState(int* curr_sec);

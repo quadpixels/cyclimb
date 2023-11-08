@@ -151,7 +151,7 @@ public:
     int x = int(GetElapsedMillis());
     return x >= millis_expire;
   }
-  void Render();
+  void Render(GraphicsAPI api);
   static void InitStatic(unsigned p) { program = p; }
   static unsigned program;
 };

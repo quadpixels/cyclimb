@@ -36,6 +36,7 @@ extern GameScene* GetCurrentGameScene();
 extern DirectX::XMMATRIX g_projection_d3d11;
 extern Particles* g_particles;
 extern float g_cam_rot_x, g_cam_rot_y;
+extern TextMessage* g_textmessage;
 
 static ChunkPass* chunk_pass_depth, * chunk_pass_normal;
 const static int NUM_SPRITES = 1024;
@@ -419,6 +420,8 @@ void Render_D3D12() {
     if (g_main_menu_visible) {
       g_mainmenu->Render_D3D12(uitransform);
     }
+    GameScene* scene = GetCurrentGameScene();
+    if (scene) scene->RenderHUD_D3D12();
   }
 
   // TextPass's rendering procedure
@@ -488,6 +491,8 @@ void MyInit_D3D12() {
   Particles::InitStatic(g_chunkgrid[3]);
   g_particles = new Particles();
   g_dir_light = new DirectionalLight(glm::vec3(1, -3, -1), glm::vec3(1, 3, -1));
+
+  g_textmessage = new TextMessage();
 
   init_done = true;
 }

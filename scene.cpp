@@ -531,7 +531,7 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
   }
 
   if (g_textmessage->IsExpired() == false)
-    g_textmessage->Render();
+    g_textmessage->Render(api);
 
   if (g_debug) {
     swprintf(buf, 20, L"state=%d", game_state);
@@ -546,6 +546,10 @@ void ClimbScene::RenderHUD() {
 
 void ClimbScene::RenderHUD_D3D11() {
   do_RenderHUD(ClimbD3D11);
+}
+
+void ClimbScene::RenderHUD_D3D12() {
+  do_RenderHUD(ClimbD3D12);
 }
 
 void ClimbScene::OnKeyPressed(char k) {

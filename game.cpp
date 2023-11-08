@@ -699,7 +699,7 @@ void MainMenu::PrintStatus() {
   printf("\n");
 }
 
-void TextMessage::Render() {
+void TextMessage::Render(GraphicsAPI api) {
   const int y = WIN_H / 2, textsize = g_font_size;
   const float y0 = WIN_H/2 - g_font_size * 0.5f;
   for (int i=0; i<int(messages.size()); i++) {
@@ -708,7 +708,7 @@ void TextMessage::Render() {
     MeasureTextWidth(msg, &w);
     glm::vec3 c = glm::vec3(1.0f, 1.0f, 0.5f);
     glm::mat4 ident(1);
-    RenderText(ClimbOpenGL, msg, WIN_W/2 - w/2, y0 + g_font_size * i, 1.0f, c, ident);
+    RenderText(api, msg, WIN_W/2 - w/2, y0 + g_font_size * i, 1.0f, c, ident);
   }
 }
 
