@@ -148,6 +148,7 @@
     <ClCompile Include="scene.cpp" />
     <ClCompile Include="scene_lighttest.cpp" />
     <ClCompile Include="shader.cpp" />
+    <ClCompile Include="sounds.cpp" />
     <ClCompile Include="sprite.cpp" />
     <ClCompile Include="testshapes.cpp" />
     <ClCompile Include="textrender.cpp" />
@@ -169,6 +170,7 @@
     <ClInclude Include="rendertarget.hpp" />
     <ClInclude Include="scene.hpp" />
     <ClInclude Include="shader.hpp" />
+    <ClInclude Include="sounds.hpp" />
     <ClInclude Include="sprite.hpp" />
     <ClInclude Include="testshapes.hpp" />
     <ClInclude Include="textrender.hpp" />

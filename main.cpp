@@ -11,8 +11,9 @@
 #include "game.hpp"
 #include "textrender.hpp"
 #include "scene.hpp"
-#include <bitset>
+#include "sounds.hpp"
 
+#include <bitset>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -933,6 +934,8 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "cyclimb")) { g_scene_idx = 1; }
     else if (!strcmp(argv[i], "lighttest")) { g_scene_idx = 2; }
   }
+
+  InitSounds();
 
   switch (g_api) {
     case ClimbOpenGL: {

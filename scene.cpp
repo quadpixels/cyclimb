@@ -1,6 +1,7 @@
 #include "scene.hpp"
 #include "textrender.hpp"
 #include "game.hpp"
+#include "sounds.hpp"
 #include "util.hpp"
 #define _USE_MATH_DEFINES // For MSVC
 #include <math.h>
@@ -309,10 +310,13 @@ void ClimbScene::Update(float secs) {
               for (int i=0; i<int(platforms.size()); i++) {
                 Sprite* sp = platforms[i]->GetSpriteForCollision();
                 if (is_key_pressed && // 只有按着键，才会钩上
-                    sp != nullptr && sp->IntersectPoint(x)) {
+                  sp != nullptr && sp->IntersectPoint(x)) {
+                  CyclimbSound snd = CyclimbSound::Tap;
                   if (dynamic_cast<ExitPlatform*>(platforms[i])) {
                     BeginLevelCompleteSequence();
+                    snd = CyclimbSound::Whistle;
                   }
+                  
                   rope_state = Anchored;
                   probe_remaining_millis = -999;
                   SetAnchorPoint(x, probe_delta);
@@ -327,8 +331,11 @@ void ClimbScene::Update(float secs) {
                   }
                   
                   DamagablePlatform* dp = dynamic_cast<DamagablePlatform*>(platforms[i]);
-                  if (dp) dp->DoDamage(x);
-                  
+                  if (dp) {
+                    dp->DoDamage(x);
+                    snd = CyclimbSound::SmallHit;
+                  }
+                  MyPlaySound(snd);
                   goto DONE;
                 }
               }
@@ -616,6 +623,7 @@ void ClimbScene::OnKeyPressed(char k) {
         
       } else {
         printf("STARTPROBE, k=%c\n", k);
+        MyPlaySound(CyclimbSound::Whoosh);
         is_key_pressed = true;
         rope_state = Probing;
         probe_delta = glm::normalize(kDirs[idx]) * PROBE_DIST;

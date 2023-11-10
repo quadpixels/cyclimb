@@ -833,7 +833,7 @@ void Render_D3D11() {
 }
 
 void OnKeyDown(WPARAM wParam, LPARAM lParam) {
-  printf("KeyDown wParam=%X lParam=%X\n", int(wParam), int(lParam));
+  //printf("KeyDown wParam=%X lParam=%X\n", int(wParam), int(lParam));
   if (lParam & 0x40000000) return;
 
   if (wParam == 27) {
