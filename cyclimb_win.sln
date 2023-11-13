@@ -7,6 +7,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "cyclimb_win", "cyclimb_win.
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "dx12helloworld", "dx12helloworld\dx12helloworld.vcxproj", "{542BBDA8-8978-41D5-B1AB-C71A0551D818}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "dx11helloworld", "dx11helloworld\dx11helloworld.vcxproj", "{398C1CBF-5343-4C09-85AC-74DDB834EA36}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -31,6 +33,14 @@ Global
 		{542BBDA8-8978-41D5-B1AB-C71A0551D818}.Release|x64.Build.0 = Release|x64
 		{542BBDA8-8978-41D5-B1AB-C71A0551D818}.Release|x86.ActiveCfg = Release|Win32
 		{542BBDA8-8978-41D5-B1AB-C71A0551D818}.Release|x86.Build.0 = Release|Win32
+		{398C1CBF-5343-4C09-85AC-74DDB834EA36}.Debug|x64.ActiveCfg = Debug|x64
+		{398C1CBF-5343-4C09-85AC-74DDB834EA36}.Debug|x64.Build.0 = Debug|x64
+		{398C1CBF-5343-4C09-85AC-74DDB834EA36}.Debug|x86.ActiveCfg = Debug|Win32
+		{398C1CBF-5343-4C09-85AC-74DDB834EA36}.Debug|x86.Build.0 = Debug|Win32
+		{398C1CBF-5343-4C09-85AC-74DDB834EA36}.Release|x64.ActiveCfg = Release|x64
+		{398C1CBF-5343-4C09-85AC-74DDB834EA36}.Release|x64.Build.0 = Release|x64
+		{398C1CBF-5343-4C09-85AC-74DDB834EA36}.Release|x86.ActiveCfg = Release|Win32
+		{398C1CBF-5343-4C09-85AC-74DDB834EA36}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
