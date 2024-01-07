@@ -50,6 +50,9 @@ IDXGISwapChain* g_swapchain11;
 ID3D11Texture2D* g_backbuffer;
 ID3D11RenderTargetView* g_backbuffer_rtv11;
 
+D3D11_VIEWPORT g_viewport;
+D3D11_RECT g_scissor_rect;
+
 static Scene* g_scenes[4];
 static int g_scene_index = 0;
 
@@ -81,6 +84,7 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     printf("Current scene set to 1\n");
     g_scene_idx = 1; break;
   }
+  /*
   case '2': {
     printf("Current scene set to 2\n");
     g_scene_idx = 2; break;
@@ -89,6 +93,7 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     printf("Current scene set to 3\n");
     g_scene_idx = 3; break;
   }
+  */
   default: break;
   }
 }
@@ -215,6 +220,18 @@ void InitDX11() {
   assert(SUCCEEDED(hr));
   hr = g_device11->CreateRenderTargetView(g_backbuffer, nullptr, &g_backbuffer_rtv11);
   assert(SUCCEEDED(hr));
+
+  g_viewport.Height = WIN_H;
+  g_viewport.Width = WIN_W;
+  g_viewport.TopLeftX = 0;
+  g_viewport.TopLeftY = 0;
+  g_viewport.MinDepth = 0;
+  g_viewport.MaxDepth = 1; // Need to set otherwise depth will be all -1's
+
+  g_scissor_rect.left = 0;
+  g_scissor_rect.top = 0;
+  g_scissor_rect.bottom = WIN_H;
+  g_scissor_rect.right = WIN_W;
 };
 
 int main() {
@@ -225,6 +242,7 @@ int main() {
   InitDX11();
 
   g_scenes[0] = new DX11ClearScreenScene();
+  g_scenes[1] = new DX11HelloTriangleScene();
 
   // Message Loop
   MSG msg = { 0 };
