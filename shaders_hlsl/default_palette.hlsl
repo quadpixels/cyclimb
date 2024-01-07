@@ -116,7 +116,7 @@ float ShadowCalc(float4 frag) {
       curr_depth = xyz.z;
       temp = closest_depth;
       
-      const float bias = 0.001f;
+      const float bias = 0.01f;
       num_in_shadow += curr_depth - bias > closest_depth ? 1 : 0;
       num_samples += 1;
     }

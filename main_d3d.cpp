@@ -229,7 +229,7 @@ void InitDevice11() {
   g_scissorrect_shadowmap11.right = SHADOW_RES;
 
   //g_projection_d3d11 = glm::perspective(60.0f*3.14159f / 180.0f, WIN_W*1.0f / WIN_H, 0.1f, 499.0f);
-  g_projection_d3d11 = DirectX::XMMatrixPerspectiveFovLH(60.0f*3.14159f / 180.0f, WIN_W*1.0f / WIN_H, 0.01f, 499.0f);
+  g_projection_d3d11 = DirectX::XMMatrixPerspectiveFovLH(60.0f*3.14159f / 180.0f, WIN_W*1.0f / WIN_H, 1.0f, 499.0f);
   g_projection_helpinfo_d3d11 = DirectX::XMMatrixPerspectiveFovLH(60.0f * 3.14159f / 180.0f, 1.0f, 0.001f, 100.0f);
 
   // Per-Object CB for base pass
