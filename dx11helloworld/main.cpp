@@ -16,7 +16,7 @@
 #undef min
 
 HWND g_hwnd;
-int WIN_W = 800, WIN_H = 480;
+int WIN_W = 800, WIN_H = 480, SHADOW_RES = 512;
 int g_scene_idx = 0;
 
 // Override the following functions for DX11
@@ -56,17 +56,24 @@ D3D11_RECT g_scissor_rect;
 static Scene* g_scenes[4];
 static int g_scene_index = 0;
 
-void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P) {
-  assert(false);
-  //D3D11_MAPPED_SUBRESOURCE mapped;
-  //assert(SUCCEEDED(g_context11->Map(g_perobject_cb_default_palette, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)));
-  //if (M) g_perobject_cb.M = *M;
-  //if (V) g_perobject_cb.V = *V;
-  //if (P) g_perobject_cb.P = *P;
-  //memcpy(mapped.pData, &g_perobject_cb, sizeof(g_perobject_cb));
-  //g_context11->Unmap(g_perobject_cb_default_palette, 0);
-}
+// DX11路径里，这两个CB已经硬编码成全局变量了 :(
+ID3D11Buffer* g_perobject_cb_default_palette;
+ID3D11Buffer* g_perscene_cb_default_palette;
+struct DefaultPalettePerObjectCB {
+  DirectX::XMMATRIX M, V, P;
+};
+struct DefaultPalettePerObjectCB g_perobject_cb;
 
+// 
+void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P) {
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  assert(SUCCEEDED(g_context11->Map(g_perobject_cb_default_palette, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)));
+  if (M) g_perobject_cb.M = *M;
+  if (V) g_perobject_cb.V = *V;
+  if (P) g_perobject_cb.P = *P;
+  memcpy(mapped.pData, &g_perobject_cb, sizeof(g_perobject_cb));
+  g_context11->Unmap(g_perobject_cb_default_palette, 0);
+}
 
 #include "chunk.hpp"
 
@@ -84,11 +91,11 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     printf("Current scene set to 1\n");
     g_scene_idx = 1; break;
   }
-  /*
   case '2': {
     printf("Current scene set to 2\n");
     g_scene_idx = 2; break;
   }
+  /*
   case '3': {
     printf("Current scene set to 3\n");
     g_scene_idx = 3; break;
@@ -221,6 +228,21 @@ void InitDX11() {
   hr = g_device11->CreateRenderTargetView(g_backbuffer, nullptr, &g_backbuffer_rtv11);
   assert(SUCCEEDED(hr));
 
+  // CBs for Chunk
+  {
+    D3D11_BUFFER_DESC buf_desc = { };
+    buf_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    buf_desc.StructureByteStride = sizeof(DefaultPalettePerObjectCB);
+    buf_desc.ByteWidth = sizeof(DefaultPalettePerObjectCB);
+    buf_desc.Usage = D3D11_USAGE_DYNAMIC;
+    buf_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    assert(SUCCEEDED(g_device11->CreateBuffer(&buf_desc, nullptr, &g_perobject_cb_default_palette)));
+
+    buf_desc.StructureByteStride = sizeof(DefaultPalettePerSceneCB);
+    buf_desc.ByteWidth = sizeof(DefaultPalettePerSceneCB);
+    assert(SUCCEEDED(g_device11->CreateBuffer(&buf_desc, nullptr, &g_perscene_cb_default_palette)));
+  }
+
   g_viewport.Height = WIN_H;
   g_viewport.Width = WIN_W;
   g_viewport.TopLeftX = 0;
@@ -243,6 +265,7 @@ int main() {
 
   g_scenes[0] = new DX11ClearScreenScene();
   g_scenes[1] = new DX11HelloTriangleScene();
+  g_scenes[2] = new DX11ChunksScene();
 
   // Message Loop
   MSG msg = { 0 };

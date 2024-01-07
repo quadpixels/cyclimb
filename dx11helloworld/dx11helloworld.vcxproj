@@ -150,12 +150,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\camera.cpp" />
     <ClCompile Include="..\chunk.cpp" />
     <ClCompile Include="..\util.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="scene.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\camera.hpp" />
     <ClInclude Include="..\chunk.hpp" />
     <ClInclude Include="..\util.hpp" />
     <ClInclude Include="scene.hpp" />

@@ -3,6 +3,9 @@
 
 #include <d3d11.h>
 #include <DirectXMath.h>
+#include "camera.hpp"
+#include "chunk.hpp"
+#include "util.hpp"
 
 class Scene {
 public:
@@ -30,6 +33,23 @@ public:
   ID3D11InputLayout* input_layout;
   ID3D11VertexShader* vs;
   ID3D11PixelShader* ps;
+};
+
+class DX11ChunksScene : public Scene {
+public:
+  struct DefaultPalettePerObjectCB {
+    DirectX::XMMATRIX M, V, P;
+  };
+  DX11ChunksScene();
+  void Render() override;
+  void Update(float secs) override;
+
+  Chunk* chunk;
+  ID3D11DepthStencilView *dsv_main, *dsv_shadowmap;
+  ID3D11VertexShader* vs;
+  ID3D11PixelShader* ps;
+  Camera* camera;
+  ID3D11InputLayout* input_layout;
 };
 
 #endif
