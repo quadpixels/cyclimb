@@ -21,11 +21,14 @@ public:
 
 class DX11HelloTriangleScene : public Scene {
 public:
+  DX11HelloTriangleScene();
   struct Vertex {
     DirectX::XMFLOAT3 position;
     DirectX::XMFLOAT4 color;
   };
-  DX11HelloTriangleScene();
+  struct PerTriangleCB {
+    DirectX::XMFLOAT2 pos;
+  };
   void Render() override;
   void Update(float secs) override;
 
@@ -33,6 +36,8 @@ public:
   ID3D11InputLayout* input_layout;
   ID3D11VertexShader* vs;
   ID3D11PixelShader* ps;
+  ID3D11Buffer* per_triangle_cb;
+  float elapsed_secs;
 };
 
 class DX11ChunksScene : public Scene {
@@ -50,6 +55,7 @@ public:
   ID3D11PixelShader* ps;
   Camera* camera;
   ID3D11InputLayout* input_layout;
+  ID3D11Buffer* backdrop_vb;
 };
 
 #endif

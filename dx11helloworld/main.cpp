@@ -9,7 +9,7 @@
 #include <d3d12.h>
 #include <d3dx12.h>
 
-#include "scene.hpp"
+#include "scene_dx11.hpp"
 #include "util.hpp"
 
 #undef max

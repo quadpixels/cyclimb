@@ -154,13 +154,13 @@
     <ClCompile Include="..\chunk.cpp" />
     <ClCompile Include="..\util.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="scene.cpp" />
+    <ClCompile Include="scene_dx11.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\camera.hpp" />
     <ClInclude Include="..\chunk.hpp" />
     <ClInclude Include="..\util.hpp" />
-    <ClInclude Include="scene.hpp" />
+    <ClInclude Include="scene_dx11.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

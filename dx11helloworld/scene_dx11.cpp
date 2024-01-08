@@ -1,4 +1,4 @@
-#include "scene.hpp"
+#include "scene_dx11.hpp"
 #include <assert.h>
 #include <stdio.h>
 
@@ -81,6 +81,21 @@ DX11HelloTriangleScene::DX11HelloTriangleScene() {
   };
   assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc, 2, vs_shader_blob->GetBufferPointer(),
     vs_shader_blob->GetBufferSize(), &input_layout)));
+
+  // CB
+  {
+    desc.ByteWidth = sizeof(PerTriangleCB);
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    desc.Usage = D3D11_USAGE_DYNAMIC;
+    DirectX::XMFLOAT2 pos;
+    pos.x = 0.0f;
+    pos.y = 0.0f;
+    data.pSysMem = &pos;
+    hr = g_device11->CreateBuffer(&desc, &data, &per_triangle_cb);
+    assert(SUCCEEDED(hr));
+  }
+
+  elapsed_secs = 0;
 }
 
 void DX11HelloTriangleScene::Render() {
@@ -92,6 +107,7 @@ void DX11HelloTriangleScene::Render() {
   g_context11->IASetVertexBuffers(0, 1, &vertex_buffer, &stride, &offset);
   g_context11->VSSetShader(vs, nullptr, 0);
   g_context11->PSSetShader(ps, nullptr, 0);
+  g_context11->VSSetConstantBuffers(0, 1, &per_triangle_cb);
   g_context11->RSSetViewports(1, &g_viewport);
   g_context11->RSSetScissorRects(1, &g_scissor_rect);
   g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, nullptr);
@@ -99,7 +115,17 @@ void DX11HelloTriangleScene::Render() {
   g_swapchain11->Present(1, 0);
 }
 
-void DX11HelloTriangleScene::Update(float secs) { }
+void DX11HelloTriangleScene::Update(float secs) {
+  elapsed_secs += secs;
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  DirectX::XMFLOAT2 pos;
+  pos.x = cosf(elapsed_secs * 3.14159 * 2.0f);
+  pos.y = sinf(elapsed_secs * 3.14159 * 2.0f);
+  g_context11->Map(per_triangle_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+  memcpy(mapped.pData, &pos, sizeof(pos));
+  g_context11->Unmap(per_triangle_cb, 0);
+  printf("%g\n", elapsed_secs);
+}
 
 DX11ChunksScene::DX11ChunksScene() {
   chunk = new Chunk();

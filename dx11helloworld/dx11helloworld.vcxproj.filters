@@ -24,10 +24,10 @@
     <ClCompile Include="..\util.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="scene.cpp">
+    <ClCompile Include="..\camera.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\camera.cpp">
+    <ClCompile Include="scene_dx11.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -38,10 +38,10 @@
     <ClInclude Include="..\util.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="scene.hpp">
+    <ClInclude Include="..\camera.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\camera.hpp">
+    <ClInclude Include="scene_dx11.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
