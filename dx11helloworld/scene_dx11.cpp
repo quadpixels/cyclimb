@@ -99,7 +99,7 @@ DX11HelloTriangleScene::DX11HelloTriangleScene() {
 }
 
 void DX11HelloTriangleScene::Render() {
-  float bgcolor[4] = { 0.1f, 0.1f, 0.4f, 1.0f };
+  float bgcolor[4] = { 0.1f, 0.1f, 0.6f, 1.0f };
   g_context11->ClearRenderTargetView(g_backbuffer_rtv11, bgcolor);
   g_context11->IASetInputLayout(input_layout);
   g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -119,12 +119,11 @@ void DX11HelloTriangleScene::Update(float secs) {
   elapsed_secs += secs;
   D3D11_MAPPED_SUBRESOURCE mapped;
   DirectX::XMFLOAT2 pos;
-  pos.x = cosf(elapsed_secs * 3.14159 * 2.0f);
-  pos.y = sinf(elapsed_secs * 3.14159 * 2.0f);
+  pos.x = cosf(elapsed_secs * 3.14159) * 0.5f;
+  pos.y = sinf(elapsed_secs * 3.14159) * 0.5f;
   g_context11->Map(per_triangle_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
   memcpy(mapped.pData, &pos, sizeof(pos));
   g_context11->Unmap(per_triangle_cb, 0);
-  printf("%g\n", elapsed_secs);
 }
 
 DX11ChunksScene::DX11ChunksScene() {
@@ -190,6 +189,33 @@ DX11ChunksScene::DX11ChunksScene() {
     assert(SUCCEEDED(g_device11->CreateDepthStencilView(shadow_map_tex, &dsv_desc, &dsv_shadowmap)));
   }
 
+  // Backdrop
+  {
+    const float L = 80.0f, H = -35.0f;
+    float backdrop_verts[] = {  // X, Y, Z, nidx, data, ao
+      -L, H, L, 4, 44, 0,
+       L, H, L, 4, 44, 0,
+      -L, H, -L, 4, 44, 0,
+       L, H, L, 4, 44, 0,
+      L, H, -L, 4, 44, 0,
+      -L, H, -L, 4, 44, 0,
+    };
+    D3D11_BUFFER_DESC desc{};
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.ByteWidth = sizeof(backdrop_verts);
+    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    desc.CPUAccessFlags = 0;
+    desc.MiscFlags = 0;
+
+    D3D11_SUBRESOURCE_DATA data{};
+    data.pSysMem = backdrop_verts;
+    data.SysMemPitch = 0;
+    data.SysMemSlicePitch = 0;
+
+    HRESULT hr = g_device11->CreateBuffer(&desc, &data, &backdrop_vb);
+    assert(SUCCEEDED(hr));
+  }
+
   //
   camera = new Camera();
   camera->pos = glm::vec3(0, 0, 80);
@@ -221,6 +247,13 @@ void DX11ChunksScene::Render() {
 
   DirectX::XMMATRIX M = DirectX::XMMatrixTranslation(0, 0, 0);
   chunk->Render_D3D11(M);
+
+  {
+    unsigned stride = sizeof(float) * 6;
+    unsigned offset = 0;
+    g_context11->IASetVertexBuffers(0, 1, &backdrop_vb, &stride, &offset);
+    g_context11->Draw(6, 0);
+  }
 
   g_swapchain11->Present(1, 0);
 }

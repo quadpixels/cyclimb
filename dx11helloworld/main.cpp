@@ -121,10 +121,10 @@ static long long g_last_ms;
 
 static void Render_D3D11() {
   long long ms = MillisecondsNow();
-  g_last_ms = ms;
   Scene* s = g_scenes[g_scene_idx];
   s->Update((ms - g_last_ms) / 1000.0f);
   s->Render();
+  g_last_ms = ms;
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
