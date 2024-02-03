@@ -9,11 +9,12 @@ extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11RenderTargetView* g_backbuffer_rtv11;
 extern IDXGISwapChain* g_swapchain11;
-extern D3D11_VIEWPORT g_viewport;
+extern D3D11_VIEWPORT g_viewport, g_viewport_shadowmap;
 extern D3D11_RECT g_scissor_rect;
 extern ID3D11Buffer* g_perobject_cb_default_palette;
 extern ID3D11Buffer* g_perscene_cb_default_palette;
 void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
+void UpdateGlobalPerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
 
 extern int WIN_W, WIN_H, SHADOW_RES;
 
@@ -187,6 +188,12 @@ DX11ChunksScene::DX11ChunksScene() {
     ID3D11Texture2D* shadow_map_tex;
     assert(SUCCEEDED(g_device11->CreateTexture2D(&d2d, nullptr, &shadow_map_tex)));
     assert(SUCCEEDED(g_device11->CreateDepthStencilView(shadow_map_tex, &dsv_desc, &dsv_shadowmap)));
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+    srv_desc.Format = DXGI_FORMAT_R32_FLOAT;
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels = 1;
+    assert(SUCCEEDED(g_device11->CreateShaderResourceView(shadow_map_tex, &srv_desc, &srv_shadowmap)));
   }
 
   // Backdrop
@@ -221,31 +228,64 @@ DX11ChunksScene::DX11ChunksScene() {
   camera->pos = glm::vec3(0, 0, 80);
   camera->lookdir = glm::vec3(0, 0, -1);
   camera->up = glm::vec3(0, 1, 0);
+
+  // Directional Light
+  dir_light = new DirectionalLight(glm::vec3(-1, -1, -1), glm::vec3(50, 50, 50));
+
+  // Sampler
+  {
+    D3D11_SAMPLER_DESC sd = { };
+    sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.MaxAnisotropy = 1;
+    sd.MinLOD = -FLT_MAX;
+    sd.MaxLOD = FLT_MAX;
+    assert(SUCCEEDED(g_device11->CreateSamplerState(&sd, &sampler)));
+  }
 }
 
 void DX11ChunksScene::Render() {
   float bgcolor[4] = { 1.0f, 1.0f, 0.7f, 1.0f };
   g_context11->ClearRenderTargetView(g_backbuffer_rtv11, bgcolor);
   g_context11->ClearDepthStencilView(dsv_main, D3D11_CLEAR_DEPTH, 1.0f, 0);
+  g_context11->ClearDepthStencilView(dsv_shadowmap, D3D11_CLEAR_DEPTH, 1.0f, 0);
   g_context11->IASetInputLayout(input_layout);
   g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  g_context11->RSSetViewports(1, &g_viewport);
   g_context11->RSSetScissorRects(1, &g_scissor_rect);
-  g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, dsv_main);
   //g_context11->OMSetDepthStencilState(ds_state, 0);
   g_context11->VSSetShader(vs, nullptr, 0);
   g_context11->PSSetShader(ps, nullptr, 0);
 
-  DirectX::XMMATRIX V, P;
-  V = camera->GetViewMatrix_D3D11();
-  P = DirectX::XMMatrixPerspectiveFovLH(60.0f * 3.14159f / 180.0f, WIN_W * 1.0f / WIN_H, 1.0f, 499.0f);
-  UpdateGlobalPerObjectCB(nullptr, &V, &P);
-
+  // Set CBs
   ID3D11Buffer* cbs[] = { g_perobject_cb_default_palette, g_perscene_cb_default_palette };
   g_context11->VSSetConstantBuffers(0, 2, cbs);
   g_context11->PSSetConstantBuffers(1, 1, &g_perscene_cb_default_palette);
 
+  // Depth pass
+  g_context11->RSSetViewports(1, &g_viewport_shadowmap);
+  g_context11->OMSetRenderTargets(0, nullptr, dsv_shadowmap);
+  DirectX::XMMATRIX V, P, PV;
+  V = dir_light->GetV_D3D11();
+  P = dir_light->GetP_D3D11_DXMath();
+  PV = dir_light->GetPV_D3D11();
+  DirectX::XMVECTOR cam_pos = camera->GetPos_D3D11();
+  DirectX::XMVECTOR dir_light_dir = dir_light->GetDir_D3D11();
+  UpdateGlobalPerSceneCB(&dir_light_dir, &PV, &cam_pos);
+  UpdateGlobalPerObjectCB(nullptr, &V, &P);
   DirectX::XMMATRIX M = DirectX::XMMatrixTranslation(0, 0, 0);
+  chunk->Render_D3D11(M);
+
+  // Normal pass
+  g_context11->RSSetViewports(1, &g_viewport);
+  g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, dsv_main);
+  V = camera->GetViewMatrix_D3D11();
+  P = DirectX::XMMatrixPerspectiveFovLH(60.0f * 3.14159f / 180.0f, WIN_W * 1.0f / WIN_H, 1.0f, 499.0f);
+  UpdateGlobalPerObjectCB(nullptr, &V, &P);
+  g_context11->PSSetShaderResources(0, 1, &srv_shadowmap);
+  g_context11->PSSetSamplers(0, 1, &sampler);
   chunk->Render_D3D11(M);
 
   {

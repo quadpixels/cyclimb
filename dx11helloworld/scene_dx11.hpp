@@ -56,6 +56,9 @@ public:
   Camera* camera;
   ID3D11InputLayout* input_layout;
   ID3D11Buffer* backdrop_vb;
+  DirectionalLight* dir_light;
+  ID3D11ShaderResourceView* srv_shadowmap;
+  ID3D11SamplerState* sampler;
 };
 
 #endif

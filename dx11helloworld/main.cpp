@@ -50,7 +50,7 @@ IDXGISwapChain* g_swapchain11;
 ID3D11Texture2D* g_backbuffer;
 ID3D11RenderTargetView* g_backbuffer_rtv11;
 
-D3D11_VIEWPORT g_viewport;
+D3D11_VIEWPORT g_viewport, g_viewport_shadowmap;
 D3D11_RECT g_scissor_rect;
 
 static Scene* g_scenes[4];
@@ -73,6 +73,18 @@ void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX
   if (P) g_perobject_cb.P = *P;
   memcpy(mapped.pData, &g_perobject_cb, sizeof(g_perobject_cb));
   g_context11->Unmap(g_perobject_cb_default_palette, 0);
+}
+
+struct DefaultPalettePerSceneCB g_perscene_cb;
+void UpdateGlobalPerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos) {
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  assert(SUCCEEDED(g_context11->Map(g_perscene_cb_default_palette, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)));
+  if (dir_light) g_perscene_cb.dir_light = *dir_light;
+  if (lightPV) g_perscene_cb.lightPV = *lightPV;
+  if (camPos)  g_perscene_cb.cam_pos = *camPos;
+
+  memcpy(mapped.pData, &g_perscene_cb, sizeof(g_perscene_cb));
+  g_context11->Unmap(g_perscene_cb_default_palette, 0);
 }
 
 #include "chunk.hpp"
@@ -249,6 +261,10 @@ void InitDX11() {
   g_viewport.TopLeftY = 0;
   g_viewport.MinDepth = 0;
   g_viewport.MaxDepth = 1; // Need to set otherwise depth will be all -1's
+
+  g_viewport_shadowmap = g_viewport;
+  g_viewport_shadowmap.Height = SHADOW_RES;
+  g_viewport_shadowmap.Width = SHADOW_RES;
 
   g_scissor_rect.left = 0;
   g_scissor_rect.top = 0;
