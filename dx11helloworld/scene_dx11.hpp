@@ -59,6 +59,10 @@ public:
   DirectionalLight* dir_light;
   ID3D11ShaderResourceView* srv_shadowmap;
   ID3D11SamplerState* sampler;
+
+  ID3D11Texture2D* gbuffer;
+  ID3D11ShaderResourceView *srv_gbuffer;
+  ID3D11RenderTargetView* rtv_gbuffer;
 };
 
 #endif

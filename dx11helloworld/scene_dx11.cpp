@@ -245,6 +245,31 @@ DX11ChunksScene::DX11ChunksScene() {
     sd.MaxLOD = FLT_MAX;
     assert(SUCCEEDED(g_device11->CreateSamplerState(&sd, &sampler)));
   }
+
+  // GBuffer, its SRV and RTV
+  {
+    D3D11_TEXTURE2D_DESC d2d = {};
+    d2d.MipLevels = 1;
+    d2d.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    d2d.Width = WIN_W;
+    d2d.Height = WIN_H;
+    d2d.ArraySize = 1;
+    d2d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    d2d.SampleDesc.Count = 1;
+    d2d.SampleDesc.Quality = 0;
+    assert(SUCCEEDED(g_device11->CreateTexture2D(&d2d, nullptr, &gbuffer)));
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = { };
+    srv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels = 1;
+    assert(SUCCEEDED(g_device11->CreateShaderResourceView(gbuffer, &srv_desc, &srv_gbuffer)));
+
+    D3D11_RENDER_TARGET_VIEW_DESC rtv_desc = { };
+    rtv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+    assert(SUCCEEDED(g_device11->CreateRenderTargetView(gbuffer, &rtv_desc, &rtv_gbuffer)));
+  }
 }
 
 void DX11ChunksScene::Render() {
@@ -280,7 +305,8 @@ void DX11ChunksScene::Render() {
 
   // Normal pass
   g_context11->RSSetViewports(1, &g_viewport);
-  g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, dsv_main);
+  ID3D11RenderTargetView* rtvs[] = { g_backbuffer_rtv11, rtv_gbuffer };
+  g_context11->OMSetRenderTargets(2, rtvs, dsv_main);
   V = camera->GetViewMatrix_D3D11();
   P = DirectX::XMMatrixPerspectiveFovLH(60.0f * 3.14159f / 180.0f, WIN_W * 1.0f / WIN_H, 1.0f, 499.0f);
   UpdateGlobalPerObjectCB(nullptr, &V, &P);
