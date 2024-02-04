@@ -67,10 +67,30 @@ public:
 
 class DX11LightScatterScene : public Scene {
 public:
+  struct ConstantBufferDataDrawLight {
+    float WIN_W, WIN_H;
+    float light_x, light_y, light_r;
+    DirectX::XMVECTOR light_color;
+    float global_alpha;
+  };
+  struct VertexUV {
+    float x, y, z, u, v;
+  };
+
   DX11LightScatterScene();
 
   ID3D11VertexShader* vs_drawlight, * vs_mask, * vs_combine;
   ID3D11PixelShader* ps_drawlight, * ps_mask, * ps_combine;
+
+  ID3D11Texture2D* lightmap;
+  ID3D11ShaderResourceView* srv_lightmap;
+  ID3D11RenderTargetView* rtv_lightmask;
+
+  ID3D11Buffer* cb_drawlight;
+  ConstantBufferDataDrawLight h_cb_drawlight;
+
+  ID3D11Buffer* vb_fsquad;
+  ID3D11InputLayout* input_layout;
 
   void Render() override;
   void Update(float secs) override;

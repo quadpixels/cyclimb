@@ -343,13 +343,122 @@ DX11LightScatterScene::DX11LightScatterScene() {
   assert(SUCCEEDED(g_device11->CreatePixelShader(ps_shader_blob->GetBufferPointer(),
     ps_shader_blob->GetBufferSize(), nullptr, &ps_drawlight)));
   CE(hr, error);
+
+  // Light map
+  {
+    D3D11_TEXTURE2D_DESC d2d{};
+    d2d.MipLevels = 1;
+    d2d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    d2d.Width = WIN_W;
+    d2d.Height = WIN_H;
+    d2d.ArraySize = 1;
+    d2d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    d2d.SampleDesc.Count = 1;
+    d2d.SampleDesc.Quality = 0;
+    d2d.Usage = D3D11_USAGE_DEFAULT;
+    assert(SUCCEEDED(g_device11->CreateTexture2D(&d2d, nullptr, &lightmap)));
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+    srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels = 1;
+    assert(SUCCEEDED(g_device11->CreateShaderResourceView(lightmap, &srv_desc, &srv_lightmap)));
+
+    D3D11_RENDER_TARGET_VIEW_DESC rtv_desc{};
+    rtv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+    assert(SUCCEEDED(g_device11->CreateRenderTargetView(lightmap, &rtv_desc, &rtv_lightmask)));
+  }
+
+  // Draw light
+  {
+    D3D11_BUFFER_DESC buf_desc{};
+    buf_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    buf_desc.StructureByteStride = sizeof(ConstantBufferDataDrawLight);
+    buf_desc.ByteWidth = sizeof(ConstantBufferDataDrawLight);
+    buf_desc.Usage = D3D11_USAGE_DYNAMIC;
+    buf_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    assert(SUCCEEDED(g_device11->CreateBuffer(&buf_desc, nullptr, &cb_drawlight)));
+  }
+
+  // Full scan quad VB
+  {
+    VertexUV verts[] = {
+      {  1.0f,  1.0f, 0.0f,  1.0f, 0.0f }, //  
+      {  1.0f, -1.0f, 0.0f,  1.0f, 1.0f }, //  +-----------+ UV = (1, 0), NDC=(1, 1)
+      { -1.0f, -1.0f, 0.0f,  0.0f, 1.0f }, //  |           |
+                                           //  |           |
+      { -1.0f, -1.0f, 0.0f,  0.0f, 1.0f }, //  |           |
+      { -1.0f,  1.0f, 0.0f,  0.0f, 0.0f }, //  |           |
+      {  1.0f,  1.0f, 0.0f,  1.0f, 0.0f }, //  +-----------+ UV = (1, 1), NDC=(1,-1)
+
+      {  1.0f,  1.0f, 0.0f,  1.0f, 0.0f }, //  
+      {  1.0f, -1.0f, 0.0f,  1.0f, 1.0f }, //  +-----------+ UV = (1, 0), NDC=(1, 1)
+      { -1.0f, -1.0f, 0.0f,  0.0f, 1.0f }, //  |           |
+                                           //  |           |
+      { -1.0f, -1.0f, 0.0f,  0.0f, 1.0f }, //  |           |
+      { -1.0f,  1.0f, 0.0f,  0.0f, 0.0f }, //  |           |
+      {  1.0f,  1.0f, 0.0f,  1.0f, 0.0f }, //  +-----------+ UV = (1, 1), NDC=(1,-1)
+    };
+
+    D3D11_BUFFER_DESC desc = { };
+    desc.ByteWidth = sizeof(verts);
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.StructureByteStride = sizeof(VertexUV);
+    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+    D3D11_SUBRESOURCE_DATA srd = { };
+    srd.pSysMem = verts;
+
+    HRESULT hr = g_device11->CreateBuffer(&desc, &srd, &vb_fsquad);
+    assert(SUCCEEDED(hr));
+  }
+
+  // Input layout
+  {
+    D3D11_INPUT_ELEMENT_DESC inputdesc2[] = {
+      { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+    };
+    assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc2, 2,
+      vs_shader_blob->GetBufferPointer(),
+      vs_shader_blob->GetBufferSize(),
+      &input_layout)));
+  }
 }
 
 void DX11LightScatterScene::Render() {
   float bgcolor[4] = { 1.0f, 1.0f, 0.9f, 1.0f };
   g_context11->ClearRenderTargetView(g_backbuffer_rtv11, bgcolor);
+
+  g_context11->RSSetViewports(1, &g_viewport);
+  g_context11->OMSetRenderTargets(1, &rtv_lightmask, nullptr);
+  g_context11->PSSetConstantBuffers(0, 1, &cb_drawlight);
+  g_context11->PSSetShader(ps_drawlight, nullptr, 0);
+  g_context11->VSSetShader(vs_drawlight, nullptr, 0);
+  UINT zero = 0, stride = sizeof(VertexUV);
+  g_context11->IASetInputLayout(input_layout);
+  g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  g_context11->IASetVertexBuffers(0, 1, &vb_fsquad, &stride, &zero);
+  g_context11->Draw(6, 0);
+
   g_swapchain11->Present(1, 0);
 }
 
 void DX11LightScatterScene::Update(float secs) {
+  h_cb_drawlight.light_x = WIN_W * 0.25f;
+  h_cb_drawlight.light_y = WIN_H * 0.25f;
+  h_cb_drawlight.light_r = 100.0f;
+  h_cb_drawlight.WIN_H = WIN_H * 1.0f;
+  h_cb_drawlight.WIN_W = WIN_W * 1.0f;
+  h_cb_drawlight.light_color.m128_f32[0] = 1.0f;
+  h_cb_drawlight.light_color.m128_f32[1] = 1.0f;
+  h_cb_drawlight.light_color.m128_f32[2] = 1.0f;
+  h_cb_drawlight.light_color.m128_f32[3] = 1.0f;
+  h_cb_drawlight.global_alpha = 1.0f;
+
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  CE(g_context11->Map(cb_drawlight, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+  memcpy(mapped.pData, &h_cb_drawlight, sizeof(ConstantBufferDataDrawLight));
+  g_context11->Unmap(cb_drawlight, 0);
 }
