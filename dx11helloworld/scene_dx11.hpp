@@ -82,8 +82,12 @@ public:
   ID3D11VertexShader* vs_drawlight, * vs_mask, * vs_combine;
   ID3D11PixelShader* ps_drawlight, * ps_mask, * ps_combine;
 
+  ID3D11Texture2D* main_canvas;
+  ID3D11ShaderResourceView* srv_main_canvas;
+  ID3D11RenderTargetView* rtv_main_canvas;
+
   ID3D11Texture2D* lightmap;
-  ID3D11ShaderResourceView* srv_lightmap;
+  ID3D11ShaderResourceView* srv_lightmask;
   ID3D11RenderTargetView* rtv_lightmask;
 
   ID3D11Buffer* cb_drawlight;

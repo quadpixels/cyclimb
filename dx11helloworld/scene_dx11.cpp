@@ -13,6 +13,7 @@ extern D3D11_VIEWPORT g_viewport, g_viewport_shadowmap;
 extern D3D11_RECT g_scissor_rect;
 extern ID3D11Buffer* g_perobject_cb_default_palette;
 extern ID3D11Buffer* g_perscene_cb_default_palette;
+extern ID3D11Texture2D* g_backbuffer;
 void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
 void UpdateGlobalPerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
 
@@ -344,7 +345,18 @@ DX11LightScatterScene::DX11LightScatterScene() {
     ps_shader_blob->GetBufferSize(), nullptr, &ps_drawlight)));
   CE(hr, error);
 
-  // Light map
+  ID3DBlob* vs_shader_blob_combine, * ps_shader_blob_combine;
+  hr = D3DCompileFromFile(L"shaders/shaders_combine.hlsl", nullptr, nullptr, "VSMain", "vs_4_0", compileFlags, 0, &vs_shader_blob_combine, &error);
+  if (error) printf("Error compiling VS: %s\n", (char*)error->GetBufferPointer());
+  assert(SUCCEEDED(g_device11->CreateVertexShader(vs_shader_blob_combine->GetBufferPointer(),
+    vs_shader_blob_combine->GetBufferSize(), nullptr, &vs_combine)));
+  CE(hr, error);
+  hr = D3DCompileFromFile(L"shaders/shaders_combine.hlsl", nullptr, nullptr, "PSMain", "ps_4_0", compileFlags, 0, &ps_shader_blob_combine, &error);
+  assert(SUCCEEDED(g_device11->CreatePixelShader(ps_shader_blob_combine->GetBufferPointer(),
+    ps_shader_blob_combine->GetBufferSize(), nullptr, &ps_combine)));
+  CE(hr, error);
+
+  // Light map and main canvas
   {
     D3D11_TEXTURE2D_DESC d2d{};
     d2d.MipLevels = 1;
@@ -357,18 +369,22 @@ DX11LightScatterScene::DX11LightScatterScene() {
     d2d.SampleDesc.Quality = 0;
     d2d.Usage = D3D11_USAGE_DEFAULT;
     assert(SUCCEEDED(g_device11->CreateTexture2D(&d2d, nullptr, &lightmap)));
+    assert(SUCCEEDED(g_device11->CreateTexture2D(&d2d, nullptr, &main_canvas)));
 
     D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
     srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
     srv_desc.Texture2D.MipLevels = 1;
-    assert(SUCCEEDED(g_device11->CreateShaderResourceView(lightmap, &srv_desc, &srv_lightmap)));
+    assert(SUCCEEDED(g_device11->CreateShaderResourceView(lightmap, &srv_desc, &srv_lightmask)));
+    assert(SUCCEEDED(g_device11->CreateShaderResourceView(main_canvas, &srv_desc, &srv_main_canvas)));
 
     D3D11_RENDER_TARGET_VIEW_DESC rtv_desc{};
     rtv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
     assert(SUCCEEDED(g_device11->CreateRenderTargetView(lightmap, &rtv_desc, &rtv_lightmask)));
+    assert(SUCCEEDED(g_device11->CreateRenderTargetView(main_canvas, &rtv_desc, &rtv_main_canvas)));
   }
+
 
   // Draw light
   {
@@ -428,9 +444,10 @@ DX11LightScatterScene::DX11LightScatterScene() {
 }
 
 void DX11LightScatterScene::Render() {
-  float bgcolor[4] = { 1.0f, 1.0f, 0.9f, 1.0f };
-  g_context11->ClearRenderTargetView(g_backbuffer_rtv11, bgcolor);
+  float bgcolor[4] = { 0.3f, 0.3f, 0.2f, 1.0f };
+  g_context11->ClearRenderTargetView(rtv_main_canvas, bgcolor);
 
+  // Draw light mask
   g_context11->RSSetViewports(1, &g_viewport);
   g_context11->OMSetRenderTargets(1, &rtv_lightmask, nullptr);
   g_context11->PSSetConstantBuffers(0, 1, &cb_drawlight);
@@ -440,6 +457,18 @@ void DX11LightScatterScene::Render() {
   g_context11->IASetInputLayout(input_layout);
   g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
   g_context11->IASetVertexBuffers(0, 1, &vb_fsquad, &stride, &zero);
+  g_context11->Draw(6, 0);
+
+  // Combine
+  float zero4[] = { 0, 0, 0, 0 };
+  g_context11->ClearRenderTargetView(g_backbuffer_rtv11, zero4);
+  g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, nullptr);
+  g_context11->VSSetShader(vs_combine, nullptr, 0);
+  g_context11->PSSetShader(ps_combine, nullptr, 0);
+  g_context11->IASetVertexBuffers(0, 1, &vb_fsquad, &stride, &zero);
+  ID3D11ShaderResourceView* srvs[] = { srv_main_canvas, srv_lightmask };
+  g_context11->PSSetShaderResources(0, 2, srvs);
+  g_context11->PSSetConstantBuffers(0, 1, &cb_drawlight);
   g_context11->Draw(6, 0);
 
   g_swapchain11->Present(1, 0);
