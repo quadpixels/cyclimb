@@ -107,12 +107,10 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     printf("Current scene set to 2\n");
     g_scene_idx = 2; break;
   }
-  /*
   case '3': {
     printf("Current scene set to 3\n");
     g_scene_idx = 3; break;
   }
-  */
   default: break;
   }
 }
@@ -282,6 +280,7 @@ int main() {
   g_scenes[0] = new DX11ClearScreenScene();
   g_scenes[1] = new DX11HelloTriangleScene();
   g_scenes[2] = new DX11ChunksScene();
+  g_scenes[3] = new DX11LightScatterScene();
 
   // Message Loop
   MSG msg = { 0 };

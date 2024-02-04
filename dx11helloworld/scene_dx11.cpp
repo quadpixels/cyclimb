@@ -327,3 +327,29 @@ void DX11ChunksScene::Render() {
 void DX11ChunksScene::Update(float secs) {
 
 }
+
+DX11LightScatterScene::DX11LightScatterScene() {
+  // Shaders
+  ID3DBlob* error = nullptr;
+  UINT compileFlags = 0;
+  ID3DBlob* vs_shader_blob;
+  HRESULT hr;
+  hr = D3DCompileFromFile(L"shaders/shaders_drawlight.hlsl", nullptr, nullptr, "VSMain", "vs_4_0", compileFlags, 0, &vs_shader_blob, &error);
+  assert(SUCCEEDED(g_device11->CreateVertexShader(vs_shader_blob->GetBufferPointer(),
+    vs_shader_blob->GetBufferSize(), nullptr, &vs_drawlight)));
+  CE(hr, error);
+  ID3DBlob* ps_shader_blob;
+  hr = D3DCompileFromFile(L"shaders/shaders_drawlight.hlsl", nullptr, nullptr, "PSMain", "ps_4_0", compileFlags, 0, &ps_shader_blob, &error);
+  assert(SUCCEEDED(g_device11->CreatePixelShader(ps_shader_blob->GetBufferPointer(),
+    ps_shader_blob->GetBufferSize(), nullptr, &ps_drawlight)));
+  CE(hr, error);
+}
+
+void DX11LightScatterScene::Render() {
+  float bgcolor[4] = { 1.0f, 1.0f, 0.9f, 1.0f };
+  g_context11->ClearRenderTargetView(g_backbuffer_rtv11, bgcolor);
+  g_swapchain11->Present(1, 0);
+}
+
+void DX11LightScatterScene::Update(float secs) {
+}

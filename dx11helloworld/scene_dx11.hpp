@@ -65,4 +65,15 @@ public:
   ID3D11RenderTargetView* rtv_gbuffer;
 };
 
+class DX11LightScatterScene : public Scene {
+public:
+  DX11LightScatterScene();
+
+  ID3D11VertexShader* vs_drawlight, * vs_mask, * vs_combine;
+  ID3D11PixelShader* ps_drawlight, * ps_mask, * ps_combine;
+
+  void Render() override;
+  void Update(float secs) override;
+};
+
 #endif
