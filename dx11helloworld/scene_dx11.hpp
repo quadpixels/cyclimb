@@ -28,6 +28,7 @@ struct ConstantBufferDataDrawLightWithZ {
   float WIN_W, WIN_H;
   float light_x, light_y, light_r;
   DirectX::XMVECTOR light_color;
+  float global_alpha;
   float light_z;
 };
 

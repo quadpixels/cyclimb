@@ -9,6 +9,7 @@ cbuffer PerSceneCB : register(b0)
   float WIN_W, WIN_H;
   float light_x, light_y, light_r;
   float4 light_color;
+  float global_alpha;
   float light_z;  // Z coordinates
 }
 
@@ -32,7 +33,8 @@ float4 PSMain(PSInput input) : SV_TARGET
         float tx = input.position.x / WIN_W;
         float ty = input.position.y / WIN_H;
         float z = gbuffer.Sample(gbuffer_sampler, float2(tx, ty)).z;
-        if (light_z > z) { discard; }
+        float a = gbuffer.Sample(gbuffer_sampler, float2(tx, ty)).a;
+        // if (light_z > z && a != 0) { discard; }
 	return light_color;
   } else {
 	discard;

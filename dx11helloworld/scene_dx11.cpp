@@ -338,6 +338,7 @@ void DX11ChunksScene::Update(float secs) {
   elapsed_secs += secs;
   chunk_pos.x = 20 * cos(elapsed_secs * 3.14159) - 16;
   chunk_pos.y = 20 * sin(elapsed_secs * 3.14159) - 16;
+  chunk_pos.z = 40 * cos(elapsed_secs * 3.14159 * 0.5) + 40;
 }
 
 void CreateFullScreenQuadVertexBuffer(ID3D11Buffer** ppbuffer)
@@ -535,6 +536,23 @@ DX11LightScatterWithChunkScene::DX11LightScatterWithChunkScene(DX11ChunksScene* 
     ps_shader_blob_drawlight->GetBufferSize(), nullptr, &ps_drawlight)));
   CE(hr, error);
 
+  ID3DBlob* vs_shader_blob_combine;
+  ID3DBlob* ps_shader_blob_combine;
+  hr = D3DCompileFromFile(L"shaders/shaders_combine_withdepth.hlsl",
+    nullptr, nullptr,
+    "VSMain", "vs_4_0", compileFlags, 0, &vs_shader_blob_combine, &error);
+  if (error) {
+    printf("Error building vs: %s\n", error->GetBufferPointer());
+  }
+  assert(SUCCEEDED(g_device11->CreateVertexShader(vs_shader_blob_combine->GetBufferPointer(),
+    vs_shader_blob_combine->GetBufferSize(), nullptr, &vs_combine)));
+
+  hr = D3DCompileFromFile(L"shaders/shaders_combine_withdepth.hlsl",
+    nullptr, nullptr,
+    "PSMain", "ps_4_0", compileFlags, 0, &ps_shader_blob_combine, &error);
+  assert(SUCCEEDED(g_device11->CreatePixelShader(ps_shader_blob_combine->GetBufferPointer(),
+    ps_shader_blob_combine->GetBufferSize(), nullptr, &ps_combine)));
+
   // Draw light
   {
     D3D11_BUFFER_DESC buf_desc{};
@@ -575,7 +593,7 @@ DX11LightScatterWithChunkScene::DX11LightScatterWithChunkScene(DX11ChunksScene* 
 
 void DX11LightScatterWithChunkScene::Render() {
   chunk_scene->do_Render();
-  ID3D11RenderTargetView* null_rtvs[] = { nullptr, nullptr };
+  ID3D11RenderTargetView* null_rtvs[] = { nullptr, nullptr, nullptr };
   g_context11->OMSetRenderTargets(2, null_rtvs, nullptr);
 
   // Draw light
@@ -593,6 +611,26 @@ void DX11LightScatterWithChunkScene::Render() {
   g_context11->OMSetRenderTargets(1, &(lightscatter_scene->rtv_lightmask), nullptr);
   g_context11->Draw(6, 0);
 
+  // Combine
+  g_context11->CopyResource(lightscatter_scene->main_canvas, g_backbuffer);
+  g_context11->OMSetRenderTargets(2, null_rtvs, nullptr);
+
+  g_context11->VSSetShader(vs_combine, nullptr, 0);
+  g_context11->PSSetShader(ps_combine, nullptr, 0);
+  ID3D11ShaderResourceView* srvs[] = {
+    lightscatter_scene->srv_main_canvas,
+    lightscatter_scene->srv_lightmask,
+    chunk_scene->srv_gbuffer
+  };
+  g_context11->PSSetConstantBuffers(0, 1, &cb_drawlight);
+  g_context11->IASetVertexBuffers(0, 1, &vb_fsquad, &stride, &offset);
+  g_context11->PSSetSamplers(0, 1, &sampler);
+  g_context11->PSSetShaderResources(0, 3, srvs);
+  g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, nullptr);
+  g_context11->Draw(6, 0);
+
+  g_context11->OMSetRenderTargets(3, null_rtvs, nullptr);
+
   g_swapchain11->Present(1, 0);
 }
 
@@ -601,22 +639,33 @@ void DX11LightScatterWithChunkScene::Update(float secs) {
 
   // Manually calculate the light source's on-screen position
   glm::vec3 world_pos = chunk_scene->chunk_pos + glm::vec3(16, 16, 16);
+  world_pos.z *= -1;
   glm::mat4 V = chunk_scene->camera->GetViewMatrix();
   glm::mat4 P = glm::perspective(60.0f * 3.14159f / 180.0f, WIN_W * 1.0f / WIN_H, 0.1f, 499.0f);
   glm::vec4 clip_pos = P * V * glm::vec4(world_pos, 1.0f);
   float x = (clip_pos.x / clip_pos.w + 1.0f) * 0.5f * WIN_W;
-  float y = (1.0f - (clip_pos.y / clip_pos.w + 1.0f) * 0.5f) * WIN_H;
+  float y = WIN_H - (clip_pos.y / clip_pos.w + 1.0f) * 0.5f * WIN_H;
+
+  glm::vec4 temp1 = glm::vec4(world_pos, 1);
+  temp1.x -= 16;
+  temp1 = P * V * temp1;
+  glm::vec4 temp2 = glm::vec4(world_pos, 1);
+  temp2.x += 16;
+  temp2 = P * V * temp2;
+  float x2 = (temp2.x / temp2.w + 1.0f) * 0.5f * WIN_W;
+  float x1 = (temp1.x / temp1.w + 1.0f) * 0.5f * WIN_W;
 
   h_cb_drawlight.light_x = x;
   h_cb_drawlight.light_y = y;
-  h_cb_drawlight.light_r = 100.0f;
+  h_cb_drawlight.light_r = x2 - x1;
   h_cb_drawlight.WIN_H = WIN_H * 1.0f;
   h_cb_drawlight.WIN_W = WIN_W * 1.0f;
-  h_cb_drawlight.light_color.m128_f32[0] = 1.0f;
+  h_cb_drawlight.light_color.m128_f32[0] = 0.0f;
   h_cb_drawlight.light_color.m128_f32[1] = 1.0f;
   h_cb_drawlight.light_color.m128_f32[2] = 1.0f;
   h_cb_drawlight.light_color.m128_f32[3] = 1.0f;
-  h_cb_drawlight.light_z = world_pos.z * (-1.0f);
+  h_cb_drawlight.global_alpha = 1.0f;
+  h_cb_drawlight.light_z = -world_pos.z;  // GL to DX coord
 
   D3D11_MAPPED_SUBRESOURCE mapped;
   CE(g_context11->Map(cb_drawlight, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
