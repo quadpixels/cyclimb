@@ -53,7 +53,7 @@ ID3D11RenderTargetView* g_backbuffer_rtv11;
 D3D11_VIEWPORT g_viewport, g_viewport_shadowmap;
 D3D11_RECT g_scissor_rect;
 
-static Scene* g_scenes[4];
+static Scene* g_scenes[5];
 static int g_scene_index = 0;
 
 // DX11路径里，这两个CB已经硬编码成全局变量了 :(
@@ -110,6 +110,10 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   case '3': {
     printf("Current scene set to 3\n");
     g_scene_idx = 3; break;
+  }
+  case '4': {
+    printf("Current scene set to 4\n");
+    g_scene_idx = 4; break;
   }
   default: break;
   }
@@ -270,7 +274,39 @@ void InitDX11() {
   g_scissor_rect.right = WIN_W;
 };
 
+// Mimik MVP transformation on the CPU side
+void MyTest() {
+  glm::vec4 world_pos(16.5, 15.5, -5.5, 1);
+
+  // Column major of this view matrix
+  // | 1.00, 0.00, 0.00,  0.00 |
+  // | 0.00, 1.00, 0.00,  0.00 |
+  // | 0.00, 0.00, 1.00, 80.00 |
+  // | 0.00, 0.00, 0.00,  1.00 |
+  glm::mat4 v(1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 80, 1);
+
+  // Column major of this projection matrix
+  // | 1.03923, 0.00,    0.00,     0.00    |
+  // | 0.00,    1.73205, 0.00,     0.00    |
+  // | 0.00,    0.00,    1.00201, -1.00201 |
+  // | 0.00,    0.00,    1.00,     0.00    |
+  glm::mat4 p(1.03923, 0, 0, 0,
+    0, 1.73205, 0, 0,
+    0, 0, 1.00201, 1,
+    0, 0, -1.00201, 0);
+
+  glm::mat4 p1 = glm::perspective(60.0f * 3.14159f / 180.0f, WIN_W * 1.0f / WIN_H, 0.1f, 499.0f);
+
+  glm::vec4 clip_pos1 = p * v * world_pos;
+  glm::vec4 clip_pos2 = p1 * v * world_pos;  // 相比起 DX 的结果，z 与 w 各需要乘以 -1
+}
+
 int main() {
+  MyTest();
+
   CreateCyclimbWindow();
   BOOL x = ShowWindow(g_hwnd, SW_RESTORE);
   printf("ShowWindow returns %d, g_hwnd=%X\n", x, int(g_hwnd));
@@ -279,8 +315,11 @@ int main() {
 
   g_scenes[0] = new DX11ClearScreenScene();
   g_scenes[1] = new DX11HelloTriangleScene();
-  g_scenes[2] = new DX11ChunksScene();
-  g_scenes[3] = new DX11LightScatterScene();
+  DX11ChunksScene* chunks_scene = new DX11ChunksScene();
+  g_scenes[2] = chunks_scene;
+  DX11LightScatterScene* lightscatter_scene = new DX11LightScatterScene();
+  g_scenes[3] = lightscatter_scene;
+  g_scenes[4] = new DX11LightScatterWithChunkScene(chunks_scene, lightscatter_scene);
 
   // Message Loop
   MSG msg = { 0 };
