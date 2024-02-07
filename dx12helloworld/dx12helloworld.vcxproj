@@ -159,6 +159,7 @@
     <ClCompile Include="DX12ChunksScene.cpp" />
     <ClCompile Include="DX12ClearScreenScene.cpp" />
     <ClCompile Include="DX12HelloTriangleScene.cpp" />
+    <ClCompile Include="DX12LightScatterScene.cpp" />
     <ClCompile Include="DX12TextScene.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="utils.cpp" />

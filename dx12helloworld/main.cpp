@@ -27,7 +27,7 @@ ID3D12Resource* g_rendertargets[FRAME_COUNT];
 unsigned g_rtv_descriptor_size;
 int g_frame_index;
 
-static Scene* g_scenes[4];
+static Scene* g_scenes[5];
 static int g_scene_idx = 0;
 
 // Override the following functions for DX12
@@ -174,6 +174,10 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     printf("Current scene set to 3\n");
     g_scene_idx = 3; break;
   }
+  case '4': {
+    printf("Current scene set to 4\n");
+    g_scene_idx = 4; break;
+  }
   default: break;
   }
 }
@@ -268,6 +272,7 @@ int main() {
   g_scenes[1] = new DX12HelloTriangleScene();
   g_scenes[2] = new DX12ChunksScene();
   g_scenes[3] = new DX12TextScene();
+  g_scenes[4] = new DX12LightScatterScene();
 
   // Main message loop
   g_last_ms = MillisecondsNow();

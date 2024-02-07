@@ -171,4 +171,17 @@ private:
   TextPass* text_pass;
 };
 
+class DX12LightScatterScene : public Scene {
+public:
+  DX12LightScatterScene();
+  void Render() override;
+  void Update(float secs) override;
+
+  ID3D12CommandAllocator* command_allocator;
+  ID3D12GraphicsCommandList* command_list;
+  ID3DBlob* ps_drawlight, * vs_drawlight;
+  ID3D12RootSignature* root_signature;
+  ID3D12PipelineState* pipeline_state;
+};
+
 #endif
