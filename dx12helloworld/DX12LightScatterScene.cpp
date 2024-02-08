@@ -12,6 +12,7 @@
 using Microsoft::WRL::ComPtr;
 
 extern int WIN_W, WIN_H;
+extern int FRAME_COUNT;
 extern ID3D12Device* g_device12;
 extern int g_frame_index;
 extern ID3D12CommandQueue* g_command_queue;
@@ -34,21 +35,55 @@ DX12LightScatterScene::DX12LightScatterScene() {
   D3DCompileFromFile(L"shaders/shaders_drawlight.hlsl", nullptr, nullptr,
     "VSMain", "vs_4_0", compile_flags, 0, &vs_drawlight, &error);
   if (error) {
-    printf("Error compiling VS: %s\n", error->GetBufferPointer());
+    printf("Error compiling VS: %s\n", (char*)error->GetBufferPointer());
   }
   D3DCompileFromFile(L"shaders/shaders_drawlight.hlsl", nullptr, nullptr,
     "PSMain", "ps_4_0", compile_flags, 0, &ps_drawlight, &error);
   if (error) {
-    printf("Error compiling PS: %s\n", error->GetBufferPointer());
+    printf("Error compiling PS: %s\n", (char*)error->GetBufferPointer());
+  }
+
+  D3DCompileFromFile(L"shaders/shaders_combine.hlsl", nullptr, nullptr,
+    "VSMain", "vs_4_0", compile_flags, 0, &vs_combine, &error);
+  if (error) {
+    printf("Error compiling VS: %s\n", (char*)error->GetBufferPointer());
+  }
+  D3DCompileFromFile(L"shaders/shaders_combine.hlsl", nullptr, nullptr,
+    "PSMain", "ps_4_0", compile_flags, 0, &ps_combine, &error);
+  if (error) {
+    printf("Error compiling PS: %s\n", (char*)error->GetBufferPointer());
   }
 
   // Root signature
-  CD3DX12_ROOT_PARAMETER1 root_parameters[1];
+  CD3DX12_ROOT_PARAMETER1 root_parameters[2];
   root_parameters[0].InitAsConstantBufferView(0, 0,  // PerSceneCB at b0
     D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_ALL);
+
+  // SRV must be descriptor table
+  CD3DX12_DESCRIPTOR_RANGE1 range;
+  range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE);
+  root_parameters[1].InitAsDescriptorTable(1, &range, D3D12_SHADER_VISIBILITY_ALL);
+
+  // Sampler
+  D3D12_STATIC_SAMPLER_DESC sampler = {};
+  sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+  sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+  sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+  sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+  sampler.MipLODBias = 0;
+  sampler.MaxAnisotropy = 4;
+  sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+  sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+  sampler.MinLOD = 0.0f;
+  sampler.MaxLOD = D3D12_FLOAT32_MAX;
+  sampler.ShaderRegister = 0;
+  sampler.RegisterSpace = 0;
+  sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
   CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC root_sig_desc;
-  root_sig_desc.Init_1_1(_countof(root_parameters), root_parameters, 0,
-    NULL, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+  root_sig_desc.Init_1_1(_countof(root_parameters), root_parameters, 
+    1, &sampler,
+    D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
   ComPtr<ID3DBlob> signature;
   HRESULT hr = D3DX12SerializeVersionedRootSignature(&root_sig_desc,
     D3D_ROOT_SIGNATURE_VERSION_1_1,
@@ -62,6 +97,7 @@ DX12LightScatterScene::DX12LightScatterScene() {
     signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
   root_signature->SetName(L"Root signature");
 
+  // PSO for drawlight
   D3D12_INPUT_ELEMENT_DESC input_element_desc[] = {
     { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
       D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -92,19 +128,23 @@ DX12LightScatterScene::DX12LightScatterScene() {
       .Count = 1,
     }
   };
-
   CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state_drawlight)));
+
+  // PSO for combine
+  pso_desc.VS = CD3DX12_SHADER_BYTECODE(vs_combine);
+  pso_desc.PS = CD3DX12_SHADER_BYTECODE(ps_combine);
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state_combine)));
 
   // RTV heap and SRV heap
   D3D12_DESCRIPTOR_HEAP_DESC srv_heap_desc = {};
-  srv_heap_desc.NumDescriptors = 2;
+  srv_heap_desc.NumDescriptors = 4;  // lightmask, main_canvas
   srv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   srv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   CE(g_device12->CreateDescriptorHeap(&srv_heap_desc, IID_PPV_ARGS(&srv_heap)));
   srv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
   D3D12_DESCRIPTOR_HEAP_DESC rtv_heap_desc = {};
-  rtv_heap_desc.NumDescriptors = 1;
+  rtv_heap_desc.NumDescriptors = 2;  // lightmask, main_canvas
   rtv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
   rtv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
   CE(g_device12->CreateDescriptorHeap(&rtv_heap_desc, IID_PPV_ARGS(&rtv_heap)));
@@ -124,6 +164,33 @@ DX12LightScatterScene::DX12LightScatterScene() {
   float zero4[] = { 0, 0, 0, 0 };
   CD3DX12_CLEAR_VALUE clear_value(DXGI_FORMAT_R8G8B8A8_UNORM, zero4);
   
+  // main_canvas
+  float main_canvas_clearcolor[] = { 1.0f, 0.8f, 0.8f, 1.0f };
+  CD3DX12_CLEAR_VALUE main_canvas_clearvalue(DXGI_FORMAT_R8G8B8A8_UNORM, main_canvas_clearcolor);
+  hr = g_device12->CreateCommittedResource(
+    &(keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT))),
+    D3D12_HEAP_FLAG_NONE,
+    &lightmask_desc,
+    D3D12_RESOURCE_STATE_COPY_SOURCE,
+    &main_canvas_clearvalue,
+    IID_PPV_ARGS(&main_canvas));
+  assert(SUCCEEDED(hr));
+  main_canvas->SetName(L"Main_Canvas for light scatter");
+
+  // Main canvas' SRV
+  D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+  srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+  srv_desc.Texture2D.MipLevels = 1;
+  CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_heap->GetCPUDescriptorHandleForHeapStart());
+  g_device12->CreateShaderResourceView(main_canvas, &srv_desc, srv_handle);
+
+  // main canvas' RTV
+  D3D12_RENDER_TARGET_VIEW_DESC rtv_desc = {};
+  CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_handle(rtv_heap->GetCPUDescriptorHandleForHeapStart());
+  g_device12->CreateRenderTargetView(main_canvas, nullptr, rtv_handle);
+
   hr = g_device12->CreateCommittedResource(
     &(keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT))),
     D3D12_HEAP_FLAG_NONE,
@@ -132,20 +199,16 @@ DX12LightScatterScene::DX12LightScatterScene() {
     &clear_value,
     IID_PPV_ARGS(&lightmask));
   assert(SUCCEEDED(hr));
+  lightmask->SetName(L"lightmask");
   
   // Lightmask's SRV
-  D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
-  srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-  srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-  srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-  srv_desc.Texture2D.MipLevels = 1;
-  CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_heap->GetCPUDescriptorHandleForHeapStart());
+  srv_handle.Offset(srv_descriptor_size);
   g_device12->CreateShaderResourceView(lightmask, &srv_desc, srv_handle);
 
   // Lightmask's RTV
-  D3D12_RENDER_TARGET_VIEW_DESC rtv_desc = {};
-  CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_handle(rtv_heap->GetCPUDescriptorHandleForHeapStart());
+  rtv_handle.Offset(rtv_descriptor_size);
   g_device12->CreateRenderTargetView(lightmask, nullptr, rtv_handle);
+
 
   // Vertex Buffer
   VertexUV verts[] = {
@@ -193,8 +256,6 @@ DX12LightScatterScene::DX12LightScatterScene() {
   srv_handle.Offset(srv_descriptor_size);
   D3D12_CONSTANT_BUFFER_VIEW_DESC cbv_desc{};
   cbv_desc.BufferLocation = cb_drawlight->GetGPUVirtualAddress();
-  cbv_desc.SizeInBytes = 256;  // must be a multiple of 256
-  g_device12->CreateConstantBufferView(&cbv_desc, srv_handle);
 
   //
   elapsed_secs = 0;
@@ -207,6 +268,17 @@ void DX12LightScatterScene::Render() {
 
   float bg_color[] = { 1.0f, 0.8f, 0.8f, 1.0f };
 
+  // Clear main canvas
+  CD3DX12_CPU_DESCRIPTOR_HANDLE maincanvas_handle_rtv(
+    rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    0, rtv_descriptor_size);
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    main_canvas,
+    D3D12_RESOURCE_STATE_COPY_SOURCE,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+  command_list->ClearRenderTargetView(maincanvas_handle_rtv, bg_color, 0, nullptr);
+
+  // Clear swapchain image
   CD3DX12_CPU_DESCRIPTOR_HANDLE swapchain_handle_rtv(
     g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
     g_frame_index, g_rtv_descriptor_size);
@@ -221,7 +293,7 @@ void DX12LightScatterScene::Render() {
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE lightmask_handle_rtv(
     rtv_heap->GetCPUDescriptorHandleForHeapStart(),
-    0, rtv_descriptor_size);
+    1, rtv_descriptor_size);
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     lightmask,
     D3D12_RESOURCE_STATE_COPY_SOURCE,
@@ -238,24 +310,45 @@ void DX12LightScatterScene::Render() {
   command_list->DrawInstanced(6, 1, 0, 0);
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    g_rendertargets[g_frame_index],
-    D3D12_RESOURCE_STATE_RENDER_TARGET,
-    D3D12_RESOURCE_STATE_COPY_DEST)));
-
-  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     lightmask,
     D3D12_RESOURCE_STATE_RENDER_TARGET,
-    D3D12_RESOURCE_STATE_COPY_SOURCE)));
-
-  command_list->CopyResource(g_rendertargets[g_frame_index], lightmask);
+    D3D12_RESOURCE_STATE_GENERIC_READ)));
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    g_rendertargets[g_frame_index],
-    D3D12_RESOURCE_STATE_COPY_DEST,
-    D3D12_RESOURCE_STATE_PRESENT)));
+    main_canvas,
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_GENERIC_READ)));
 
   CE(command_list->Close());
   g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
+
+  // Combine
+  CE(command_list->Reset(command_allocator, pipeline_state_combine));
+  command_list->SetDescriptorHeaps(1, &srv_heap);
+  command_list->SetGraphicsRootSignature(root_signature);
+  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  command_list->IASetVertexBuffers(0, 1, &vbv_fsquad);
+  command_list->SetGraphicsRootConstantBufferView(0, cb_drawlight->GetGPUVirtualAddress());
+  command_list->OMSetRenderTargets(1, &swapchain_handle_rtv, false, nullptr);
+  command_list->SetGraphicsRootDescriptorTable(1, srv_heap->GetGPUDescriptorHandleForHeapStart());
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissorrect);
+  command_list->DrawInstanced(6, 1, 0, 0);
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    main_canvas,
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    D3D12_RESOURCE_STATE_COPY_SOURCE)));
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    lightmask,
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    D3D12_RESOURCE_STATE_COPY_SOURCE)));
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_PRESENT)));
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
+
   CE(g_swapchain->Present(1, 0));
   WaitForPreviousFrame();
 }
@@ -264,7 +357,7 @@ void DX12LightScatterScene::Update(float secs) {
   elapsed_secs += secs;
   h_cb_drawlight.light_x = WIN_W * 0.5f + 120 * cos(elapsed_secs * 3.14159);
   h_cb_drawlight.light_y = WIN_H * 0.5f + 120 * sin(elapsed_secs * 3.14159);
-  h_cb_drawlight.light_r = 100.0f;
+  h_cb_drawlight.light_r = 30.0f;
   h_cb_drawlight.WIN_H = WIN_H * 1.0f;
   h_cb_drawlight.WIN_W = WIN_W * 1.0f;
   h_cb_drawlight.light_color.m128_f32[0] = 1.0f;

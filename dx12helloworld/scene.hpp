@@ -191,6 +191,7 @@ public:
   ID3DBlob* ps_drawlight, * vs_drawlight;
   ID3D12RootSignature* root_signature;
   ID3D12PipelineState* pipeline_state_drawlight;
+  ID3D12PipelineState* pipeline_state_combine;
 
   ID3D12DescriptorHeap* srv_heap;
   int srv_descriptor_size;
@@ -204,6 +205,9 @@ public:
   ID3D12Resource* cb_drawlight;
   ConstantBufferDataDrawLight h_cb_drawlight;
   float elapsed_secs;
+
+  ID3DBlob* ps_combine, * vs_combine;
+  ID3D12Resource* main_canvas;
 };
 
 #endif

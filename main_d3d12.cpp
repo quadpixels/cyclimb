@@ -20,7 +20,7 @@
 extern GraphicsAPI g_api;
 
 extern int WIN_W, WIN_H, SHADOW_RES;
-static const int FRAME_COUNT = 2;
+const int FRAME_COUNT = 2;
 
 extern bool init_done;
 extern HWND g_hwnd;
