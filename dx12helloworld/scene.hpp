@@ -173,6 +173,15 @@ private:
 
 class DX12LightScatterScene : public Scene {
 public:
+  struct ConstantBufferDataDrawLight {
+    float WIN_W, WIN_H;
+    float light_x, light_y, light_r;
+    DirectX::XMVECTOR light_color;
+    float global_alpha;
+  };
+  struct VertexUV {
+    float x, y, z, u, v;
+  };
   DX12LightScatterScene();
   void Render() override;
   void Update(float secs) override;
@@ -182,6 +191,19 @@ public:
   ID3DBlob* ps_drawlight, * vs_drawlight;
   ID3D12RootSignature* root_signature;
   ID3D12PipelineState* pipeline_state;
+
+  ID3D12DescriptorHeap* srv_heap;
+  int srv_descriptor_size;
+  ID3D12DescriptorHeap* rtv_heap;
+  int rtv_descriptor_size;
+
+  ID3D12Resource* lightmask;
+  ID3D12Resource* vb_fsquad;
+  D3D12_VERTEX_BUFFER_VIEW vbv_fsquad;
+
+  ID3D12Resource* cb_drawlight;
+  ConstantBufferDataDrawLight h_cb_drawlight;
+  float elapsed_secs;
 };
 
 #endif
