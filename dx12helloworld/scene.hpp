@@ -190,7 +190,7 @@ public:
   ID3D12GraphicsCommandList* command_list;
   ID3DBlob* ps_drawlight, * vs_drawlight;
   ID3D12RootSignature* root_signature;
-  ID3D12PipelineState* pipeline_state;
+  ID3D12PipelineState* pipeline_state_drawlight;
 
   ID3D12DescriptorHeap* srv_heap;
   int srv_descriptor_size;

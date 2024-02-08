@@ -93,7 +93,7 @@ DX12LightScatterScene::DX12LightScatterScene() {
     }
   };
 
-  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
+  CE(g_device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state_drawlight)));
 
   // RTV heap and SRV heap
   D3D12_DESCRIPTOR_HEAP_DESC srv_heap_desc = {};
@@ -202,7 +202,7 @@ DX12LightScatterScene::DX12LightScatterScene() {
 
 void DX12LightScatterScene::Render() {
   CE(command_allocator->Reset());
-  CE(command_list->Reset(command_allocator, pipeline_state));
+  CE(command_list->Reset(command_allocator, pipeline_state_drawlight));
   command_list->SetGraphicsRootSignature(root_signature);
 
   float bg_color[] = { 1.0f, 0.8f, 0.8f, 1.0f };
@@ -240,11 +240,20 @@ void DX12LightScatterScene::Render() {
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_RENDER_TARGET,
-    D3D12_RESOURCE_STATE_PRESENT)));
+    D3D12_RESOURCE_STATE_COPY_DEST)));
+
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     lightmask,
     D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATE_COPY_SOURCE)));
+
+  command_list->CopyResource(g_rendertargets[g_frame_index], lightmask);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_COPY_DEST,
+    D3D12_RESOURCE_STATE_PRESENT)));
+
   CE(command_list->Close());
   g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
   CE(g_swapchain->Present(1, 0));
