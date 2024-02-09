@@ -27,6 +27,7 @@ ID3D12Fence* g_fence;
 int g_fence_value = 0;
 HANDLE g_fence_event;
 int g_frame_index;
+void WaitForPreviousFrame();
 
 // Override the following functions for DX12 and to make the compiler happy
 GraphicsAPI g_api = GraphicsAPI::ClimbD3D12;
@@ -164,12 +165,13 @@ void InitSwapchain() {
       g_rendertargets[i]->SetName(buf);
 
       g_device12->CreateRenderTargetView(g_rendertargets[i], nullptr, rtv_handle);
+      rtv_handle.Offset(g_rtv_descriptor_size);
     }
     printf("Created backbuffers' RTVs\n");
   }
 
   CE(g_factory->MakeWindowAssociation(g_hwnd, DXGI_MWA_NO_ALT_ENTER));
-  g_frame_index = g_swapchain->GetCurrentBackBufferIndex();
+  WaitForPreviousFrame();
 }
 
 void WaitForPreviousFrame() {
@@ -251,6 +253,8 @@ int main() {
   InitDeviceAndCommandQ();
   InitSwapchain();
   ShowWindow(g_hwnd, SW_RESTORE);
+
+  g_scenes[0] = new TriangleScene();
 
   // Main message loop
   g_last_ms = MillisecondsNow();

@@ -21,6 +21,9 @@
     <ClCompile Include="..\util.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="DXRTriangleScene.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="scene.hpp">
