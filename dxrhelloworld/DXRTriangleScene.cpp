@@ -4,6 +4,7 @@
 #include <dxgi1_4.h>
 #include <d3dcompiler.h>
 
+extern int WIN_W, WIN_H;
 extern ID3D12Device5* g_device12;
 extern ID3D12DescriptorHeap* g_rtv_heap;
 extern int g_rtv_descriptor_size;
@@ -114,6 +115,15 @@ void TriangleScene::Render() {
     D3D12_RESOURCE_STATE_PRESENT,
     D3D12_RESOURCE_STATE_RENDER_TARGET)));
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+  command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
+  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, -100.0f, 100.0f);
+  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissor);
+  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  command_list->IASetVertexBuffers(0, 1, &vbv_triangle);
+  command_list->DrawInstanced(3, 1, 0, 0);
+
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_RENDER_TARGET,
