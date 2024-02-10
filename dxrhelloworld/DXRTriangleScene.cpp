@@ -20,11 +20,12 @@ extern IDXGISwapChain3* g_swapchain;
 
 void WaitForPreviousFrame();
 
-TriangleScene::TriangleScene() : root_sig(nullptr) {
+TriangleScene::TriangleScene() : root_sig(nullptr), is_raster(false) {
   InitDX12Stuff();
   CreateAS();
   CreateRaytracingPipeline();
   CreateRaytracingOutputBufferAndSRVs();
+  CreateShaderBindingTable();
 }
 
 void TriangleScene::InitDX12Stuff() {
@@ -591,6 +592,8 @@ void TriangleScene::CreateRaytracingPipeline() {
   pipeline_desc.pSubobjects = subobjects.data();
   assert(SUCCEEDED(g_device12->CreateStateObject(&pipeline_desc, IID_PPV_ARGS(&rt_state_object))));
   printf("Created RT pipeline state object.\n");
+
+  assert(SUCCEEDED(rt_state_object->QueryInterface(IID_PPV_ARGS(&rt_state_object_props))));
 }
 
 void TriangleScene::CreateRaytracingOutputBufferAndSRVs() {
@@ -632,6 +635,64 @@ void TriangleScene::CreateRaytracingOutputBufferAndSRVs() {
   g_device12->CreateShaderResourceView(nullptr, &srv_desc, srv_handle);
 }
 
+static int RoundUp(int x, int align) {
+  return align * ((x - 1) / align + 1);
+}
+
+void TriangleScene::CreateShaderBindingTable() {
+  CD3DX12_GPU_DESCRIPTOR_HANDLE srv_uav_handle(srv_uav_heap->GetGPUDescriptorHandleForHeapStart());
+  // Entry[0]: { L"RayGen", { heap pointer } }
+  // Entry[1]: { L"Miss", {} }
+  // Entry[2]: { L"HitGroup", { vertex buffer } }
+  const wchar_t* entrypoints[] = { L"RayGen", L"Miss", L"HitGroup" };
+  std::vector<std::vector<void*>> inputdatas = {
+    { (void*)(srv_uav_handle.ptr) },
+    {},
+    { (void*)vb_triangle->GetGPUVirtualAddress() }
+  };
+  int entry_sizes[3];
+  for (int i = 0; i < 3; i++) {
+    int s = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + 8 * inputdatas[i].size();
+    entry_sizes[i] = RoundUp(s, D3D12_RAYTRACING_SHADER_TABLE_BYTE_ALIGNMENT);
+  }
+  int sbt_size = RoundUp(entry_sizes[0] + entry_sizes[1] + entry_sizes[2], 256);
+  D3D12_RESOURCE_DESC desc{};
+  desc.DepthOrArraySize = 1;
+  desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  desc.Format = DXGI_FORMAT_UNKNOWN;
+  desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+  desc.Width = sbt_size;
+  desc.Height = 1;
+  desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  desc.SampleDesc.Count = 1;
+  desc.SampleDesc.Quality = 0;
+  desc.MipLevels = 1;
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE, &desc,
+    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+    IID_PPV_ARGS(&rt_sbt_storage)));
+  printf("Created SBT storage.\n");
+
+  UINT8* ptr;
+  assert(SUCCEEDED(rt_sbt_storage->Map(0, nullptr, (void**)(&ptr))));
+  void* id_raygen = rt_state_object_props->GetShaderIdentifier(L"RayGen");
+  memcpy(ptr, id_raygen, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  memcpy(ptr + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES, inputdatas[0].data(), inputdatas[0].size() * 8);
+  ptr += entry_sizes[0];
+  
+  void* id_miss = rt_state_object_props->GetShaderIdentifier(L"Miss");
+  memcpy(ptr, id_miss, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  memcpy(ptr + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES, inputdatas[1].data(), inputdatas[1].size() * 8);
+  ptr += entry_sizes[1];
+
+  void* id_hit = rt_state_object_props->GetShaderIdentifier(L"HitGroup");
+  memcpy(ptr, id_hit, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  memcpy(ptr + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES, inputdatas[2].data(), inputdatas[2].size() * 8);
+  ptr += entry_sizes[2];
+  rt_sbt_storage->Unmap(0, nullptr);
+}
+
 void TriangleScene::Render() {
   CE(command_allocator->Reset());
   CE(command_list->Reset(command_allocator, pipeline_state));
@@ -647,13 +708,53 @@ void TriangleScene::Render() {
     D3D12_RESOURCE_STATE_RENDER_TARGET)));
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
   command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
-  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, -100.0f, 100.0f);
-  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
-  command_list->RSSetViewports(1, &viewport);
-  command_list->RSSetScissorRects(1, &scissor);
-  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-  command_list->IASetVertexBuffers(0, 1, &vbv_triangle);
-  command_list->DrawInstanced(3, 1, 0, 0);
+
+  if (is_raster) {
+    D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, -100.0f, 100.0f);
+    D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
+    command_list->RSSetViewports(1, &viewport);
+    command_list->RSSetScissorRects(1, &scissor);
+    command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    command_list->IASetVertexBuffers(0, 1, &vbv_triangle);
+    command_list->DrawInstanced(3, 1, 0, 0);
+  }
+  else {
+    command_list->SetDescriptorHeaps(1, &srv_uav_heap);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      rt_output_resource,
+      D3D12_RESOURCE_STATE_COPY_SOURCE,
+      D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
+
+    D3D12_DISPATCH_RAYS_DESC desc{};
+    desc.RayGenerationShaderRecord.StartAddress = rt_sbt_storage->GetGPUVirtualAddress();
+    desc.RayGenerationShaderRecord.SizeInBytes = 64;
+    desc.MissShaderTable.StartAddress = rt_sbt_storage->GetGPUVirtualAddress() + 64;
+    desc.MissShaderTable.SizeInBytes = 64;
+    desc.MissShaderTable.StrideInBytes = 64;
+    desc.HitGroupTable.StartAddress = rt_sbt_storage->GetGPUVirtualAddress() + 128;
+    desc.HitGroupTable.SizeInBytes = 64;
+    desc.HitGroupTable.StrideInBytes = 64;
+    desc.Width = WIN_W;
+    desc.Height = WIN_H;
+    desc.Depth = 1;
+
+    command_list->SetPipelineState1(rt_state_object);
+    command_list->DispatchRays(&desc);
+    
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      rt_output_resource,
+      D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+      D3D12_RESOURCE_STATE_COPY_SOURCE)));
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      g_rendertargets[g_frame_index],
+      D3D12_RESOURCE_STATE_RENDER_TARGET,
+      D3D12_RESOURCE_STATE_COPY_DEST)));
+    command_list->CopyResource(g_rendertargets[g_frame_index], rt_output_resource);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      g_rendertargets[g_frame_index],
+      D3D12_RESOURCE_STATE_COPY_DEST,
+      D3D12_RESOURCE_STATE_RENDER_TARGET)));
+  }
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
