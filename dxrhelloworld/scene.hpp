@@ -20,6 +20,7 @@ public:
   void InitDX12Stuff();
   void CreateAS();
   void CreateRaytracingPipeline();
+  void CreateRaytracingOutputBufferAndSRVs();
 
   void Render() override;
   void Update(float secs) override;
@@ -42,4 +43,7 @@ public:
   D3D12_HIT_GROUP_DESC hitgroup_desc;
   ID3D12RootSignature* dummy_global_rootsig, * dummy_local_rootsig;
   ID3D12StateObject* rt_state_object;
+
+  ID3D12Resource* rt_output_resource;
+  ID3D12DescriptorHeap* srv_uav_heap;
 };

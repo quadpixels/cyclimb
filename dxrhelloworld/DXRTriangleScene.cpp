@@ -24,6 +24,7 @@ TriangleScene::TriangleScene() : root_sig(nullptr) {
   InitDX12Stuff();
   CreateAS();
   CreateRaytracingPipeline();
+  CreateRaytracingOutputBufferAndSRVs();
 }
 
 void TriangleScene::InitDX12Stuff() {
@@ -590,6 +591,45 @@ void TriangleScene::CreateRaytracingPipeline() {
   pipeline_desc.pSubobjects = subobjects.data();
   assert(SUCCEEDED(g_device12->CreateStateObject(&pipeline_desc, IID_PPV_ARGS(&rt_state_object))));
   printf("Created RT pipeline state object.\n");
+}
+
+void TriangleScene::CreateRaytracingOutputBufferAndSRVs() {
+  // Output buffer
+  D3D12_RESOURCE_DESC desc{};
+  desc.DepthOrArraySize = 1;
+  desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+  desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+  desc.Width = WIN_W;
+  desc.Height = WIN_H;
+  desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+  desc.MipLevels = 1;
+  desc.SampleDesc.Count = 1;
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+    D3D12_HEAP_FLAG_NONE, &desc,
+    D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr,
+    IID_PPV_ARGS(&rt_output_resource)));
+
+  // SRV/UAV heap
+  D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
+  heap_desc.NumDescriptors = 2;
+  heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+  heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  CE(g_device12->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&srv_uav_heap)));
+
+  CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart());
+  D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc{};
+  uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+  g_device12->CreateUnorderedAccessView(rt_output_resource, nullptr, &uav_desc, srv_handle);
+
+  srv_handle.Offset(g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
+  D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+  srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+  srv_desc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+  srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  srv_desc.RaytracingAccelerationStructure.Location = tlas_result->GetGPUVirtualAddress();
+  g_device12->CreateShaderResourceView(nullptr, &srv_desc, srv_handle);
 }
 
 void TriangleScene::Render() {
