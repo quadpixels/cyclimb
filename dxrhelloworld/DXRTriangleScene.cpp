@@ -1,9 +1,13 @@
-#include "scene.hpp"
-#include <util.hpp>
+#include <sstream>
+
 #include <d3dx12.h>
 #include <DirectXMath.h>
 #include <dxgi1_4.h>
 #include <d3dcompiler.h>
+#include <dxcapi.h>
+
+#include "scene.hpp"
+#include <util.hpp>
 
 extern int WIN_W, WIN_H;
 extern ID3D12Device5* g_device12;
@@ -19,6 +23,7 @@ void WaitForPreviousFrame();
 TriangleScene::TriangleScene() : root_sig(nullptr) {
   InitDX12Stuff();
   CreateAS();
+  CreateRaytracingPipeline();
 }
 
 void TriangleScene::InitDX12Stuff() {
@@ -104,6 +109,24 @@ void TriangleScene::InitDX12Stuff() {
     vbv_triangle.StrideInBytes = sizeof(Vertex);
     vbv_triangle.SizeInBytes = sizeof(triangleVerts);
   }
+
+  // Dummy global and local rootsigs
+  {
+    D3D12_ROOT_SIGNATURE_DESC dummy_desc{};
+    dummy_desc.NumParameters = 0;
+    dummy_desc.pParameters = nullptr;
+    dummy_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    assert(SUCCEEDED(D3D12SerializeRootSignature(&dummy_desc, D3D_ROOT_SIGNATURE_VERSION_1,
+      &signature, &error)));
+    assert(SUCCEEDED(g_device12->CreateRootSignature(0,
+      signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&dummy_global_rootsig))));
+
+    dummy_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+    assert(SUCCEEDED(D3D12SerializeRootSignature(&dummy_desc, D3D_ROOT_SIGNATURE_VERSION_1,
+      &signature, &error)));
+    assert(SUCCEEDED(g_device12->CreateRootSignature(0,
+      signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&dummy_local_rootsig))));
+  }
 }
 
 void TriangleScene::CreateAS() {
@@ -158,6 +181,7 @@ void TriangleScene::CreateAS() {
     D3D12_HEAP_FLAG_NONE,
     &result_desc, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
     nullptr, IID_PPV_ARGS(&blas_result)));
+  blas_result->SetName(L"BLAS result");
 
   D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build_desc{};
   build_desc.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
@@ -205,8 +229,9 @@ void TriangleScene::CreateAS() {
   CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
     D3D12_HEAP_FLAG_NONE,
-    &tlas_result_desc, D3D12_RESOURCE_STATE_COMMON,
+    &tlas_result_desc, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
     nullptr, IID_PPV_ARGS(&tlas_result)));
+  tlas_result->SetName(L"TLAS result");
 
   D3D12_RESOURCE_DESC tlas_instance_desc = scratch_desc;
   tlas_instance_desc.Width = instance_desc_size;
@@ -249,6 +274,322 @@ void TriangleScene::CreateAS() {
   g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
   WaitForPreviousFrame();
   printf("Built TLAS.\n");
+}
+
+IDxcBlob* CompileShaderLibrary(LPCWSTR fileName) {
+  static IDxcCompiler* pCompiler = nullptr;
+  static IDxcLibrary* pLibrary = nullptr;
+  static IDxcIncludeHandler* dxcIncludeHandler;
+
+  HRESULT hr;
+
+  // Initialize the DXC compiler and compiler helper
+  if (!pCompiler)
+  {
+    CE(DxcCreateInstance(CLSID_DxcCompiler, __uuidof(IDxcCompiler), reinterpret_cast<void**>(&pCompiler)));
+    CE(DxcCreateInstance(CLSID_DxcLibrary, __uuidof(IDxcLibrary), reinterpret_cast<void**>(&pLibrary)));
+    CE(pLibrary->CreateIncludeHandler(&dxcIncludeHandler));
+  }
+  // Open and read the file
+  std::ifstream shaderFile(fileName);
+  if (shaderFile.good() == false)
+  {
+    throw std::logic_error("Cannot find shader file");
+  }
+  std::stringstream strStream;
+  strStream << shaderFile.rdbuf();
+  std::string sShader = strStream.str();
+
+  // Create blob from the string
+  IDxcBlobEncoding* pTextBlob;
+  CE(pLibrary->CreateBlobWithEncodingFromPinned(
+    LPBYTE(sShader.c_str()), static_cast<uint32_t>(sShader.size()), 0, &pTextBlob));
+
+  // Compile
+  IDxcOperationResult* pResult;
+  CE(pCompiler->Compile(pTextBlob, fileName, L"", L"lib_6_3", nullptr, 0, nullptr, 0,
+    dxcIncludeHandler, &pResult));
+
+  // Verify the result
+  HRESULT resultCode;
+  CE(pResult->GetStatus(&resultCode));
+  if (FAILED(resultCode))
+  {
+    IDxcBlobEncoding* pError;
+    hr = pResult->GetErrorBuffer(&pError);
+    if (FAILED(hr))
+    {
+      throw std::logic_error("Failed to get shader compiler error");
+    }
+
+    // Convert error blob to a string
+    std::vector<char> infoLog(pError->GetBufferSize() + 1);
+    memcpy(infoLog.data(), pError->GetBufferPointer(), pError->GetBufferSize());
+    infoLog[pError->GetBufferSize()] = 0;
+
+    std::string errorMsg = "Shader Compiler Error:\n";
+    errorMsg.append(infoLog.data());
+
+    MessageBoxA(nullptr, errorMsg.c_str(), "Error!", MB_OK);
+    throw std::logic_error("Failed compile shader");
+  }
+
+  IDxcBlob* pBlob;
+  CE(pResult->GetResult(&pBlob));
+  return pBlob;
+}
+
+void TriangleScene::CreateRaytracingPipeline() {
+  raygen_library = CompileShaderLibrary(L"shaders/RayGen.hlsl");
+  miss_library = CompileShaderLibrary(L"shaders/Miss.hlsl");
+  hit_library = CompileShaderLibrary(L"shaders/Hit.hlsl");
+
+  raygen_export = {};
+  raygen_export.Name = L"RayGen";
+  raygen_export.ExportToRename = nullptr;
+  raygen_export.Flags = D3D12_EXPORT_FLAG_NONE;
+  raygen_lib_desc = {};
+  raygen_lib_desc.DXILLibrary.BytecodeLength = raygen_library->GetBufferSize();
+  raygen_lib_desc.DXILLibrary.pShaderBytecode = raygen_library->GetBufferPointer();
+  raygen_lib_desc.NumExports = 1;
+  raygen_lib_desc.pExports = &raygen_export;
+
+  miss_export = {};
+  miss_export.Name = L"Miss";
+  miss_export.ExportToRename = nullptr;
+  miss_export.Flags = D3D12_EXPORT_FLAG_NONE;
+  miss_lib_desc = {};
+  miss_lib_desc.DXILLibrary.BytecodeLength = miss_library->GetBufferSize();
+  miss_lib_desc.DXILLibrary.pShaderBytecode = miss_library->GetBufferPointer();
+  miss_lib_desc.NumExports = 1;
+  miss_lib_desc.pExports = &miss_export;
+
+  hit_export = {};
+  hit_export.Name = L"ClosestHit";
+  hit_export.ExportToRename = nullptr;
+  hit_export.Flags = D3D12_EXPORT_FLAG_NONE;
+  hit_lib_desc = {};
+  hit_lib_desc.DXILLibrary.BytecodeLength = hit_library->GetBufferSize();
+  hit_lib_desc.DXILLibrary.pShaderBytecode = hit_library->GetBufferPointer();
+  hit_lib_desc.NumExports = 1;
+  hit_lib_desc.pExports = &hit_export;
+
+  // Local root signatures
+  // 1. Raygen
+  D3D12_ROOT_PARAMETER root_params_raygen[1];
+  D3D12_DESCRIPTOR_RANGE ranges_raygen[2];
+  ranges_raygen[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+  ranges_raygen[0].NumDescriptors = 1;
+  ranges_raygen[0].BaseShaderRegister = 0;  // 对应 "register(b0)"
+  ranges_raygen[0].RegisterSpace = 0;
+  ranges_raygen[0].OffsetInDescriptorsFromTableStart = 0;
+  ranges_raygen[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+  ranges_raygen[1].NumDescriptors = 1;
+  ranges_raygen[1].BaseShaderRegister = 0;  // 对应 "register(b0)"
+  ranges_raygen[1].RegisterSpace = 0;
+  ranges_raygen[1].OffsetInDescriptorsFromTableStart = 1;
+  root_params_raygen[0] = {};
+  root_params_raygen[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+  root_params_raygen[0].DescriptorTable.NumDescriptorRanges = 2;
+  root_params_raygen[0].DescriptorTable.pDescriptorRanges = ranges_raygen;
+  root_params_raygen[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+  D3D12_ROOT_SIGNATURE_DESC rootsig_raygen_desc{};
+  rootsig_raygen_desc.NumParameters = 1;
+  rootsig_raygen_desc.pParameters = root_params_raygen;
+  rootsig_raygen_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+  rootsig_raygen_desc.NumStaticSamplers = 0;
+
+  ID3DBlob* sigblob_raygen;
+  ID3DBlob* error;
+  HRESULT hr;
+  hr = D3D12SerializeRootSignature(
+    &rootsig_raygen_desc, D3D_ROOT_SIGNATURE_VERSION_1, &sigblob_raygen, &error);
+  assert(SUCCEEDED(hr));
+  if (error) {
+    printf("Error creating Raygen local root signature: %s\n", (char*)error->GetBufferPointer());
+  }
+  CE(g_device12->CreateRootSignature(0, sigblob_raygen->GetBufferPointer(), sigblob_raygen->GetBufferSize(), IID_PPV_ARGS(&raygen_rootsig)));
+  sigblob_raygen->Release();
+
+  // 2. Miss
+  CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootsig_miss_desc;
+  rootsig_miss_desc.Init_1_1(0, NULL, 0, NULL,
+    D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE);
+  ID3DBlob * sigblob_miss;
+  hr = D3DX12SerializeVersionedRootSignature(
+    &rootsig_miss_desc, D3D_ROOT_SIGNATURE_VERSION_1_1, &sigblob_miss, &error);
+  assert(SUCCEEDED(hr));
+  if (error) {
+    printf("Error creating Miss local root signature: %s\n", (char*)error->GetBufferPointer());
+  }
+  CE(g_device12->CreateRootSignature(0, sigblob_miss->GetBufferPointer(), sigblob_miss->GetBufferSize(), IID_PPV_ARGS(&miss_rootsig)));
+
+  // 3. Closest Hit
+  CD3DX12_ROOT_PARAMETER1 root_params_hit[1];
+  root_params_hit[0].InitAsShaderResourceView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_ALL);
+  CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootsig_hit_desc;
+  rootsig_hit_desc.Init_1_1(1, root_params_hit, 0, NULL,
+    D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE);
+  ID3DBlob * sigblob_hit;
+  hr = D3DX12SerializeVersionedRootSignature(
+    &rootsig_hit_desc, D3D_ROOT_SIGNATURE_VERSION_1_1, &sigblob_hit, &error);
+  if (error) {
+    printf("Error creating Hit local root signature: %s\n", (char*)error->GetBufferPointer());
+  }
+  CE(g_device12->CreateRootSignature(0, sigblob_hit->GetBufferPointer(), sigblob_hit->GetBufferSize(), IID_PPV_ARGS(&hit_rootsig)));
+
+  printf("Created local root signatures.\n");
+
+  // Hit group
+  hitgroup_desc = {};
+  hitgroup_desc.HitGroupExport = L"HitGroup";
+  hitgroup_desc.ClosestHitShaderImport = L"ClosestHit";
+  hitgroup_desc.AnyHitShaderImport = nullptr;
+  hitgroup_desc.IntersectionShaderImport = nullptr;
+
+  // Associate root signatures to symbols
+  // raygen_rootsig -> RayGen
+  // miss_rootsig   -> Miss
+  // hit_rootsig    -> ClosestHit
+
+  int max_payload_size = 4 * sizeof(float);  // RGB + distance
+  int max_attrib_size = 2 * sizeof(float);
+  int max_recursion_depth = 1;
+
+  // Fill up subobjects
+  int subobject_count =
+    3 +  // 3 DXIL libraries
+    1 +  // 1 Hit Group
+    1 +  // Shader configuration
+    1 +  // Shader payload association
+    2 * 3 +  // Root sig and association
+    2 +  // Empty global and local rootsig
+    1;   // Final pipeline subobject
+  std::vector<D3D12_STATE_SUBOBJECT> subobjects(subobject_count);
+  int curr_idx = 0;
+
+  // [0]
+  D3D12_STATE_SUBOBJECT subobj_raygen_lib = {};
+  subobj_raygen_lib.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+  subobj_raygen_lib.pDesc = &raygen_lib_desc;
+  subobjects[curr_idx++] = subobj_raygen_lib;
+
+  // [1]
+  D3D12_STATE_SUBOBJECT subobj_miss_lib = {};
+  subobj_miss_lib.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+  subobj_miss_lib.pDesc = &miss_lib_desc;
+  subobjects[curr_idx++] = subobj_miss_lib;
+
+  // [2]
+  D3D12_STATE_SUBOBJECT subobj_hit_lib = {};
+  subobj_hit_lib.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+  subobj_hit_lib.pDesc = &hit_lib_desc;
+  subobjects[curr_idx++] = subobj_hit_lib;
+
+  // [3]
+  D3D12_STATE_SUBOBJECT subobj_hitgroup = {};
+  subobj_hitgroup.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
+  subobj_hitgroup.pDesc = &hitgroup_desc;
+  subobjects[curr_idx++] = subobj_hitgroup;
+
+  // [4]
+  D3D12_RAYTRACING_SHADER_CONFIG shaderconfig = {};
+  shaderconfig.MaxPayloadSizeInBytes = max_payload_size;
+  shaderconfig.MaxAttributeSizeInBytes = max_attrib_size;
+  D3D12_STATE_SUBOBJECT subobj_shaderconfig = {};
+  subobj_shaderconfig.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
+  subobj_shaderconfig.pDesc = &shaderconfig;
+  subobjects[curr_idx++] = subobj_shaderconfig;
+
+  // [5]
+  std::vector<std::wstring> exported_symbols = { L"RayGen", L"Miss", L"HitGroup" };
+  std::vector<LPCWSTR> exported_symbol_ptrs;
+  for (int i = 0; i < 3; i++) exported_symbol_ptrs.push_back(exported_symbols[i].c_str());
+  D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION shader_payload_assoc;
+  shader_payload_assoc.NumExports = 3;
+  shader_payload_assoc.pExports = exported_symbol_ptrs.data();
+  shader_payload_assoc.pSubobjectToAssociate = &(subobjects[curr_idx - 1]);
+  D3D12_STATE_SUBOBJECT subobj_assoc = {};
+  subobj_assoc.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
+  subobj_assoc.pDesc = &shader_payload_assoc;
+  subobjects[curr_idx++] = subobj_assoc;
+
+  // Local root signatures and associations
+  // [6]
+  D3D12_STATE_SUBOBJECT subobj_raygen_rootsig{};
+  subobj_raygen_rootsig.Type = D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE;
+  subobj_raygen_rootsig.pDesc = &raygen_rootsig;
+  subobjects[curr_idx++] = subobj_raygen_rootsig;
+
+  // [7]
+  D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION assoc_raygen{};
+  assoc_raygen.NumExports = 1;
+  assoc_raygen.pExports = &(exported_symbol_ptrs[0]);
+  assoc_raygen.pSubobjectToAssociate = &(subobjects[curr_idx - 1]);
+  D3D12_STATE_SUBOBJECT subobj_raygen_assoc{};
+  subobj_raygen_assoc.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
+  subobj_raygen_assoc.pDesc = &assoc_raygen;
+  subobjects[curr_idx++] = subobj_raygen_assoc;
+
+  // [8]
+  D3D12_STATE_SUBOBJECT subobj_miss_rootsig{};
+  subobj_miss_rootsig.Type = D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE;
+  subobj_miss_rootsig.pDesc = &miss_rootsig;
+  subobjects[curr_idx++] = subobj_miss_rootsig;
+
+  // [9]
+  D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION assoc_miss{};
+  assoc_miss.NumExports = 1;
+  assoc_miss.pExports = &(exported_symbol_ptrs[1]);
+  assoc_miss.pSubobjectToAssociate = &(subobjects[curr_idx - 1]);
+  D3D12_STATE_SUBOBJECT subobj_miss_assoc{};
+  subobj_miss_assoc.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
+  subobj_miss_assoc.pDesc = &assoc_miss;
+  subobjects[curr_idx++] = subobj_miss_assoc;
+
+  // [10]
+  D3D12_STATE_SUBOBJECT subobj_hit_rootsig{};
+  subobj_hit_rootsig.Type = D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE;
+  subobj_hit_rootsig.pDesc = &hit_rootsig;
+  subobjects[curr_idx++] = subobj_hit_rootsig;
+
+  // [11]
+  D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION assoc_hit{};
+  assoc_hit.NumExports = 1;
+  assoc_hit.pExports = &(exported_symbol_ptrs[2]);
+  assoc_hit.pSubobjectToAssociate = &(subobjects[curr_idx - 1]);
+  D3D12_STATE_SUBOBJECT subobj_hit_assoc{};
+  subobj_hit_assoc.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
+  subobj_hit_assoc.pDesc = &assoc_hit;
+  subobjects[curr_idx++] = subobj_hit_assoc;
+
+  // [12]
+  D3D12_STATE_SUBOBJECT subobj_dummy_global_rootsig{};
+  subobj_dummy_global_rootsig.Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
+  subobj_dummy_global_rootsig.pDesc = &dummy_global_rootsig;
+  subobjects[curr_idx++] = subobj_dummy_global_rootsig;
+
+  // [13]
+  D3D12_STATE_SUBOBJECT subobj_dummy_local_rootsig{};
+  subobj_dummy_local_rootsig.Type = D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE;
+  subobj_dummy_local_rootsig.pDesc = &dummy_local_rootsig;
+  subobjects[curr_idx++] = subobj_dummy_local_rootsig;
+
+  // [14]
+  D3D12_RAYTRACING_PIPELINE_CONFIG pipeline_config{};
+  pipeline_config.MaxTraceRecursionDepth = 1;
+  D3D12_STATE_SUBOBJECT subobj_pipeline_config{};
+  subobj_pipeline_config.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG;
+  subobj_pipeline_config.pDesc = &pipeline_config;
+  subobjects[curr_idx++] = subobj_pipeline_config;
+
+  D3D12_STATE_OBJECT_DESC pipeline_desc{};
+  pipeline_desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
+  pipeline_desc.NumSubobjects = curr_idx;
+  pipeline_desc.pSubobjects = subobjects.data();
+  assert(SUCCEEDED(g_device12->CreateStateObject(&pipeline_desc, IID_PPV_ARGS(&rt_state_object))));
+  printf("Created RT pipeline state object.\n");
 }
 
 void TriangleScene::Render() {
