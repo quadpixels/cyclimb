@@ -43,6 +43,14 @@ struct VolumetricLightCB {
   DirectX::XMMATRIX spotlightPV[16]; // Projection-View matrix
   DirectX::XMVECTOR spotlightColors[16];
 };
+
+struct LightScatterDrawLightCB {
+  float WIN_W, WIN_H;
+  float light_x, light_y, light_r;
+  DirectX::XMVECTOR light_color;
+  float global_alpha;
+  float light_z;
+};
 #endif
 
 void MyCheckGLError(const char* tag);

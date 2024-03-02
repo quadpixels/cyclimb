@@ -58,6 +58,7 @@ public:
 
 class ClimbScene : public GameScene {
 public:
+  void RenderLights() override;
   // Static level info
   class LevelData {
   public:

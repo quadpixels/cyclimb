@@ -56,10 +56,16 @@ ID3D11Device *g_device11;
 ID3D11DeviceContext *g_context11;
 IDXGISwapChain *g_swapchain11;
 ID3D11RenderTargetView *g_backbuffer_rtv11, *g_shadowmap_rtv11, *g_gbuffer_rtv11;
+ID3D11RenderTargetView* g_maincanvas_rtv11;
+ID3D11RenderTargetView* g_lightmask_rtv11;  // Light scatter
 ID3D11DepthStencilView *g_dsv11, *g_shadowmap_dsv11;
 ID3D11Texture2D *g_backbuffer, *g_depthbuffer11, *g_shadowmap11, *g_gbuffer11;
+ID3D11Texture2D* g_lightmask;  // Light scatter
+ID3D11Texture2D* g_maincanvas;
 
 ID3D11ShaderResourceView *g_shadowmap_srv11, *g_gbuffer_srv11;
+ID3D11ShaderResourceView* g_lightmask_srv11;
+ID3D11ShaderResourceView* g_maincanvas_srv11;
 D3D11_VIEWPORT g_viewport11, g_viewport_shadowmap11;
 D3D11_RECT g_scissorrect11, g_scissorrect_shadowmap11;
 ID3D11SamplerState *g_sampler11;
@@ -67,10 +73,13 @@ ID3D11Buffer* g_perobject_cb_default_palette;
 ID3D11Buffer* g_perscene_cb_default_palette;
 ID3D11Buffer* g_perscene_cb_light11;
 ID3D11Buffer* g_simpletexture_cb;
+ID3D11Buffer* g_lightscatter_cb;
 ID3D11InputLayout* g_inputlayout_voxel11;
 ID3D11BlendState* g_blendstate11;
 ID3D11Buffer* g_fsquad_for_light11;
+ID3D11Buffer* g_fsquad_for_lightscatter11;
 ID3D11InputLayout* g_inputlayout_for_light11;
+ID3D11InputLayout* g_inputlayout_lightscatter;
 ID3D11DepthStencilState* g_dsstate_for_text11;
 ID3D11RasterizerState* g_rsstate_normal11, * g_rsstate_wireframe11;
 
@@ -127,11 +136,15 @@ ID3D11VertexShader* g_vs_default_palette;
 ID3D11VertexShader* g_vs_textrender;
 ID3D11VertexShader* g_vs_light;
 ID3D11VertexShader* g_vs_simpletexture;
+ID3D11VertexShader* g_vs_lightscatter_drawlight;
+ID3D11VertexShader* g_vs_lightscatter_combine;
 ID3D11PixelShader* g_ps_default_palette;
 ID3D11PixelShader* g_ps_default_palette_shadowed;
 ID3D11PixelShader* g_ps_textrender;
 ID3D11PixelShader* g_ps_light;
 ID3D11PixelShader* g_ps_simpletexture;
+ID3D11PixelShader* g_ps_lightscatter_drawlight;
+ID3D11PixelShader* g_ps_lightscatter_combine;
 
 ID3DBlob *g_vs_simple_depth_blob;
 ID3D11VertexShader *g_vs_simple_depth;
@@ -255,6 +268,10 @@ void InitDevice11() {
     buf_desc.StructureByteStride = sizeof(SimpleTexturePerSceneCB);
     buf_desc.ByteWidth = sizeof(SimpleTexturePerSceneCB);
     assert(SUCCEEDED(g_device11->CreateBuffer(&buf_desc, nullptr, &g_simpletexture_cb)));
+
+    buf_desc.StructureByteStride = sizeof(LightScatterDrawLightCB);
+    buf_desc.ByteWidth = sizeof(LightScatterDrawLightCB);
+    assert(SUCCEEDED(g_device11->CreateBuffer(&buf_desc, nullptr, &g_lightscatter_cb)));
   }
 
   // Depth-Stencil buffer & View
@@ -307,6 +324,35 @@ void InitDevice11() {
     rtv_desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
     assert(SUCCEEDED(g_device11->CreateRenderTargetView(g_gbuffer11, &rtv_desc, &g_gbuffer_rtv11)));
+  }
+
+  // Light scatter & main canvas
+  {
+    D3D11_TEXTURE2D_DESC d2d{};
+    d2d.MipLevels = 1;
+    d2d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    d2d.Width = WIN_W;
+    d2d.Height = WIN_H;
+    d2d.ArraySize = 1;
+    d2d.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    d2d.SampleDesc.Count = 1;
+    d2d.SampleDesc.Quality = 0;
+    d2d.Usage = D3D11_USAGE_DEFAULT;
+    assert(SUCCEEDED(g_device11->CreateTexture2D(&d2d, nullptr, &g_lightmask)));
+    assert(SUCCEEDED(g_device11->CreateTexture2D(&d2d, nullptr, &g_maincanvas)));
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+    srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels = 1;
+    assert(SUCCEEDED(g_device11->CreateShaderResourceView(g_lightmask, &srv_desc, &g_lightmask_srv11)));
+    assert(SUCCEEDED(g_device11->CreateShaderResourceView(g_maincanvas, &srv_desc, &g_maincanvas_srv11)));
+
+    D3D11_RENDER_TARGET_VIEW_DESC rtv_desc{};
+    rtv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rtv_desc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+    assert(SUCCEEDED(g_device11->CreateRenderTargetView(g_lightmask, &rtv_desc, &g_lightmask_rtv11)));
+    assert(SUCCEEDED(g_device11->CreateRenderTargetView(g_maincanvas, &rtv_desc, &g_maincanvas_rtv11)));
   }
 
   // Sampler State
@@ -422,6 +468,23 @@ void InitAssets11() {
   CE(hr, error);
   assert(SUCCEEDED(g_device11->CreatePixelShader(g_ps_simpletexture_blob->GetBufferPointer(), g_ps_simpletexture_blob->GetBufferSize(), nullptr, &g_ps_simpletexture)));
 
+  ID3DBlob* vs_blob, *ps_blob;
+  hr = D3DCompileFromFile(L"shaders_hlsl/shaders_drawlight_withdepth.hlsl", nullptr, nullptr, "VSMain", "vs_4_0", compileFlags, 0, &vs_blob, nullptr);
+  CE(hr, error);
+  assert(SUCCEEDED(g_device11->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr, &g_vs_lightscatter_drawlight)));
+
+  hr = D3DCompileFromFile(L"shaders_hlsl/shaders_drawlight_withdepth.hlsl", nullptr, nullptr, "PSMain", "ps_4_0", compileFlags, 0, &ps_blob, nullptr);
+  CE(hr, error);
+  assert(SUCCEEDED(g_device11->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr, &g_ps_lightscatter_drawlight)));
+
+  hr = D3DCompileFromFile(L"shaders_hlsl/shaders_combine_withdepth.hlsl", nullptr, nullptr, "VSMain", "vs_4_0", compileFlags, 0, &vs_blob, nullptr);
+  CE(hr, error);
+  assert(SUCCEEDED(g_device11->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nullptr, &g_vs_lightscatter_combine)));
+
+  hr = D3DCompileFromFile(L"shaders_hlsl/shaders_combine_withdepth.hlsl", nullptr, nullptr, "PSMain", "ps_4_0", compileFlags, 0, &ps_blob, nullptr);
+  CE(hr, error);
+  assert(SUCCEEDED(g_device11->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr, &g_ps_lightscatter_combine)));
+
   // Input Layout requires VS to be ready
   D3D11_INPUT_ELEMENT_DESC inputdesc1[] = {
     { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
@@ -454,12 +517,51 @@ void InitAssets11() {
     assert(SUCCEEDED(g_device11->CreateBuffer(&buf_desc, &subsc, &g_fsquad_for_light11)));
   }
 
+  // Fullscreen quad, but for lightscatter
+  {
+    float data[][5] = {
+      {  1.0f,  1.0f, 0.0f,  1.0f, 0.0f }, //  
+      {  1.0f, -1.0f, 0.0f,  1.0f, 1.0f }, //  +-----------+ UV = (1, 0), NDC=(1, 1)
+      { -1.0f, -1.0f, 0.0f,  0.0f, 1.0f }, //  |           |
+                                           //  |           |
+      { -1.0f, -1.0f, 0.0f,  0.0f, 1.0f }, //  |           |
+      { -1.0f,  1.0f, 0.0f,  0.0f, 0.0f }, //  |           |
+      {  1.0f,  1.0f, 0.0f,  1.0f, 0.0f }, //  +-----------+ UV = (1, 1), NDC=(1,-1)
+    };
+
+    D3D11_BUFFER_DESC desc = { };
+    desc.ByteWidth = sizeof(data);
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.StructureByteStride = sizeof(float) * 5;
+    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+    D3D11_SUBRESOURCE_DATA srd = { };
+    srd.pSysMem = data;
+
+    HRESULT hr = g_device11->CreateBuffer(&desc, &srd, &g_fsquad_for_lightscatter11);
+    assert(SUCCEEDED(hr));
+
+  }
+
   // Input Layout requires VS to be ready
-  D3D11_INPUT_ELEMENT_DESC inputdesc2[] = {
-    { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-    { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-  };
-  assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc2, 2, g_vs_light_blob->GetBufferPointer(), g_vs_light_blob->GetBufferSize(), &g_inputlayout_for_light11)));
+  {
+    D3D11_INPUT_ELEMENT_DESC inputdesc2[] = {
+      { "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    };
+    assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc2, 2, g_vs_light_blob->GetBufferPointer(), g_vs_light_blob->GetBufferSize(), &g_inputlayout_for_light11)));
+  }
+
+  {
+    D3D11_INPUT_ELEMENT_DESC inputdesc2[] = {
+      { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+      { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+    };
+    assert(SUCCEEDED(g_device11->CreateInputLayout(inputdesc2, 2,
+      vs_blob->GetBufferPointer(),
+      vs_blob->GetBufferSize(),
+      &g_inputlayout_lightscatter)));
+  }
 
   CoInitialize(nullptr);
 }
@@ -796,9 +898,11 @@ void Render_D3D11() {
     if (true) {
       // Volumetric lights
       if (scene) {
-        scene->PrepareLights();
-        g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, g_dsv11);
-        scene->RenderLights();
+        if (1) {
+          scene->PrepareLights();
+          g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, g_dsv11);
+          scene->RenderLights();
+        }
       }
     }
 

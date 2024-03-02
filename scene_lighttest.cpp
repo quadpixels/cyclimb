@@ -14,6 +14,7 @@ std::map<char, ChunkGrid*> LightTestScene::model_digits;
 ChunkGrid* LightTestScene::model_clock;
 extern bool g_main_menu_visible;
 extern DirectionalLight* g_dir_light1;
+extern ID3D11Buffer* g_lightscatter_cb;
 
 float LightTestScene::ACTOR_INIT_Y = -38;
 
@@ -239,6 +240,45 @@ void ClimbScene::PrepareLights() {
   if (g_api == ClimbOpenGL) return;
 
   {
+    if (is_all_rockets_collected) {
+      for (Platform* p : platforms) {
+        ExitPlatform* ep = dynamic_cast<ExitPlatform*>(p);
+        if (ep) { // There should be only 1 exit platform
+          glm::vec3 world_pos = ep->sprite->pos;
+          float a = light_phase;
+          world_pos.x += cos(3.0f * a) * 10.0f;
+          world_pos.y += sin(3.0f * a) * 10.0f;
+          world_pos.z *= -1;
+          glm::mat4 V = camera->GetViewMatrix();
+          glm::mat4 P = glm::perspective(60.0f * 3.14159f / 180.0f, WIN_W * 1.0f / WIN_H, 0.1f, 499.0f);
+          glm::vec4 clip_pos = P * V * glm::vec4(world_pos, 1.0f);
+          float x = (clip_pos.x / clip_pos.w + 1.0f) * 0.5f * WIN_W;
+          float y = WIN_H - (clip_pos.y / clip_pos.w + 1.0f) * 0.5f * WIN_H;
+
+          LightScatterDrawLightCB h_lightscatter_cb{};
+          h_lightscatter_cb.light_x = x;
+          h_lightscatter_cb.light_y = y;
+          h_lightscatter_cb.light_z = -world_pos.z;
+          h_lightscatter_cb.light_r = 50 + sin(a) * 20.0f;
+          h_lightscatter_cb.WIN_W = WIN_W;
+          h_lightscatter_cb.WIN_H = WIN_H;
+          h_lightscatter_cb.light_color.m128_f32[0] = 1.0f;
+          h_lightscatter_cb.light_color.m128_f32[1] = 1.0f;
+          h_lightscatter_cb.light_color.m128_f32[2] = 0.1f;
+          h_lightscatter_cb.light_color.m128_f32[3] = 1.0f;
+          h_lightscatter_cb.global_alpha = 1.0f;
+
+          D3D11_MAPPED_SUBRESOURCE mapped;
+          CE(g_context11->Map(g_lightscatter_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+          memcpy(mapped.pData, &h_lightscatter_cb, sizeof(LightScatterDrawLightCB));
+          g_context11->Unmap(g_lightscatter_cb, 0);
+        }
+      }
+    }
+    return;
+  }
+
+  {
     float tmp = 3.1415926 * 2 / 3;
     float a = light_phase;
     const float dx = 4, dy = 10;
@@ -297,6 +337,58 @@ void ClimbScene::PrepareLights() {
 
   memcpy(mapped.pData, &g_vol_light_cb, sizeof(g_vol_light_cb));
   g_context11->Unmap(g_perscene_cb_light11, 0);
+}
+
+extern ID3D11VertexShader* g_vs_lightscatter_drawlight;
+extern ID3D11VertexShader* g_vs_lightscatter_combine;
+extern ID3D11PixelShader* g_ps_lightscatter_drawlight;
+extern ID3D11PixelShader* g_ps_lightscatter_combine;
+extern ID3D11ShaderResourceView* g_lightmask_srv11;
+extern ID3D11RenderTargetView* g_lightmask_rtv11;
+extern ID3D11InputLayout* g_inputlayout_lightscatter;
+extern ID3D11Buffer* g_lightscatter_cb;
+extern ID3D11Buffer* g_fsquad_for_lightscatter11;
+extern ID3D11Texture2D* g_maincanvas;
+extern ID3D11Texture2D* g_backbuffer;
+extern ID3D11ShaderResourceView* g_lightmask_srv11;
+extern ID3D11ShaderResourceView* g_maincanvas_srv11;
+extern ID3D11ShaderResourceView* g_gbuffer_srv11;
+extern ID3D11SamplerState* g_sampler11;
+extern ID3D11RenderTargetView* g_backbuffer_rtv11;
+void ClimbScene::RenderLights() {
+
+  if (!is_all_rockets_collected) return;
+
+  ID3D11RenderTargetView* null_rtvs[] = { nullptr, nullptr, nullptr };
+  float zero4[] = { 0, 0, 0, 0 };
+  g_context11->ClearRenderTargetView(g_lightmask_rtv11, zero4);
+  g_context11->IASetInputLayout(g_inputlayout_lightscatter);
+  g_context11->OMSetRenderTargets(1, &g_lightmask_rtv11, nullptr);
+  g_context11->PSSetConstantBuffers(0, 1, &g_lightscatter_cb);
+  g_context11->PSSetShader(g_ps_lightscatter_drawlight, nullptr, 0);
+  g_context11->VSSetShader(g_vs_lightscatter_drawlight, nullptr, 0);
+  UINT zero = 0, stride = sizeof(float) * 5;
+  g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  g_context11->IASetVertexBuffers(0, 1, &g_fsquad_for_lightscatter11, &stride, &zero);
+  g_context11->Draw(6, 0);
+  g_context11->OMSetRenderTargets(2, null_rtvs, nullptr);
+
+  g_context11->CopyResource(g_maincanvas, g_backbuffer);
+
+  g_context11->VSSetShader(g_vs_lightscatter_combine, nullptr, 0);
+  g_context11->PSSetShader(g_ps_lightscatter_combine, nullptr, 0);
+  ID3D11ShaderResourceView* srvs[] = {
+    g_maincanvas_srv11,
+    g_lightmask_srv11,
+    g_gbuffer_srv11
+  };
+  g_context11->PSSetConstantBuffers(0, 1, &g_lightscatter_cb);
+  g_context11->IASetVertexBuffers(0, 1, &g_fsquad_for_lightscatter11, &stride, &zero);
+  g_context11->PSSetSamplers(0, 1, &g_sampler11);
+  g_context11->PSSetShaderResources(0, 3, srvs);
+  g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, nullptr);
+  g_context11->Draw(6, 0);
+  g_context11->OMSetRenderTargets(3, null_rtvs, nullptr);
 }
 
 void LightTestScene::Update(float secs) {
