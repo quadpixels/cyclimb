@@ -297,6 +297,7 @@ public:
   void SpawnPlayer();
   
   bool StartLevel(int levelid);
+  void DumpCurrentLevel();
   void ComputeCamBB(); // Cam Bounding Box
   void SetBackground(int bgid);
   void SetGameState(ClimbGameState gs);
@@ -306,6 +307,7 @@ public:
 
   bool is_test_playing;  // 是否是从试玩模式进入
   Sprite* cursor_sprite;
+  Sprite* highlight_sprite;
   bool CanHideMenu();
 };
 
