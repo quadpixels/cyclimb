@@ -18,6 +18,7 @@ public:
   };
   TriangleScene();
   void InitDX12Stuff();
+  void LoadModel();
   void CreateAS();
   void CreateRaytracingPipeline();
   void CreateRaytracingOutputBufferAndSRVs();
@@ -32,6 +33,7 @@ public:
   ID3D12GraphicsCommandList4* command_list;
   ID3D12Resource* vb_triangle;
   D3D12_VERTEX_BUFFER_VIEW vbv_triangle;
+  unsigned num_verts;
 
   ID3D12Resource* blas_scratch, * blas_result, * blas_instance;
   ID3D12Resource* tlas_scratch, * tlas_result, * tlas_instance;

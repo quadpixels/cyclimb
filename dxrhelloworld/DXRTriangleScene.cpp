@@ -9,6 +9,9 @@
 #include "scene.hpp"
 #include <util.hpp>
 
+#define TINYOBJLOADER_IMPLEMENTATION 
+#include "tiny_obj_loader.h"
+
 extern int WIN_W, WIN_H;
 extern ID3D12Device5* g_device12;
 extern ID3D12DescriptorHeap* g_rtv_heap;
@@ -22,10 +25,84 @@ void WaitForPreviousFrame();
 
 TriangleScene::TriangleScene() : root_sig(nullptr), is_raster(false) {
   InitDX12Stuff();
+  LoadModel();
   CreateAS();
   CreateRaytracingPipeline();
   CreateRaytracingOutputBufferAndSRVs();
   CreateShaderBindingTable();
+}
+
+void TriangleScene::LoadModel() {
+  std::string inputfile = "triangle.obj";
+  tinyobj::attrib_t attrib;
+  std::vector<tinyobj::shape_t> shapes;
+  std::vector<tinyobj::material_t> materials;
+
+  std::string warn;
+  std::string err;
+
+  bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, inputfile.c_str());
+
+  if (!warn.empty()) {
+    std::cout << warn << std::endl;
+  }
+
+  if (!err.empty()) {
+    std::cerr << err << std::endl;
+  }
+
+  if (!ret) {
+    exit(1);
+  }
+
+  printf("[tinyobj] %zu shapes, %zu materials, ret=%d\n", shapes.size(), materials.size(), ret);
+  for (int i = 0; i < shapes.size(); i++) {
+    const tinyobj::shape_t& s = shapes[i];
+    printf(" shape[%d], %zu indices\n", i, s.mesh.indices.size());
+  }
+
+  assert(shapes.size() >= 1);
+  const tinyobj::shape_t shape = shapes[0];
+  num_verts = shape.mesh.indices.size();  // No index buffer, implicit indices
+  Vertex* verts = new Vertex[num_verts];
+
+  const float PALETTE[][3] = {
+    { 1.0f, 1.0f, 0.0f },
+    { 0.0f, 1.0f, 1.0f },
+    { 1.0f, 0.0f, 1.0f },
+  };
+
+  for (int i = 0; i < num_verts; i++) {
+    Vertex& v = verts[i];
+    int idx = shape.mesh.indices[i].vertex_index;
+    v.position.x = attrib.vertices[idx * 3];
+    v.position.y = attrib.vertices[idx * 3 + 1];
+    v.position.z = attrib.vertices[idx * 3 + 2];
+
+    int pidx = i % 3;
+    v.color.x = PALETTE[i][0];
+    v.color.y = PALETTE[i][1];
+    v.color.z = PALETTE[i][2];
+    v.color.w = 1.0f;
+  }
+
+  size_t verts_size = sizeof(Vertex) * num_verts;
+
+  // Vertex buffer and VBV
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(verts_size)),
+    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+    IID_PPV_ARGS(&vb_triangle)));
+  UINT8* ptr;
+  CD3DX12_RANGE read_range(0, 0);
+  CE(vb_triangle->Map(0, &read_range, (void**)(&ptr)));
+  memcpy(ptr, verts, verts_size);
+  vb_triangle->Unmap(0, nullptr);
+  vbv_triangle.BufferLocation = vb_triangle->GetGPUVirtualAddress();
+  vbv_triangle.StrideInBytes = sizeof(Vertex);
+  vbv_triangle.SizeInBytes = verts_size;
 }
 
 void TriangleScene::InitDX12Stuff() {
@@ -89,29 +166,6 @@ void TriangleScene::InitDX12Stuff() {
     0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator,
     pipeline_state, IID_PPV_ARGS(&command_list)));
 
-  // Vertex buffer and VBV
-  {
-    Vertex triangleVerts[] = {
-      {{0.0f, 0.25f, 0.0f}, {1.0f, 1.0f, 0.0f, 1.0f}},
-      {{0.25f, -0.25f, 0.0f}, {0.0f, 1.0f, 1.0f, 1.0f}},
-      {{-0.25f, -0.25f, 0.0f}, {1.0f, 0.0f, 1.0f, 1.0f}}
-    };
-    CE(g_device12->CreateCommittedResource(
-      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
-      D3D12_HEAP_FLAG_NONE,
-      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(triangleVerts))),
-      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-      IID_PPV_ARGS(&vb_triangle)));
-    UINT8* ptr;
-    CD3DX12_RANGE read_range(0, 0);
-    CE(vb_triangle->Map(0, &read_range, (void**)(&ptr)));
-    memcpy(ptr, triangleVerts, sizeof(triangleVerts));
-    vb_triangle->Unmap(0, nullptr);
-    vbv_triangle.BufferLocation = vb_triangle->GetGPUVirtualAddress();
-    vbv_triangle.StrideInBytes = sizeof(Vertex);
-    vbv_triangle.SizeInBytes = sizeof(triangleVerts);
-  }
-
   // Dummy global and local rootsigs
   {
     D3D12_ROOT_SIGNATURE_DESC dummy_desc{};
@@ -137,7 +191,7 @@ void TriangleScene::CreateAS() {
   geom_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
   geom_desc.Triangles.VertexBuffer.StartAddress = vb_triangle->GetGPUVirtualAddress();
   geom_desc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
-  geom_desc.Triangles.VertexCount = 3;
+  geom_desc.Triangles.VertexCount = num_verts;
   geom_desc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
   geom_desc.Triangles.IndexBuffer = 0;
   geom_desc.Triangles.IndexFormat = DXGI_FORMAT_UNKNOWN;

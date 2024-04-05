@@ -153,6 +153,7 @@
   <ItemGroup>
     <ClInclude Include="..\util.hpp" />
     <ClInclude Include="scene.hpp" />
+    <ClInclude Include="tiny_obj_loader.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
