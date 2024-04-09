@@ -33,7 +33,7 @@ TriangleScene::TriangleScene() : root_sig(nullptr), is_raster(false) {
 }
 
 void TriangleScene::LoadModel() {
-  std::string inputfile = "triangle.obj";
+  std::string inputfile = "sponza.obj";
   tinyobj::attrib_t attrib;
   std::vector<tinyobj::shape_t> shapes;
   std::vector<tinyobj::material_t> materials;
@@ -56,14 +56,13 @@ void TriangleScene::LoadModel() {
   }
 
   printf("[tinyobj] %zu shapes, %zu materials, ret=%d\n", shapes.size(), materials.size(), ret);
+  num_verts = 0;
   for (int i = 0; i < shapes.size(); i++) {
     const tinyobj::shape_t& s = shapes[i];
-    printf(" shape[%d], %zu indices\n", i, s.mesh.indices.size());
+    num_verts += s.mesh.indices.size();
   }
+  printf("total %d triangles\n", num_verts/3);
 
-  assert(shapes.size() >= 1);
-  const tinyobj::shape_t shape = shapes[0];
-  num_verts = shape.mesh.indices.size();  // No index buffer, implicit indices
   Vertex* verts = new Vertex[num_verts];
 
   const float PALETTE[][3] = {
@@ -72,18 +71,22 @@ void TriangleScene::LoadModel() {
     { 1.0f, 0.0f, 1.0f },
   };
 
-  for (int i = 0; i < num_verts; i++) {
-    Vertex& v = verts[i];
-    int idx = shape.mesh.indices[i].vertex_index;
-    v.position.x = attrib.vertices[idx * 3];
-    v.position.y = attrib.vertices[idx * 3 + 1];
-    v.position.z = attrib.vertices[idx * 3 + 2];
+  int idx = 0;
+  for (int i = 0; i < shapes.size(); i++) {
+    for (int j = 0; j < shapes[i].mesh.indices.size(); j++) {
+      Vertex& v = verts[idx];
+      int vidx = shapes[i].mesh.indices[j].vertex_index;
+      v.position.x = attrib.vertices[vidx * 3];
+      v.position.y = attrib.vertices[vidx * 3 + 1];
+      v.position.z = attrib.vertices[vidx * 3 + 2];
 
-    int pidx = i % 3;
-    v.color.x = PALETTE[i][0];
-    v.color.y = PALETTE[i][1];
-    v.color.z = PALETTE[i][2];
-    v.color.w = 1.0f;
+      int pidx = idx % 3;
+      v.color.x = PALETTE[pidx][0];
+      v.color.y = PALETTE[pidx][1];
+      v.color.z = PALETTE[pidx][2];
+      v.color.w = 1.0f;
+      idx++;
+    }
   }
 
   size_t verts_size = sizeof(Vertex) * num_verts;
@@ -433,10 +436,10 @@ void TriangleScene::CreateRaytracingPipeline() {
   // Local root signatures
   // 1. Raygen
   D3D12_ROOT_PARAMETER root_params_raygen[1];
-  D3D12_DESCRIPTOR_RANGE ranges_raygen[2];
+  D3D12_DESCRIPTOR_RANGE ranges_raygen[3];
   ranges_raygen[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
   ranges_raygen[0].NumDescriptors = 1;
-  ranges_raygen[0].BaseShaderRegister = 0;  // 对应 "register(b0)"
+  ranges_raygen[0].BaseShaderRegister = 0;  // 对应 "register(u0)"
   ranges_raygen[0].RegisterSpace = 0;
   ranges_raygen[0].OffsetInDescriptorsFromTableStart = 0;
   ranges_raygen[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -444,9 +447,14 @@ void TriangleScene::CreateRaytracingPipeline() {
   ranges_raygen[1].BaseShaderRegister = 0;  // 对应 "register(b0)"
   ranges_raygen[1].RegisterSpace = 0;
   ranges_raygen[1].OffsetInDescriptorsFromTableStart = 1;
+  ranges_raygen[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+  ranges_raygen[2].NumDescriptors = 1;
+  ranges_raygen[2].BaseShaderRegister = 0;
+  ranges_raygen[2].RegisterSpace = 0;
+  ranges_raygen[2].OffsetInDescriptorsFromTableStart = 2;
   root_params_raygen[0] = {};
   root_params_raygen[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-  root_params_raygen[0].DescriptorTable.NumDescriptorRanges = 2;
+  root_params_raygen[0].DescriptorTable.NumDescriptorRanges = 3;
   root_params_raygen[0].DescriptorTable.pDescriptorRanges = ranges_raygen;
   root_params_raygen[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
@@ -670,7 +678,7 @@ void TriangleScene::CreateRaytracingOutputBufferAndSRVs() {
 
   // SRV/UAV heap
   D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
-  heap_desc.NumDescriptors = 2;
+  heap_desc.NumDescriptors = 3;
   heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   CE(g_device12->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&srv_uav_heap)));
@@ -687,6 +695,19 @@ void TriangleScene::CreateRaytracingOutputBufferAndSRVs() {
   srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
   srv_desc.RaytracingAccelerationStructure.Location = tlas_result->GetGPUVirtualAddress();
   g_device12->CreateShaderResourceView(nullptr, &srv_desc, srv_handle);
+
+  srv_handle.Offset(g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(256)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&raygen_cb)));
+  D3D12_CONSTANT_BUFFER_VIEW_DESC cbv_desc = {};
+  cbv_desc.BufferLocation = raygen_cb->GetGPUVirtualAddress();
+  cbv_desc.SizeInBytes = 256;
+  g_device12->CreateConstantBufferView(&cbv_desc, srv_handle);
 }
 
 static int RoundUp(int x, int align) {
@@ -821,6 +842,80 @@ void TriangleScene::Render() {
   WaitForPreviousFrame();
 }
 
-void TriangleScene::Update(float secs) {
+// From util.cpp
+void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
 
+glm::mat4 look_at(const glm::vec3& eye, const glm::vec3& center, const glm::vec3& up)
+{
+  glm::mat4 M;
+  glm::vec3 x, y, z;
+
+  // make rotation matrix
+
+  // Z vector
+  z.x = eye.x - center.x;
+  z.y = eye.y - center.y;
+  z.z = eye.z - center.z;
+  z = glm::normalize(z);
+
+  // Y vector
+  y.x = up.x;
+  y.y = up.y;
+  y.z = up.z;
+
+  // X vector = Y cross Z
+  x = glm::cross(y, z);
+
+  // Recompute Y = Z cross X
+  y = glm::cross(z, x);
+
+  // cross product gives area of parallelogram, which is < 1.0 for
+  // non-perpendicular unit-length vectors; so normalize x, y here
+  x = glm::normalize(x);
+  y = glm::normalize(y);
+
+  M[0][0] = x.x;
+  M[1][0] = x.y;
+  M[2][0] = x.z;
+  M[3][0] = -x.x * eye.x - x.y * eye.y - x.z * eye.z;
+  M[0][1] = y.x;
+  M[1][1] = y.y;
+  M[2][1] = y.z;
+  M[3][1] = -y.x * eye.x - y.y * eye.y - y.z * eye.z;
+  M[0][2] = z.x;
+  M[1][2] = z.y;
+  M[2][2] = z.z;
+  M[3][2] = -z.x * eye.x - z.y * eye.y - z.z * eye.z;
+  M[0][3] = 0;
+  M[1][3] = 0;
+  M[2][3] = 0;
+  M[3][3] = 1;
+  return M;
+}
+
+glm::vec3 GetUp(const glm::vec3& eye, const glm::vec3& center) {
+  glm::vec3 x = center - eye;
+  return glm::normalize(glm::cross(glm::vec3(1, 0, 0.01), x));
+}
+
+void TriangleScene::Update(float secs) {
+  glm::vec3 eye(603.74, 655.15, -130.53);
+  glm::vec3 center(-602.74, 655.15, -130.4);
+  glm::vec3 up(0, 1, 0);
+
+  glm::mat4 view = glm::lookAt(eye, center, up);
+  glm::mat4 proj = glm::perspectiveLH_ZO(glm::radians(90.0f), -1.0f * WIN_W / WIN_H, -0.1f, -499.0f) * (-1.0f);
+
+  glm::mat4 inv_view = glm::inverse(view);
+  glm::mat4 inv_proj = glm::inverse(proj);
+
+  char* mapped = nullptr;
+  CD3DX12_RANGE readRange(0, 0);
+  raygen_cb->Map(0, &readRange, (void**)(&mapped));
+  RayGenCB cb;
+  GlmMat4ToDirectXMatrix(&(cb.inverse_view), inv_view);
+  GlmMat4ToDirectXMatrix(&(cb.inverse_proj), inv_proj);
+
+  memcpy(mapped, &cb, sizeof(cb));
+  raygen_cb->Unmap(0, nullptr);
 }

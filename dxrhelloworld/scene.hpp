@@ -16,6 +16,10 @@ public:
     DirectX::XMFLOAT3 position;
     DirectX::XMFLOAT4 color;
   };
+  struct RayGenCB {
+    DirectX::XMMATRIX inverse_view;
+    DirectX::XMMATRIX inverse_proj;
+  };
   TriangleScene();
   void InitDX12Stuff();
   void LoadModel();
@@ -54,6 +58,9 @@ public:
 
   // SBT
   ID3D12Resource* rt_sbt_storage;
+
+  // CB for RayGen
+  ID3D12Resource* raygen_cb;
 
   bool is_raster;
 };

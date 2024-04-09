@@ -18,7 +18,7 @@ int g_rtv_descriptor_size;
 const int FRAME_COUNT = 2;
 ID3D12Resource* g_rendertargets[FRAME_COUNT];
 
-int WIN_W = 800, WIN_H = 480;
+int WIN_W = 256, WIN_H = 256;
 HWND g_hwnd;
 static long long g_last_ms;
 static Scene* g_scenes[1];
@@ -28,6 +28,7 @@ int g_fence_value = 0;
 HANDLE g_fence_event;
 int g_frame_index;
 void WaitForPreviousFrame();
+bool g_use_debug_layer = false;
 
 // Override the following functions for DX12 and to make the compiler happy
 GraphicsAPI g_api = GraphicsAPI::ClimbD3D12;
@@ -78,11 +79,13 @@ void InitDeviceAndCommandQ() {
   unsigned dxgi_factory_flags = 0;
   bool use_warp_device = false;
 
-  ID3D12Debug* debug_controller;
-  if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug_controller)))) {
-    debug_controller->EnableDebugLayer();
-    dxgi_factory_flags |= DXGI_CREATE_FACTORY_DEBUG;
-    printf("Enabling debug layer\n");
+  if (g_use_debug_layer) {
+    ID3D12Debug* debug_controller;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug_controller)))) {
+      debug_controller->EnableDebugLayer();
+      dxgi_factory_flags |= DXGI_CREATE_FACTORY_DEBUG;
+      printf("Enabling debug layer\n");
+    }
   }
 
   CE(CreateDXGIFactory2(dxgi_factory_flags, IID_PPV_ARGS(&g_factory)));
@@ -248,7 +251,21 @@ void CreateCyclimbWindow() {
     hinstance, nullptr);
 }
 
-int main() {
+int main(int argc, char** argv) {
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "debug")) {
+      g_use_debug_layer = true;
+    }
+    else if (!strcmp(argv[i], "-w") && argc > i + 1) {
+      WIN_W = std::atoi(argv[i + 1]);
+      printf("WIN_W set to %d\n", WIN_W);
+    }
+    else if (!strcmp(argv[i], "-h") && argc > i + 1) {
+      WIN_H = std::atoi(argv[i + 1]);
+      printf("WIN_H set to %d\n", WIN_H);
+    }
+  }
+
   CreateCyclimbWindow();
   InitDeviceAndCommandQ();
   InitSwapchain();
