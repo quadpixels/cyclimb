@@ -89,6 +89,7 @@ public:
   };
   void LoadLevelData();
   std::vector<LevelData> levels;
+  LevelData editing_level;  // The level being currently edited
 
   class GameObject {
   public:
@@ -296,8 +297,11 @@ public:
   glm::vec3 GetPlayerEffectiveRopeEndpoint(); // 头顶
   void SpawnPlayer();
   
+  void do_StartLevel(LevelData& ldata);
+  void StartEditingLevel();
   bool StartLevel(int levelid);
-  void DumpCurrentLevel();
+  void DumpCurrentLevelToText();
+  void SaveCurrentLevelToEditingLevel();
   void ComputeCamBB(); // Cam Bounding Box
   void SetBackground(int bgid);
   void SetGameState(ClimbGameState gs);
@@ -306,7 +310,9 @@ public:
   void BeginLevelCompleteSequence();
 
   bool is_test_playing;  // 是否是从试玩模式进入
-  Sprite* cursor_sprite;
+  std::vector<Sprite*> cursor_sprites;
+  int curr_edit_option;  // 0, 1, 2, 3: 平台； 4: 指针
+  Sprite* CurrentCursorSprite();
   Sprite* highlight_sprite;
   bool CanHideMenu();
 };

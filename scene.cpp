@@ -155,7 +155,9 @@ void ClimbScene::PrepareSpriteListForRender() {
   campos.z = 0;
   for (Platform* p : platforms) {
     Sprite* sp = p->GetSpriteForDisplay();
-    if (this->game_state == ClimbScene::ClimbGameState::ClimbGameStateInEditing && sp) {
+    if (this->game_state == ClimbGameStateInEditing && 
+        sp != nullptr &&
+        curr_edit_option == 0) {
       ChunkSprite* csp = dynamic_cast<ChunkSprite*>(sp);
       if (csp) {
         AABB aabb = csp->GetAABBInWorld();
@@ -202,7 +204,9 @@ void ClimbScene::PrepareSpriteListForRender() {
 
   // Edit mode
   if (this->game_state == ClimbScene::ClimbGameState::ClimbGameStateInEditing) {
-    sprite_render_list.push_back(cursor_sprite);
+    Sprite* c = CurrentCursorSprite();
+    if (c)
+      sprite_render_list.push_back(c);
   }
 }
 
@@ -215,6 +219,7 @@ ClimbScene::ClimbScene() {
   lights[1] = new DirectionalLight(glm::vec3(-1, -1, 0), glm::vec3(100, 200, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
   lights[2] = new DirectionalLight(glm::vec3(0, -1, 0), glm::vec3(0, 200, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
   is_test_playing = false;
+  curr_edit_option = 0;
 }
 
 void ClimbScene::Init() {
@@ -261,9 +266,19 @@ void ClimbScene::Init() {
   keyflags.reset();
 
   // Edit mode cursor
-  cursor_sprite = new ChunkSprite(model_platforms[0]);
-  cursor_sprite->draw_mode = Sprite::DrawMode::WIREFRAME;
-  cursor_sprite->scale = glm::vec3(1, 1, 1);
+  ChunkGrid* chunkgrids[] = {
+    dynamic_cast<ChunkGrid*>(Particles::default_particle),
+    model_platforms[0],
+    model_platforms[1],
+    model_coin,
+    model_exit,
+  };
+  for (int i = 0; i < 5; i++) {
+    Sprite* s = new ChunkSprite(chunkgrids[i]);
+    s->draw_mode = Sprite::DrawMode::WIREFRAME;
+    s->scale = glm::vec3(1, 1, 1);
+    cursor_sprites.push_back(s);
+  }
 
   highlight_sprite = new ChunkSprite(Particles::default_particle);
   highlight_sprite->draw_mode = Sprite::DrawMode::WIREFRAME;
@@ -481,8 +496,11 @@ void ClimbScene::Update(float secs) {
           camera->pos += kDirs[i];
         }
       }
-      cursor_sprite->pos.x = camera->pos.x;
-      cursor_sprite->pos.y = camera->pos.y;
+      for (int i = 0; i < cursor_sprites.size(); i++) {
+        Sprite* c = cursor_sprites[i];
+        c->pos.x = camera->pos.x;
+        c->pos.y = camera->pos.y;
+      }
       light_phase += secs;
       break;
     }
@@ -540,9 +558,27 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
     glm::mat4 uitransform(1);
     RenderText(api, text, 32, 32, 1.0f, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
 
-    swprintf(buf, 50, L"%.1f, %.1f, %.1f",
-      camera->pos.x, camera->pos.y, camera->pos.z);
+    swprintf(buf, 50, L"%.1f, %.1f", camera->pos.x, camera->pos.y);
     RenderText(api, buf, 32, 64, 1.0f, glm::vec3(1.0f, 1.0f, 0.2f), uitransform);
+
+    const wchar_t* labels[] = {
+      L"Cursor",
+      L"Normal",
+      L"Destructible",
+      L"Coin",
+      L"Exit",
+    };
+    float dx = 32;
+    for (int i = 0; i < sizeof(labels) / sizeof(labels[0]); i++) {
+      glm::vec3 c = glm::vec3(1.0f, 1.0f, 0.2f);
+      if (i == curr_edit_option) c = glm::vec3(1.0f, 0.3f, 0.3f);
+      RenderText(api, labels[i], dx, 96, 1.0f, c, uitransform);
+      float w;
+      MeasureTextWidth(labels[i], &w);
+      swprintf(buf, 50, L"%d", i+1);
+      RenderText(api, buf, dx + w / 2 - 4, 116, 1.0f, c, uitransform);
+      dx += 8 + w;
+    }
   }
 
   std::wstring text(buf);
@@ -598,15 +634,36 @@ void ClimbScene::OnKeyPressed(char k) {
     }
   }
   else if (k >= '1'&& k <= '5' && game_state == ClimbGameStateInEditing) {
-    if (k == '1') {
+    int blah = k - '1';
+    curr_edit_option = blah;
+  }
+  else if (k == 'i' && game_state == ClimbGameStateInEditing) {
+    const float x = camera->pos.x, y = camera->pos.y;
+    switch (curr_edit_option) {
+    case 1: {
       ChunkSprite* s = new ChunkSprite(model_platforms[0]);
-      const float x = camera->pos.x, y = camera->pos.y;
       s->pos = glm::vec3(x, y, 0);
       platforms.push_back(new NormalPlatform(s));
+      break;
+    }
+    case 2: {
+      ChunkSprite* s = new ChunkSprite(model_platforms[1]);
+      s->pos = glm::vec3(x, y, 0);
+      platforms.push_back(new DamagablePlatform(s));
+      break;
+    }
+    case 3:
+    {
+      ChunkSprite* s = new ChunkSprite(model_coin);
+      s->pos = glm::vec3(x, y, 0);
+      coins.push_back(s);
+      break;
+    }
+    default: break;
     }
   }
   else if (k == 'p' && game_state == ClimbGameStateInEditing) {
-    DumpCurrentLevel();
+    DumpCurrentLevelToText();
   }
   else if (k == ' ') {
     if (game_state == ClimbGameStateLevelEndWaitKey) {
@@ -778,26 +835,19 @@ void ClimbScene::LoadLevelData() {
   printf("%zd levels\n", levels.size());
 }
 
-bool ClimbScene::StartLevel(int levelid) {
-  printf("StartLevel %d\n", levelid);
-  int idx = levelid - 1;
-  if (idx < 0 || idx >= levels.size()) return false;
-
-  curr_level = idx+1; // 1-based
+void ClimbScene::do_StartLevel(LevelData& ldata) {
   curr_bgid = 0;
   curr_level_time = 0;
   is_all_rockets_collected = false;
   num_coins = num_coins_total = 0;
-  
+
   // 删除物件
   for (Platform* s : platforms) { s->marked_for_removal = true; }
   for (Sprite* c : coins) { c->marked_for_removal = true; }
   coins.clear();
   platforms.clear();
-  
-  // Platform sprite
-  LevelData& ldata = levels.at(idx);
-  
+  GetGlobalParticles()->DeleteAll();
+
   for (LevelData::PlatformEntry entry : ldata.entries) {
     if (entry.tag == "plat0") {
       ChunkSprite* s = new ChunkSprite(model_platforms[0]);
@@ -830,17 +880,34 @@ bool ClimbScene::StartLevel(int levelid) {
   initial_coins = coins;
 
   SetBackground(ldata.bgid);
-  
+
   is_key_pressed = false;
   anchor_levels = 0;
   HideRope();
   SpawnPlayer();
   SetGameState(ClimbGameStateNotStarted);
   ComputeCamBB();
+}
+
+bool ClimbScene::StartLevel(int levelid) {
+  printf("StartLevel %d\n", levelid);
+  int idx = levelid - 1;
+  if (idx < 0 || idx >= levels.size()) return false;
+
+  curr_level = idx+1; // 1-based
+  
+  // Platform sprite
+  LevelData& ldata = levels.at(idx);
+  do_StartLevel(ldata);
+  
   return true;
 }
 
-void ClimbScene::DumpCurrentLevel() {
+void ClimbScene::StartEditingLevel() {
+  do_StartLevel(editing_level);
+}
+
+void ClimbScene::DumpCurrentLevelToText() {
   for (Platform* p : platforms) {
     if (dynamic_cast<NormalPlatform*>(p)) {
       printf("plat0 %g %g\n", p->sprite->pos.x, p->sprite->pos.y);
@@ -854,6 +921,24 @@ void ClimbScene::DumpCurrentLevel() {
   }
   for (Sprite* coin : coins) {
     printf("coin %g %g\n", coin->pos.x, coin->pos.y);
+  }
+}
+
+void ClimbScene::SaveCurrentLevelToEditingLevel() {
+  editing_level.entries.clear();
+  for (Platform* p : platforms) {
+    if (dynamic_cast<NormalPlatform*>(p)) {
+      editing_level.AddEntry(p->sprite->pos.x, p->sprite->pos.y, "plat0");
+    }
+    else if (dynamic_cast<DamagablePlatform*>(p)) {
+      editing_level.AddEntry(p->sprite->pos.x, p->sprite->pos.y, "damagable0");
+    }
+    else if (dynamic_cast<ExitPlatform*>(p)) {
+      editing_level.AddEntry(p->sprite->pos.x, p->sprite->pos.y, "exit");
+    }
+  }
+  for (Sprite* coin : coins) {
+    editing_level.AddEntry(coin->pos.x, coin->pos.y, "coin");
   }
 }
 
@@ -961,6 +1046,7 @@ void ClimbScene::SetGameState(ClimbGameState gs) {
       break;
     }
     case ClimbGameStateInEditing: {
+      editing_level = levels.at(curr_level - 1);
       countdown_millis = 0;
       break;
     }
@@ -1065,6 +1151,12 @@ void ClimbScene::DamagablePlatform::DoDamage(const glm::vec3& world_x) {
 void ClimbScene::HideRope() {
   rope_state = Hidden;
   probe_remaining_millis = -999;
+}
+
+Sprite* ClimbScene::CurrentCursorSprite() {
+  if (curr_edit_option >= 0 && curr_edit_option <= 4) {
+    return cursor_sprites[curr_edit_option];
+  } else return nullptr;
 }
 
 // 2019-12-18

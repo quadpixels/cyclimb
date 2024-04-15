@@ -64,7 +64,7 @@ extern ClimbScene* g_climbscene;
 extern bool IsD3D11();
 extern bool IsD3D12();
 
-bool g_debug = true;
+bool g_debug = false;
 
 void StartGame(bool);
 void EnterEditMode();
@@ -122,6 +122,13 @@ void Particles::Update(float secs) {
     if (s.lifetime > 0) next_state.push_back(s);
   }
   particles = next_state;
+}
+
+void Particles::DeleteAll() {
+  for (State& s : particles) {
+    delete s.sprite;
+  }
+  particles.clear();
 }
 
 unsigned MainMenu::program = 0;
@@ -493,6 +500,7 @@ void MainMenu::EnterMenu(int idx, bool is_from_exit) {
   else if (idx == 3) {
     menutitle.push_back(L"[Edit Mode Menu]");
     menuitems.push_back(MenuItem(L"Test Play"));
+    menuitems.push_back(MenuItem(L"Return to Editing"));
     menuitems.push_back(MenuItem(L"Exit Edit Mode"));
   }
 
@@ -540,11 +548,23 @@ void MainMenu::OnEnter() {
     }
     case 3: {
       switch (curr_selection[curr_menu.size() - 1]) {
-        case 0: 
-          g_climbscene->is_test_playing = true;
-          StartGame(true);
+        case 0:
+          if (g_climbscene->is_test_playing == false) {
+            g_climbscene->is_test_playing = true;
+            g_climbscene->SaveCurrentLevelToEditingLevel();
+            g_climbscene->StartEditingLevel();
+            StartGame(true);
+          }
           break;  // Test Play
         case 1: {
+          if (g_climbscene->is_test_playing == true) {
+            g_climbscene->is_test_playing = false;
+            g_climbscene->StartEditingLevel();
+            EnterEditMode();
+          }
+          break;
+        }
+        case 2: {
           g_climbscene->SpawnPlayer();
           g_climbscene->StartLevel(g_climbscene->curr_level);
           ExitEditMode();

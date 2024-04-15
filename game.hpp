@@ -36,6 +36,7 @@ public:
   void Update(float secs);
   static void InitStatic(ChunkIndex* x);
   static ChunkIndex* default_particle;
+  void DeleteAll();
 };
 
 class MainMenu {
