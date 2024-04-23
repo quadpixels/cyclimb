@@ -53,7 +53,7 @@ ID3D11RenderTargetView* g_backbuffer_rtv11;
 D3D11_VIEWPORT g_viewport, g_viewport_shadowmap;
 D3D11_RECT g_scissor_rect;
 
-static Scene* g_scenes[5];
+static Scene* g_scenes[6];
 static int g_scene_index = 0;
 
 // DX11路径里，这两个CB已经硬编码成全局变量了 :(
@@ -114,6 +114,10 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   case '4': {
     printf("Current scene set to 4\n");
     g_scene_idx = 4; break;
+  }
+  case '5': {
+    printf("Current scene set to 5\n");
+    g_scene_idx = 5; break;
   }
   default: break;
   }
@@ -320,6 +324,7 @@ int main() {
   DX11LightScatterScene* lightscatter_scene = new DX11LightScatterScene();
   g_scenes[3] = lightscatter_scene;
   g_scenes[4] = new DX11LightScatterWithChunkScene(chunks_scene, lightscatter_scene);
+  g_scenes[5] = new DX11ComputeShaderScene();
 
   // Message Loop
   MSG msg = { 0 };

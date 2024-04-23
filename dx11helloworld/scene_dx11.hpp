@@ -147,4 +147,25 @@ public:
   void Update(float secs) override;
 };
 
+class DX11ComputeShaderScene : public Scene {
+public:
+  struct ConstantBufferFillRect {
+    int WIN_W;
+    int WIN_H;
+  };
+
+  DX11ComputeShaderScene();
+  ID3D11Buffer* out_buf;
+  ID3D11Buffer* out_buf_cpu;
+  ID3D11UnorderedAccessView* uav_out_buf;
+
+  ID3D11Texture2D* backbuffer_staging;
+
+  ID3D11ComputeShader* cs_fillrect;
+  ID3D11Buffer* cb_fillrect;
+
+  void Render() override;
+  void Update(float secs) override;
+};
+
 #endif

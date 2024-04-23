@@ -672,3 +672,120 @@ void DX11LightScatterWithChunkScene::Update(float secs) {
   memcpy(mapped.pData, &h_cb_drawlight, sizeof(ConstantBufferDataDrawLightWithZ));
   g_context11->Unmap(cb_drawlight, 0);
 }
+
+DX11ComputeShaderScene::DX11ComputeShaderScene() {
+  D3D11_BUFFER_DESC desc{};
+  desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+  desc.ByteWidth = WIN_W * WIN_H * 4;
+  desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+  desc.StructureByteStride = 4;
+
+  // Initialize values from the CPU
+  unsigned char* init_val = new unsigned char[WIN_W * WIN_H * 4];
+  for (int y = 0; y < WIN_H; y++) {
+    for (int x = 0; x < WIN_W; x++) {
+      int offset = (y * WIN_W + x) * 4;
+      init_val[offset] = 256 * (x * 1.0f / WIN_W);
+      init_val[offset + 1] = 256 * (y * 1.0f / WIN_H);
+      init_val[offset + 2] = 0;
+      init_val[offset + 3] = 255;
+    }
+  }
+
+  D3D11_SUBRESOURCE_DATA data{};
+  data.pSysMem = init_val;
+
+  CE(g_device11->CreateBuffer(&desc, &data, &out_buf));
+  delete[] init_val;
+
+  desc.Usage = D3D11_USAGE_STAGING;
+  desc.BindFlags = 0;
+  desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  CE(g_device11->CreateBuffer(&desc, nullptr, &out_buf_cpu));
+
+  D3D11_UNORDERED_ACCESS_VIEW_DESC uav_desc{};
+  uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+  uav_desc.Buffer.FirstElement = 0;
+  uav_desc.Format = DXGI_FORMAT_UNKNOWN;
+  uav_desc.Buffer.NumElements = desc.ByteWidth / desc.StructureByteStride;
+  CE(g_device11->CreateUnorderedAccessView(out_buf, &uav_desc, &uav_out_buf));
+
+  D3D11_TEXTURE2D_DESC d2ddesc{};
+  g_backbuffer->GetDesc(&d2ddesc);
+  d2ddesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+  d2ddesc.Usage = D3D11_USAGE_DYNAMIC;
+  d2ddesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  CE(g_device11->CreateTexture2D(&d2ddesc, nullptr, &backbuffer_staging));
+
+  // Load compute shader
+  ID3DBlob* error;
+  ID3DBlob* cs_shader_blob;
+  HRESULT hr;
+  UINT compileFlags = 0;
+  hr = D3DCompileFromFile(L"shaders/fill_rectangle.hlsl",
+    nullptr, nullptr,
+    "CSMain", "cs_4_0", compileFlags, 0, &cs_shader_blob, &error);
+  if (error) {
+    printf("Error creating cs: %s\n", error->GetBufferPointer());
+  }
+  assert(SUCCEEDED(g_device11->CreateComputeShader(cs_shader_blob->GetBufferPointer(),
+    cs_shader_blob->GetBufferSize(), nullptr, &cs_fillrect)));
+  CE(hr, error);
+
+  // ... and its CB
+  {
+    D3D11_BUFFER_DESC buf_desc{};
+    buf_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    buf_desc.StructureByteStride = sizeof(ConstantBufferFillRect);
+    buf_desc.ByteWidth = std::max(16ULL, sizeof(ConstantBufferFillRect));
+    buf_desc.Usage = D3D11_USAGE_DYNAMIC;
+    buf_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+
+
+    ConstantBufferFillRect cb{};
+    cb.WIN_H = WIN_H;
+    cb.WIN_W = WIN_W;
+    D3D11_SUBRESOURCE_DATA dsd{};
+    dsd.pSysMem = (void*)(&cb);
+
+    assert(SUCCEEDED(g_device11->CreateBuffer(&buf_desc, &dsd, &cb_fillrect)));
+  }
+}
+
+void DX11ComputeShaderScene::Render() {
+  float bgcolor[4] = { 0.7f, 0.7f, 0.4f, 1.0f };
+  g_context11->ClearRenderTargetView(g_backbuffer_rtv11, bgcolor);
+  
+  ID3D11UnorderedAccessView* null_uav = nullptr;
+  g_context11->CSSetConstantBuffers(0, 1, &cb_fillrect);
+  g_context11->CSSetUnorderedAccessViews(0, 1, &uav_out_buf, nullptr);
+  g_context11->CSSetShader(cs_fillrect, nullptr, 0);
+  g_context11->Dispatch(WIN_W / 16, WIN_H / 16, 1);
+  g_context11->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
+
+  g_context11->CopyResource(out_buf_cpu, out_buf);
+  D3D11_MAPPED_SUBRESOURCE mapped0{};
+  CE(g_context11->Map(out_buf_cpu, 0, D3D11_MAP_READ, 0, &mapped0));
+  D3D11_MAPPED_SUBRESOURCE mapped1{};
+  CE(g_context11->Map(backbuffer_staging, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped1));
+  unsigned char* ptr_in = (unsigned char*)mapped0.pData;
+  unsigned char* ptr_out = (unsigned char*)mapped1.pData;
+  for (int y = 0; y < WIN_H; y++) {
+    for (int x = 0; x < WIN_W; x++) {
+      int idx_out = y * mapped1.RowPitch + x * 4;
+      int idx_in = (y * WIN_W + x) * 4;
+      for (int i = 0; i < 4; i++) {
+        ptr_out[idx_out + i] = ptr_in[idx_in + i];
+      }
+    }
+  }
+
+  g_context11->Unmap(backbuffer_staging, 0);
+  g_context11->Unmap(out_buf_cpu, 0);
+
+  g_context11->CopyResource(g_backbuffer, backbuffer_staging);
+
+  g_swapchain11->Present(1, 0);
+}
+
+void DX11ComputeShaderScene::Update(float secs) {}
