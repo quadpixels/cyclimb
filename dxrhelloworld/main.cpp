@@ -18,10 +18,10 @@ int g_rtv_descriptor_size;
 const int FRAME_COUNT = 2;
 ID3D12Resource* g_rendertargets[FRAME_COUNT];
 
-int WIN_W = 256, WIN_H = 256;
+int WIN_W = 512, WIN_H = 512;
 HWND g_hwnd;
 static long long g_last_ms;
-static Scene* g_scenes[1];
+static Scene* g_scenes[2];
 static int g_scene_idx = 0;
 ID3D12Fence* g_fence;
 int g_fence_value = 0;
@@ -70,6 +70,11 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   case '0': {
     printf("Current scene set to 0\n");
     g_scene_idx = 0; break;
+  }
+  case '1': {
+    printf("Current scene set to 1\n");
+    g_scene_idx = 1;
+    break;
   }
   default: break;
   }
@@ -271,7 +276,8 @@ int main(int argc, char** argv) {
   InitSwapchain();
   ShowWindow(g_hwnd, SW_RESTORE);
 
-  g_scenes[0] = new TriangleScene();
+  g_scenes[0] = new ObjScene();
+  g_scenes[1] = new TriangleScene();
 
   // Main message loop
   g_last_ms = MillisecondsNow();
