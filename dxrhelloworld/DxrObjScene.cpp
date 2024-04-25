@@ -28,13 +28,15 @@ extern IDXGISwapChain3* g_swapchain;
 
 void WaitForPreviousFrame();
 
-ObjScene::ObjScene() : root_sig(nullptr), is_raster(false) {
+ObjScene::ObjScene() : root_sig(nullptr), is_raster(true) {
   InitDX12Stuff();
-  LoadModel();
-  CreateAS();
-  CreateRaytracingPipeline();
-  CreateRaytracingOutputBufferAndSRVs();
-  CreateShaderBindingTable();
+  std::thread* init_thd = new std::thread([&]() {
+    LoadModel();
+    CreateAS();
+    CreateRaytracingPipeline();
+    CreateRaytracingOutputBufferAndSRVs();
+    CreateShaderBindingTable();
+  });
 }
 
 void ObjScene::LoadModel() {
@@ -90,6 +92,10 @@ void ObjScene::LoadModel() {
     }
   }
 
+  auto t2 = std::chrono::steady_clock::now();
+  millis = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+  printf("Reading all textures and assigning diffuse colors took %.2fs\n", millis / 1000.0f);
+
   Vertex* verts = new Vertex[num_verts];
 
   int idx = 0;
@@ -116,26 +122,63 @@ void ObjScene::LoadModel() {
   size_t verts_size = sizeof(Vertex) * num_verts;
 
   // Vertex buffer and VBV
+  {
+    Vertex triangleVerts[] = {
+    { {0.0f, 0.25f, 0.0f}, {1.0f, 1.0f, 0.0f, 1.0f}},
+    { {0.25f, -0.25f, 0.0f}, {0.0f, 1.0f, 1.0f, 1.0f}},
+    { {-0.25f, -0.25f, 0.0f}, {1.0f, 0.0f, 1.0f, 1.0f}}
+     };
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(triangleVerts))),
+      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+      IID_PPV_ARGS(&vb_triangle)));
+    UINT8 * ptr;
+    CD3DX12_RANGE read_range(0, 0);
+    CE(vb_triangle->Map(0, &read_range, (void**)(&ptr)));
+    memcpy(ptr, triangleVerts, sizeof(triangleVerts));
+    vb_triangle->Unmap(0, nullptr);
+    vbv_triangle.BufferLocation = vb_triangle->GetGPUVirtualAddress();
+    vbv_triangle.StrideInBytes = sizeof(Vertex);
+    vbv_triangle.SizeInBytes = sizeof(triangleVerts);
+  }
+
+  // Vertex buffer and VBV
   CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
     D3D12_HEAP_FLAG_NONE,
     &keep(CD3DX12_RESOURCE_DESC::Buffer(verts_size)),
     D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-    IID_PPV_ARGS(&vb_triangle)));
+    IID_PPV_ARGS(&vb_obj)));
   UINT8* ptr;
   CD3DX12_RANGE read_range(0, 0);
-  CE(vb_triangle->Map(0, &read_range, (void**)(&ptr)));
+  CE(vb_obj->Map(0, &read_range, (void**)(&ptr)));
   memcpy(ptr, verts, verts_size);
-  vb_triangle->Unmap(0, nullptr);
-  vbv_triangle.BufferLocation = vb_triangle->GetGPUVirtualAddress();
-  vbv_triangle.StrideInBytes = sizeof(Vertex);
-  vbv_triangle.SizeInBytes = verts_size;
+  vb_obj->Unmap(0, nullptr);
+  vbv_obj.BufferLocation = vb_obj->GetGPUVirtualAddress();
+  vbv_obj.StrideInBytes = sizeof(Vertex);
+  vbv_obj.SizeInBytes = verts_size;
+
+  // MVP matrix
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(256)),
+    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+    IID_PPV_ARGS(&raster_cb)));
+
+  auto t3 = std::chrono::steady_clock::now();
+  millis = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+  printf("Populating vertex buffer took %.2fs\n", millis / 1000.0f);
 }
 
 void ObjScene::InitDX12Stuff() {
   // Root signature (empty)
+  CD3DX12_ROOT_PARAMETER root_params[1];
+  root_params[0].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_VERTEX);
   CD3DX12_ROOT_SIGNATURE_DESC root_sig_desc;
-  root_sig_desc.Init(0, nullptr, 0, nullptr,
+  root_sig_desc.Init(1, root_params, 0, nullptr,
     D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
   ID3DBlob* signature, * error;
   CE(D3D12SerializeRootSignature(
@@ -150,11 +193,11 @@ void ObjScene::InitDX12Stuff() {
   // Shader (hello triangle)
   ID3DBlob* vs_blob, * ps_blob;
   UINT compile_flags = 0;
-  CE(D3DCompileFromFile(L"shaders/hellotriangle.hlsl", nullptr, nullptr,
-    "VSMain", "vs_4_0", 0, 0, &vs_blob, &error));
+  D3DCompileFromFile(L"shaders/hellotriangle_mvp.hlsl", nullptr, nullptr,
+    "VSMain", "vs_4_0", 0, 0, &vs_blob, &error);
   if (error) printf("Error creating VS: %s\n", (char*)(error->GetBufferPointer()));
-  CE(D3DCompileFromFile(L"shaders/hellotriangle.hlsl", nullptr, nullptr,
-    "PSMain", "ps_4_0", 0, 0, &ps_blob, &error));
+  D3DCompileFromFile(L"shaders/hellotriangle_mvp.hlsl", nullptr, nullptr,
+    "PSMain", "ps_4_0", 0, 0, &ps_blob, &error);
   if (error) printf("Error creating PS: %s\n", (char*)(error->GetBufferPointer()));
 
   // Input layout
@@ -178,8 +221,7 @@ void ObjScene::InitDX12Stuff() {
   psoDesc.PS = CD3DX12_SHADER_BYTECODE(ps_blob);
   psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
   psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-  psoDesc.DepthStencilState.DepthEnable = FALSE;
-  psoDesc.DepthStencilState.StencilEnable = FALSE;
+  psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
   psoDesc.SampleMask = UINT_MAX;
   psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
   psoDesc.NumRenderTargets = 1;
@@ -210,13 +252,43 @@ void ObjScene::InitDX12Stuff() {
     assert(SUCCEEDED(g_device12->CreateRootSignature(0,
       signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&dummy_local_rootsig))));
   }
+
+  // DSV heap, depthmap, DSV
+  {
+    D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc{};
+    dsv_heap_desc.NumDescriptors = 1;
+    dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    dsv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    CE(g_device12->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(&dsv_heap)));
+    dsv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+    D3D12_CLEAR_VALUE depth_clear{};
+    depth_clear.Format = DXGI_FORMAT_D32_FLOAT;
+    depth_clear.DepthStencil.Depth = 1.0f;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Tex2D(
+        DXGI_FORMAT_R32_TYPELESS, WIN_W, WIN_H, 1, 0, 1, 0,
+        D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      &depth_clear,
+      IID_PPV_ARGS(&depth_map)));
+
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
+    dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    dsv_desc.Flags = D3D12_DSV_FLAG_NONE;
+    g_device12->CreateDepthStencilView(depth_map, &dsv_desc, dsv_heap->GetCPUDescriptorHandleForHeapStart());
+  }
 }
 
 void ObjScene::CreateAS() {
+  auto t0 = std::chrono::steady_clock::now();
   // 1. BLAS
   D3D12_RAYTRACING_GEOMETRY_DESC geom_desc{};
   geom_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-  geom_desc.Triangles.VertexBuffer.StartAddress = vb_triangle->GetGPUVirtualAddress();
+  geom_desc.Triangles.VertexBuffer.StartAddress = vb_obj->GetGPUVirtualAddress();
   geom_desc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
   geom_desc.Triangles.VertexCount = num_verts;
   geom_desc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
@@ -357,6 +429,9 @@ void ObjScene::CreateAS() {
   g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
   WaitForPreviousFrame();
   printf("Built TLAS.\n");
+  auto t1 = std::chrono::steady_clock::now();
+  long millis = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+  printf("AS build took %.2f s\n", millis / 1000.0f);
 }
 
 IDxcBlob* CompileShaderLibrary(LPCWSTR fileName) {
@@ -747,7 +822,7 @@ void ObjScene::CreateShaderBindingTable() {
   std::vector<std::vector<void*>> inputdatas = {
     { (void*)(srv_uav_handle.ptr) },
     {},
-    { (void*)vb_triangle->GetGPUVirtualAddress() }
+    { (void*)vb_obj->GetGPUVirtualAddress() }
   };
   int entry_sizes[3];
   for (int i = 0; i < 3; i++) {
@@ -809,18 +884,26 @@ void ObjScene::Render() {
     D3D12_RESOURCE_STATE_PRESENT,
     D3D12_RESOURCE_STATE_RENDER_TARGET)));
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
-  command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
 
   if (is_raster) {
-    D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, -100.0f, 100.0f);
+    CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_handle(dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      depth_map, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE)));
+    command_list->ClearDepthStencilView(dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    command_list->OMSetRenderTargets(1, &handle_rtv, false, &dsv_handle);
+    D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
     D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
     command_list->RSSetViewports(1, &viewport);
     command_list->RSSetScissorRects(1, &scissor);
     command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    command_list->IASetVertexBuffers(0, 1, &vbv_triangle);
-    command_list->DrawInstanced(3, 1, 0, 0);
+    command_list->IASetVertexBuffers(0, 1, &vbv_obj);
+    command_list->SetGraphicsRootConstantBufferView(1, raster_cb->GetGPUVirtualAddress());
+    command_list->DrawInstanced(num_verts, 1, 0, 0);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      depth_map, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ)));
   }
   else {
+    command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
     command_list->SetDescriptorHeaps(1, &srv_uav_heap);
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
       rt_output_resource,
@@ -926,6 +1009,7 @@ glm::vec3 GetUp(const glm::vec3& eye, const glm::vec3& center) {
 }
 
 void ObjScene::Update(float secs) {
+  if (!inited) return;
   glm::vec3 eye(603.74, 655.15, -130.53);
   glm::vec3 center(-602.74, 655.15, -130.4);
   glm::vec3 up(0, 1, 0);
@@ -945,4 +1029,16 @@ void ObjScene::Update(float secs) {
 
   memcpy(mapped, &cb, sizeof(cb));
   raygen_cb->Unmap(0, nullptr);
+
+  TransformCB mvp_cb;
+  glm::mat4 M(1);
+  GlmMat4ToDirectXMatrix(&(mvp_cb.M), M);
+  GlmMat4ToDirectXMatrix(&(mvp_cb.V), view);
+  // Note: proj is diff't between rast and rt
+  proj = glm::perspective(glm::radians(90.0f), 1.0f * WIN_W / WIN_H, 0.1f, 10000.0f);
+  GlmMat4ToDirectXMatrix(&(mvp_cb.P), proj);
+  readRange = CD3DX12_RANGE(0, 0);
+  raster_cb->Map(0, &readRange, (void**)(&mapped));
+  memcpy(mapped, &mvp_cb, sizeof(mvp_cb));
+  raster_cb->Unmap(0, nullptr);
 }

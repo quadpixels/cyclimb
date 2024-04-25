@@ -67,6 +67,12 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   case VK_ESCAPE:
     PostQuitMessage(0);
     break;
+  case VK_SPACE: {
+    if (g_scene_idx == 0) {
+      ((ObjScene*)(g_scenes[0]))->ToggleIsRaster();
+    }
+    break;
+  }
   case '0': {
     printf("Current scene set to 0\n");
     g_scene_idx = 0; break;

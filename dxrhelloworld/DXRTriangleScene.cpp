@@ -38,7 +38,7 @@ TriangleScene::TriangleScene() {
     &rootsig_desc, D3D_ROOT_SIGNATURE_VERSION_1, &sigblob, &error);
   assert(SUCCEEDED(hr));
   if (error) {
-    printf("Error creating Raygen local root signature: %s\n", (char*)error->GetBufferPointer());
+    printf("Error creating root signature: %s\n", (char*)error->GetBufferPointer());
   }
   CE(g_device12->CreateRootSignature(0, sigblob->GetBufferPointer(), sigblob->GetBufferSize(), IID_PPV_ARGS(&root_sig)));
   sigblob->Release();
@@ -62,19 +62,17 @@ TriangleScene::TriangleScene() {
   };
 
   // PSO
-  D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
-  pso_desc.pRootSignature = root_sig;
-  pso_desc.VS.pShaderBytecode = vs_blob->GetBufferPointer();
-  pso_desc.VS.BytecodeLength = vs_blob->GetBufferSize();
-  pso_desc.PS.pShaderBytecode = ps_blob->GetBufferPointer();
-  pso_desc.PS.BytecodeLength = ps_blob->GetBufferSize();
-  pso_desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-  pso_desc.SampleMask = UINT_MAX;
-  pso_desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-  pso_desc.DepthStencilState.DepthEnable = false;
-  pso_desc.DepthStencilState.StencilEnable = false;
+  D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
   pso_desc.InputLayout.NumElements = 2;
   pso_desc.InputLayout.pInputElementDescs = input_element_desc;
+  pso_desc.pRootSignature = root_sig;
+  pso_desc.VS = CD3DX12_SHADER_BYTECODE(vs_blob);
+  pso_desc.PS = CD3DX12_SHADER_BYTECODE(ps_blob);
+  pso_desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+  pso_desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+  pso_desc.DepthStencilState.DepthEnable = false;
+  pso_desc.DepthStencilState.StencilEnable = false;
+  pso_desc.SampleMask = UINT_MAX;
   pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
   pso_desc.NumRenderTargets = 1;
   pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -119,6 +117,23 @@ void TriangleScene::Render() {
     D3D12_RESOURCE_STATE_PRESENT,
     D3D12_RESOURCE_STATE_RENDER_TARGET)));
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+
+  command_list->SetGraphicsRootSignature(root_sig);
+  D3D12_VIEWPORT viewport{};
+  viewport.Height = WIN_H;
+  viewport.Width = WIN_W;
+  viewport.MinDepth = -100.0f;
+  viewport.MaxDepth = 100.0f;
+  D3D12_RECT scissor{};
+  scissor.right = WIN_W;
+  scissor.bottom = WIN_H;
+
+  command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissor);
+  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  command_list->IASetVertexBuffers(0, 1, &vbv_triangle);
+  command_list->DrawInstanced(3, 1, 0, 0);
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],

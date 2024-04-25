@@ -39,6 +39,9 @@ public:
     DirectX::XMMATRIX inverse_view;
     DirectX::XMMATRIX inverse_proj;
   };
+  struct TransformCB {  // MVP matrix for raster view
+    DirectX::XMMATRIX M, V, P;
+  };
   ObjScene();
   void InitDX12Stuff();
   void LoadModel();
@@ -47,6 +50,9 @@ public:
   void CreateRaytracingOutputBufferAndSRVs();
   void CreateShaderBindingTable();
 
+  void ToggleIsRaster() {
+    is_raster = !is_raster;
+  }
   void Render() override;
   void Update(float secs) override;
 
@@ -54,6 +60,8 @@ public:
   ID3D12PipelineState* pipeline_state;
   ID3D12CommandAllocator* command_allocator;
   ID3D12GraphicsCommandList4* command_list;
+  ID3D12Resource* vb_obj;
+  D3D12_VERTEX_BUFFER_VIEW vbv_obj;
   ID3D12Resource* vb_triangle;
   D3D12_VERTEX_BUFFER_VIEW vbv_triangle;
   unsigned num_verts;
@@ -78,8 +86,14 @@ public:
   // SBT
   ID3D12Resource* rt_sbt_storage;
 
-  // CB for RayGen
+  // Constant Buffer for RayGen (inverse view and proj matrices)
   ID3D12Resource* raygen_cb;
+
+  // For raster view (MVP matrices)
+  ID3D12Resource* raster_cb;
+  ID3D12DescriptorHeap* dsv_heap;
+  int dsv_descriptor_size;
+  ID3D12Resource* depth_map;
 
   bool is_raster;
   bool inited = false;
