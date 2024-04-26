@@ -106,7 +106,7 @@ TriangleScene::TriangleScene() {
 
 void TriangleScene::Render() {
   CE(command_allocator->Reset());
-  CE(command_list->Reset(command_allocator, nullptr));
+  CE(command_list->Reset(command_allocator, pipeline_state));
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
     g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
