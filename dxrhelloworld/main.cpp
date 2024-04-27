@@ -125,7 +125,10 @@ void InitDeviceAndCommandQ() {
   assert(SUCCEEDED(g_device12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5,
     &options5, sizeof(options5))));
   if (options5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_0) {
-    printf("This device supports RayTracing.\n");
+    printf("This device supports DXR 1.0.\n");
+  }
+  if (options5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1) {
+    printf("This device supports DXR 1.1.\n");
   }
 
   assert(g_device12 != nullptr);

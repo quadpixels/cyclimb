@@ -154,6 +154,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\util.hpp" />
+    <ClInclude Include="dxcapi.use.h" />
     <ClInclude Include="scene.hpp" />
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="tiny_obj_loader.h" />

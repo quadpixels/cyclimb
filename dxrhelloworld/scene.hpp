@@ -17,6 +17,9 @@ public:
     DirectX::XMFLOAT4 color;
   };
   TriangleScene();
+
+  void InitDX12Stuff();
+  void CreateAS();
   void Render() override;
   void Update(float secs) override;
 
@@ -27,6 +30,9 @@ public:
 
   ID3D12Resource* vb_triangle;
   D3D12_VERTEX_BUFFER_VIEW vbv_triangle;
+
+  ID3D12Resource* blas_scratch, * blas_result;
+  ID3D12Resource* tlas_scratch, * tlas_result, * tlas_instance;
 };
 
 class ObjScene : public Scene {
@@ -66,7 +72,7 @@ public:
   D3D12_VERTEX_BUFFER_VIEW vbv_triangle;
   unsigned num_verts;
 
-  ID3D12Resource* blas_scratch, * blas_result, * blas_instance;
+  ID3D12Resource* blas_scratch, * blas_result;
   ID3D12Resource* tlas_scratch, * tlas_result, * tlas_instance;
 
   // RT pipeline
