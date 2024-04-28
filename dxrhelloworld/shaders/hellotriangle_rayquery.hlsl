@@ -17,6 +17,12 @@ PSInput VSMain(float4 position : POSITION, float4 color : COLOR) {
     return result;
 }
 
+cbuffer TriSceneCB : register(b0) {
+    int WIN_W;
+    int WIN_H;
+    int use_counter;
+};
+
 float4 PSMain(PSInput input) : SV_TARGET {
   RayDesc ray;
   ray.Origin = float3(0, 0, -1) + input.orig_pos.xyz;
@@ -28,10 +34,12 @@ float4 PSMain(PSInput input) : SV_TARGET {
   q.Proceed();
   
   int counter = 0;
-  g_counter.InterlockedAdd(0, 1, counter);
+  if (use_counter == 1) {
+    g_counter.InterlockedAdd(0, 1, counter);
+  }
   
   if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-    float t = counter * 1.0 / 512.0 / 512.0;
+    float t = counter * 1.0 / WIN_W / WIN_H;
     return lerp(float4(1.0, 0.2, 0.0, 1.0),
                 float4(0.2, 0.0, 1.0, 1.0),
                 t);

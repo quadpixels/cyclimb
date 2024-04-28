@@ -44,7 +44,7 @@ void TriangleScene::InitDX12Stuff() {
   desc_range.NumDescriptors = 1;
   desc_range.OffsetInDescriptorsFromTableStart = 0;
 
-  D3D12_ROOT_PARAMETER root_params[2];
+  D3D12_ROOT_PARAMETER root_params[3];
   root_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
   root_params[0].DescriptorTable.NumDescriptorRanges = 1;
   root_params[0].DescriptorTable.pDescriptorRanges = &desc_range;
@@ -55,8 +55,13 @@ void TriangleScene::InitDX12Stuff() {
   root_params[1].Descriptor.ShaderRegister = 0;  // u0
   root_params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+  root_params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+  root_params[2].Descriptor.RegisterSpace = 0;
+  root_params[2].Descriptor.ShaderRegister = 0;  // b0
+  root_params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
   D3D12_ROOT_SIGNATURE_DESC rootsig_desc{};
-  rootsig_desc.NumParameters = 2;
+  rootsig_desc.NumParameters = 3;
   rootsig_desc.pParameters = root_params;
   rootsig_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
   rootsig_desc.NumStaticSamplers = 0;
@@ -183,9 +188,9 @@ void TriangleScene::InitDX12Stuff() {
     nullptr,
     IID_PPV_ARGS(&px_counter)));
 
-  // SRV and UAV heap
+  // SRV and UAV and CBV heap
   D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
-  heap_desc.NumDescriptors = 2;
+  heap_desc.NumDescriptors = 3;
   heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   CE(g_device12->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&srv_uav_heap)));
@@ -203,6 +208,21 @@ void TriangleScene::InitDX12Stuff() {
   srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
   uav_handle.Offset(srv_uav_descriptor_size);
   g_device12->CreateUnorderedAccessView(px_counter, nullptr, &uav_desc, uav_handle);
+
+  // CB for per-scene data
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(256)),
+    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+    IID_PPV_ARGS(&cb_scene)));
+  
+  // and its CBV
+  D3D12_CONSTANT_BUFFER_VIEW_DESC cbv_desc = {};
+  cbv_desc.BufferLocation = cb_scene->GetGPUVirtualAddress();
+  cbv_desc.SizeInBytes = 256;
+  uav_handle.Offset(srv_uav_descriptor_size);
+  g_device12->CreateConstantBufferView(&cbv_desc, uav_handle);
 }
 
 void TriangleScene::CreateAS() {
@@ -393,6 +413,7 @@ void TriangleScene::Render() {
   command_list->SetDescriptorHeaps(1, &srv_uav_heap);
   command_list->SetGraphicsRootDescriptorTable(0, srv_uav_heap->GetGPUDescriptorHandleForHeapStart());
   command_list->SetGraphicsRootUnorderedAccessView(1, px_counter->GetGPUVirtualAddress());
+  command_list->SetGraphicsRootConstantBufferView(2, cb_scene->GetGPUVirtualAddress());
   D3D12_VIEWPORT viewport{};
   viewport.Height = WIN_H;
   viewport.Width = WIN_W;
@@ -426,4 +447,14 @@ void TriangleScene::Render() {
 }
 
 void TriangleScene::Update(float secs) {
+  TriSceneCB cb{};
+  cb.WIN_W = WIN_W;
+  cb.WIN_H = WIN_H;
+  cb.use_counter = use_counter;
+
+  char* mapped = nullptr;
+  CD3DX12_RANGE readRange(0, 0);
+  cb_scene->Map(0, &readRange, (void**)(&mapped));
+  memcpy(mapped, &cb, sizeof(cb));
+  cb_scene->Unmap(0, nullptr);
 }

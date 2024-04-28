@@ -16,6 +16,9 @@ public:
     DirectX::XMFLOAT3 position;
     DirectX::XMFLOAT4 color;
   };
+  struct TriSceneCB {
+    int WIN_W, WIN_H, use_counter;
+  };
   TriangleScene();
 
   void InitDX12Stuff();
@@ -36,6 +39,12 @@ public:
   ID3D12Resource* px_counter;
   ID3D12DescriptorHeap* srv_uav_heap;
   int srv_uav_descriptor_size;
+
+  ID3D12Resource* cb_scene;
+  bool use_counter = true;
+  void ToggleUseCounter() {
+    use_counter = !use_counter;
+  }
 };
 
 class ObjScene : public Scene {

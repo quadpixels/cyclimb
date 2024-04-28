@@ -68,8 +68,15 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     PostQuitMessage(0);
     break;
   case VK_SPACE: {
-    if (g_scene_idx == 0) {
+    switch (g_scene_idx) {
+    case 0:
       ((ObjScene*)(g_scenes[0]))->ToggleIsRaster();
+      break;
+    case 1:
+      ((TriangleScene*)(g_scenes[1]))->ToggleUseCounter();
+      break;
+    default:
+      break;
     }
     break;
   }
