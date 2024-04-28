@@ -284,6 +284,7 @@ void ObjScene::InitDX12Stuff() {
 }
 
 void ObjScene::CreateAS() {
+  printf("Creating AS for %d verts\n", num_verts);
   auto t0 = std::chrono::steady_clock::now();
   // 1. BLAS
   D3D12_RAYTRACING_GEOMETRY_DESC geom_desc{};
@@ -356,7 +357,6 @@ void ObjScene::CreateAS() {
 
   command_list->Close();
   g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
-  WaitForPreviousFrame();
   printf("Built BLAS.\n");
 
   // 2. TLAS
@@ -406,6 +406,7 @@ void ObjScene::CreateAS() {
   DirectX::XMMATRIX m = DirectX::XMMatrixIdentity();
   memcpy(instance_desc->Transform, &m, sizeof(instance_desc->Transform));
   instance_desc->AccelerationStructure = blas_result->GetGPUVirtualAddress();
+  printf("blas_result's GPUVA is %p\n", blas_result->GetGPUVirtualAddress());
   instance_desc->InstanceMask = 0xFF;
   tlas_instance->Unmap(0, nullptr);
 
@@ -427,7 +428,6 @@ void ObjScene::CreateAS() {
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(tlas_result)));
   command_list->Close();
   g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
-  WaitForPreviousFrame();
   printf("Built TLAS.\n");
   auto t1 = std::chrono::steady_clock::now();
   long millis = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
@@ -543,12 +543,12 @@ void ObjScene::CreateRaytracingPipeline() {
   ranges_raygen[0].OffsetInDescriptorsFromTableStart = 0;
   ranges_raygen[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
   ranges_raygen[1].NumDescriptors = 1;
-  ranges_raygen[1].BaseShaderRegister = 0;  // 对应 "register(b0)"
+  ranges_raygen[1].BaseShaderRegister = 0;  // 对应 "register(t0)"
   ranges_raygen[1].RegisterSpace = 0;
   ranges_raygen[1].OffsetInDescriptorsFromTableStart = 1;
   ranges_raygen[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
   ranges_raygen[2].NumDescriptors = 1;
-  ranges_raygen[2].BaseShaderRegister = 0;
+  ranges_raygen[2].BaseShaderRegister = 0;  // 对应 "register(b0)"
   ranges_raygen[2].RegisterSpace = 0;
   ranges_raygen[2].OffsetInDescriptorsFromTableStart = 2;
   root_params_raygen[0] = {};

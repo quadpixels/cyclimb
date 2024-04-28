@@ -44,15 +44,20 @@ void TriangleScene::InitDX12Stuff() {
   desc_range.NumDescriptors = 1;
   desc_range.OffsetInDescriptorsFromTableStart = 0;
 
-  D3D12_ROOT_PARAMETER root_param{};
-  root_param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-  root_param.DescriptorTable.NumDescriptorRanges = 1;
-  root_param.DescriptorTable.pDescriptorRanges = &desc_range;
-  root_param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+  D3D12_ROOT_PARAMETER root_params[2];
+  root_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+  root_params[0].DescriptorTable.NumDescriptorRanges = 1;
+  root_params[0].DescriptorTable.pDescriptorRanges = &desc_range;
+  root_params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+  root_params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+  root_params[1].Descriptor.RegisterSpace = 0;
+  root_params[1].Descriptor.ShaderRegister = 0;  // u0
+  root_params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
   D3D12_ROOT_SIGNATURE_DESC rootsig_desc{};
-  rootsig_desc.NumParameters = 1;
-  rootsig_desc.pParameters = &root_param;
+  rootsig_desc.NumParameters = 2;
+  rootsig_desc.pParameters = root_params;
   rootsig_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
   rootsig_desc.NumStaticSamplers = 0;
 
@@ -80,28 +85,42 @@ void TriangleScene::InitDX12Stuff() {
       "PSMain", "ps_4_0", 0, 0, &ps_blob, &error);
     if (error) printf("Error creating PS: %s\n", (char*)(error->GetBufferPointer()));
   }
-  else {
+  else {  // Reference: https://posts.tanki.ninja/2019/07/11/Using-DXC-In-Practice/
     IDxcCompiler* dxc_compiler;
     IDxcOperationResult* dxc_opr_result;
     CE(dxc_support.CreateInstance(CLSID_DxcCompiler, &dxc_compiler));
     ID3DBlob* source;
     CE(D3DReadFileToBlob(L"shaders/hellotriangle_rayquery.hlsl", &source));
     HRESULT hr = dxc_compiler->Compile((IDxcBlob*)source, L"PS", L"PSMain", L"ps_6_5", nullptr, 0, nullptr, 0, nullptr, &dxc_opr_result);
+    IDxcBlobEncoding* dxc_error;
+    CE(dxc_opr_result->GetErrorBuffer(&dxc_error));
     if (SUCCEEDED(hr)) {
-      printf("SM 6.5 PS build success.\n");
+      if (dxc_error && dxc_error->GetBufferPointer()) {
+        printf("SM 6.5 PS build message: %s\n", dxc_error->GetBufferPointer());
+      }
+      else {
+        printf("SM 6.5 PS build success.\n");
+      }
       CE(dxc_opr_result->GetResult((IDxcBlob**)(&ps_blob)));
     }
     else {
-      printf("SM 6.5 PS build failed.\n");
+      CE(dxc_opr_result->GetErrorBuffer(&dxc_error));
+      printf("SM 6.5 PS build failed: %s\n", (char*)(dxc_error->GetBufferPointer()));
     }
 
     hr = dxc_compiler->Compile((IDxcBlob*)source, L"VS", L"VSMain", L"vs_6_5", nullptr, 0, nullptr, 0, nullptr, &dxc_opr_result);
+    CE(dxc_opr_result->GetErrorBuffer(&dxc_error));
     if (SUCCEEDED(hr)) {
-      printf("SM 6.5 VS build success.\n");
+      if (dxc_error && dxc_error->GetBufferPointer()) {
+        printf("SM 6.5 VS build message: %s\n", dxc_error->GetBufferPointer());
+      }
+      else {
+        printf("SM 6.5 VS build success.\n");
+      }
       CE(dxc_opr_result->GetResult((IDxcBlob**)(&vs_blob)));
     }
     else {
-      printf("SM 6.5 VS build failed.\n");
+      printf("SM 6.5 VS build failed: %s\n", (char*)(dxc_error->GetBufferPointer()));
     }
   }
 
@@ -133,9 +152,9 @@ void TriangleScene::InitDX12Stuff() {
 
   // vertex buffer
   Vertex verts[] = {
-    { { 0.0f, 0.25f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
-    { { 0.25f, -0.25f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
-    { { -0.25f, -0.25f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
+    { { -1.0f,  3.0f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
+    { {  3.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
+    { { -1.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
   };
   CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
@@ -154,6 +173,36 @@ void TriangleScene::InitDX12Stuff() {
   vbv_triangle.BufferLocation = vb_triangle->GetGPUVirtualAddress();
   vbv_triangle.StrideInBytes = sizeof(Vertex);
   vbv_triangle.SizeInBytes = sizeof(verts);
+
+  // The counter
+  CE(g_device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(256, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&px_counter)));
+
+  // SRV and UAV heap
+  D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
+  heap_desc.NumDescriptors = 2;
+  heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+  heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  CE(g_device12->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&srv_uav_heap)));
+
+  // UAV
+  D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc = {};
+  uav_desc.Buffer.CounterOffsetInBytes = 0;
+  uav_desc.Buffer.FirstElement = 0;
+  uav_desc.Buffer.NumElements = 1;
+  uav_desc.Buffer.StructureByteStride = 0;
+  uav_desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+  uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
+  uav_desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+  CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart());
+  srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+  uav_handle.Offset(srv_uav_descriptor_size);
+  g_device12->CreateUnorderedAccessView(px_counter, nullptr, &uav_desc, uav_handle);
 }
 
 void TriangleScene::CreateAS() {
@@ -224,6 +273,7 @@ void TriangleScene::CreateAS() {
   };
   build_desc.SourceAccelerationStructureData = 0;
   build_desc.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
+  CE(command_list->Reset(command_allocator, pipeline_state));
   command_list->BuildRaytracingAccelerationStructure(&build_desc, 0, nullptr);
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas_result)));
   command_list->Close();
@@ -277,6 +327,7 @@ void TriangleScene::CreateAS() {
   DirectX::XMMATRIX m = DirectX::XMMatrixIdentity();
   memcpy(instance_desc->Transform, &m, sizeof(instance_desc->Transform));
   instance_desc->AccelerationStructure = blas_result->GetGPUVirtualAddress();
+  printf("blas_result's GPUVA is %p\n", blas_result->GetGPUVirtualAddress());
   instance_desc->InstanceMask = 0xFF;
   tlas_instance->Unmap(0, nullptr);
 
@@ -299,6 +350,15 @@ void TriangleScene::CreateAS() {
   command_list->Close();
   g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
   printf("Built TLAS.\n");
+  
+  // SRV for AS
+  CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart());
+  D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+  srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+  srv_desc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+  srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  srv_desc.RaytracingAccelerationStructure.Location = tlas_result->GetGPUVirtualAddress();
+  g_device12->CreateShaderResourceView(nullptr, &srv_desc, srv_handle);
 }
 
 void TriangleScene::Render() {
@@ -315,7 +375,24 @@ void TriangleScene::Render() {
     D3D12_RESOURCE_STATE_RENDER_TARGET)));
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
 
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_uav_cpu(
+    srv_uav_heap->GetCPUDescriptorHandleForHeapStart(),
+    1, srv_uav_descriptor_size);
+  CD3DX12_GPU_DESCRIPTOR_HANDLE handle_uav_gpu(
+    srv_uav_heap->GetGPUDescriptorHandleForHeapStart(),
+    1, srv_uav_descriptor_size);
+  
+  UINT uav_clearcolor[4] = { 1,2,3,4 };
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    px_counter,
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
+  command_list->ClearUnorderedAccessViewUint(handle_uav_gpu, handle_uav_cpu, px_counter, uav_clearcolor, 0, nullptr);
+
   command_list->SetGraphicsRootSignature(root_sig);
+  command_list->SetDescriptorHeaps(1, &srv_uav_heap);
+  command_list->SetGraphicsRootDescriptorTable(0, srv_uav_heap->GetGPUDescriptorHandleForHeapStart());
+  command_list->SetGraphicsRootUnorderedAccessView(1, px_counter->GetGPUVirtualAddress());
   D3D12_VIEWPORT viewport{};
   viewport.Height = WIN_H;
   viewport.Width = WIN_W;
@@ -336,6 +413,10 @@ void TriangleScene::Render() {
     g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATE_PRESENT)));
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    px_counter,
+    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+    D3D12_RESOURCE_STATE_GENERIC_READ)));
 
   CE(command_list->Close());
   g_command_queue->ExecuteCommandLists(1,
