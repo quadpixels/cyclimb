@@ -29,6 +29,9 @@
     <None Include="shaders\bvhstuff.hlsl">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="shaders\radix4sort.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="bvhtypes.hpp">

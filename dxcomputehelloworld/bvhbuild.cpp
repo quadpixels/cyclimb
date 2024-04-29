@@ -20,13 +20,7 @@ ID3D11Buffer* CreateRawBuffer(int size);
 ID3D11Buffer* CreateRawBufferCPUWriteable(int size);
 ID3D11UnorderedAccessView* CreateBufferUAV(ID3D11Buffer* buffer);
 ID3D11Buffer* CreateStructuredBuffer(UINT element_size, UINT count);
-
-int RoundUpToAlign(int x, int align) {
-  if (x % align != 0) {
-    x += align - (x % align);
-  }
-  return x;
-}
+ID3D11Buffer* CreateConstantBuffer(int size);
 
 void CornellBoxTest() {
   Triangle h_triangles[] = {
@@ -89,13 +83,7 @@ void CornellBoxTest() {
   g_context11->CopyResource(buf0, buf0_cpu);
 
   // Create BVH CB
-  ID3D11Buffer* bvh_cb = nullptr;
-  D3D11_BUFFER_DESC cb_desc{};
-  cb_desc.ByteWidth = RoundUpToAlign(sizeof(BvhCB), 16);
-  cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-  cb_desc.Usage = D3D11_USAGE_DYNAMIC;
-  cb_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-  CE(g_device11->CreateBuffer(&cb_desc, nullptr, &bvh_cb));
+  ID3D11Buffer* bvh_cb = CreateConstantBuffer(sizeof(BvhCB));
 
   const int num_blocks = 2;
   const int num_threads_per_block = 32;

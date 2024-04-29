@@ -6,6 +6,8 @@
 #include <d3dcompiler.h>
 
 #include <exception>
+#include <random>
+#include <vector>
 
 void CE(HRESULT x) {
   if (FAILED(x)) {
@@ -18,6 +20,7 @@ ID3D11Device* g_device11;
 ID3D11DeviceContext* g_context11;
 
 void CornellBoxTest();
+void RadixSortTest();
 
 void InitDevice11() {
   const D3D_FEATURE_LEVEL levels[] = {
@@ -56,7 +59,7 @@ void InitDevice11() {
 }
 
 ID3D11ComputeShader* BuildComputeShader(LPCWSTR src_file, LPCSTR entry_point) {
-  UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+  UINT flags = 0;// D3DCOMPILE_ENABLE_STRICTNESS;
   LPCSTR profile = (g_device11->GetFeatureLevel() >= D3D_FEATURE_LEVEL_11_0) ? "cs_5_0" : "cs_4_0";
   ID3DBlob* shader_blob = nullptr, * error_blob = nullptr;
   HRESULT hr = D3DCompileFromFile(src_file, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry_point, profile, flags, 0, &shader_blob, &error_blob);
@@ -141,6 +144,25 @@ ID3D11UnorderedAccessView* CreateBufferUAV(ID3D11Buffer* buffer) {
   return ret;
 }
 
+int RoundUpToAlign(int x, int align) {
+  if (x % align != 0) {
+    x += align - (x % align);
+  }
+  return x;
+}
+
+ID3D11Buffer* CreateConstantBuffer(int size) {
+  ID3D11Buffer* ret = nullptr;
+  D3D11_BUFFER_DESC cb_desc{};
+  cb_desc.ByteWidth = RoundUpToAlign(size, 16);
+  cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+  cb_desc.Usage = D3D11_USAGE_DYNAMIC;
+  cb_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+  CE(g_device11->CreateBuffer(&cb_desc, nullptr, &ret));
+  printf("Created a constant buffer of size %d\n", cb_desc.ByteWidth);
+  return ret;
+}
+
 void CounterTest() {
   ID3D11ComputeShader* x = BuildComputeShader(L"shaders/shaders.hlsl", "kernel1");
 
@@ -164,12 +186,121 @@ void CounterTest() {
   uav0->Release();
 }
 
+struct RadixSortCB {
+  int offset_ping;
+  int offset_pong;
+  int offset_local_block_sums;
+  int offset_global_block_sums;
+  int iter;
+  int num_threads_total;
+  int N;
+  int way;
+  int gridDim_x;
+  int shift_right;
+};
+void RadixSortTest() {
+  const int N = 20;
+  const int way = 4;
+  const int gridDim_x = 1;
+  const int blockDim_x = 4;
+  int num_blocks = (N - 1) / blockDim_x + 1;
+  int tot_sz = N * 2 + num_blocks * blockDim_x + num_blocks * way;
+
+  ID3D11Buffer* buf1 = CreateRawBuffer(tot_sz * 4);
+  ID3D11Buffer* buf1_cpu = CreateRawBufferCPUWriteable(tot_sz * 4);
+  D3D11_MAPPED_SUBRESOURCE mapped{};
+  g_context11->Map(buf1_cpu, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+  std::vector<int> d_h = { 1,2,0,3, 0,1,1,0, 3,3,3,2, 1,2,2,0, 2,0,0,2 };
+  /*
+  for (int i = 0; i < N; i++) {
+    d_h.push_back(i);
+  }
+  */
+  std::random_device rd;
+  std::mt19937 g(rd());
+  //std::shuffle(d_h.begin(), d_h.end(), g);
+  printf("Input:");
+  for (int i = 0; i < N; i++) {
+    printf(" %d", d_h[i]);
+  }
+  printf("\n");
+  memcpy(mapped.pData, d_h.data(), sizeof(int) * N);
+  g_context11->Unmap(buf1_cpu, 0);
+  g_context11->CopyResource(buf1, buf1_cpu);
+
+  ID3D11UnorderedAccessView* uav1 = CreateBufferUAV(buf1);
+
+  ID3D11ComputeShader* s = BuildComputeShader(L"shaders/radix4sort.hlsl", "CountBitPatterns");
+
+  RadixSortCB cb{};
+  cb.offset_ping = 0;  // N elements
+  cb.offset_pong = 4 * N;  // N elements
+  cb.iter = 0;
+  cb.num_threads_total = gridDim_x * blockDim_x;
+  cb.offset_local_block_sums = 2 * (4 * N);  // blockDim.x * gridDim.x elements
+  cb.offset_global_block_sums = cb.offset_local_block_sums + 4 * (num_blocks * blockDim_x);  // num_blocks
+  cb.N = N;
+  cb.way = 4;
+  cb.gridDim_x = gridDim_x;
+  cb.shift_right = 0;
+
+  ID3D11Buffer* radixsort_cb = CreateConstantBuffer(sizeof(RadixSortCB));
+  g_context11->Map(radixsort_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+  memcpy(mapped.pData, &cb, sizeof(cb));
+  g_context11->Unmap(radixsort_cb, 0);
+
+  g_context11->CSSetShader(s, nullptr, 0);
+  g_context11->CSSetUnorderedAccessViews(1, 1, &uav1, nullptr);
+  g_context11->CSSetConstantBuffers(0, 1, &radixsort_cb);
+  g_context11->Dispatch(gridDim_x, 1, 1);
+
+  {
+    int* tmp = new int[tot_sz];
+    g_context11->Map(buf1, 0, D3D11_MAP_READ, 0, &mapped);
+    memcpy(tmp, mapped.pData, sizeof(int) * tot_sz);
+    printf("tmp:");
+    printf("\nN:");
+    for (int i = 0; i < N; i++) {
+      if (i % 16 == 0) {
+        printf("\n[%d]:", i);
+      }
+      printf(" %d", tmp[i]);
+    }
+    printf("\n");
+    printf("N #2:");
+    for (int i = 0; i < N; i++) {
+      if (i % 16 == 0) {
+        printf("\n[%d]:", i);
+      }
+      printf(" %d", tmp[i+N]);
+    }
+    printf("\n");
+    printf("Local block sums:");
+    for (int i = 0; i < num_blocks * blockDim_x; i++) {
+      printf(" %d", tmp[2 * N + i]);
+    }
+    printf("\nGlobal block sums:");
+    for (int i = 0; i < num_blocks * way; i++) {
+      if (i % num_blocks == 0) {
+        printf("\n%d:", i / num_blocks);
+      }
+      printf(" %d", tmp[2 * N + num_blocks * blockDim_x + i]);
+    }
+    printf("\n");
+    g_context11->Unmap(buf1, 0);
+    delete[] tmp;
+  }
+}
+
 int main(int argc, char** argv) {
   InitDevice11();
 
   if (argc > 1) {
     if (!strcmp(argv[1], "cornellbox")) {
       CornellBoxTest();
+    }
+    else if (!strcmp(argv[1], "radixsort")) {
+      RadixSortTest();
     }
     else {
       CounterTest();
