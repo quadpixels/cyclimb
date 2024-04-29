@@ -142,10 +142,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="bvhbuild.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\shaders.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="bvhtypes.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\bvhstuff.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
