@@ -27,7 +27,7 @@ cbuffer RadixSortCB : register(b0) {
 
 groupshared int shmem[8192];  // Need to be less than 2*num_blocks
 
-static const int NT = 4;
+static const int NT = 256;
 
 void SingleBlockBlellochScan(int ping, int pong, int threadIdx_x, int N) {
   //int ping = 0, pong = NT;  // Offsets
@@ -107,7 +107,7 @@ void CountBitPatterns(uint3 dispatch_tid : SV_DispatchThreadID, uint3 threadIdx 
       GroupMemoryBarrierWithGroupSync();
 
       if (i + threadIdx.x < N) {
-        int orig = buffer1.Load((i + threadIdx.x) * 4);
+        int orig = buffer1.Load(offset_ping + (i + threadIdx.x) * 4);
         int elt = (orig >> shift_right) & (way - 1);
         if (elt == bmask) {
           shmem[threadIdx.x] = 1;
@@ -119,7 +119,7 @@ void CountBitPatterns(uint3 dispatch_tid : SV_DispatchThreadID, uint3 threadIdx 
       SingleBlockBlellochScan(ping, pong, threadIdx.x, NT);
 
       if (i + threadIdx.x < N) {
-        int orig = buffer1.Load((i + threadIdx.x) * 4);
+        int orig = buffer1.Load(offset_ping + (i + threadIdx.x) * 4);
         int elt = (orig >> shift_right) & (way - 1);
         if (elt == bmask) {
           int local_block_sum = (threadIdx.x > 0) ?
@@ -177,7 +177,7 @@ void Shuffle(uint3 dispatch_tid : SV_DispatchThreadID, uint3 threadIdx : SV_Grou
   for (int i = blockIdx.x * NT, bidx = blockIdx.x; i < N; i += nthds, bidx += gridDim_x) {
     for (int bmask = 0; bmask < way; bmask++) {
       if (i + threadIdx.x < N) {
-        int elt = (buffer1.Load((i + threadIdx.x) * 4) >> shift_right);
+        int elt = (buffer1.Load(offset_ping + (i + threadIdx.x) * 4) >> shift_right);
         elt = elt & (way - 1);
         if (elt == bmask) {
           const int lbs = buffer1.Load(offset_local_block_sums + (NT * bidx + threadIdx.x) * 4);

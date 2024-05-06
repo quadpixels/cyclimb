@@ -4,6 +4,7 @@
 #include <Windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
+#include <profileapi.h>
 
 #include <exception>
 #include <random>
@@ -199,10 +200,11 @@ struct RadixSortCB {
   int shift_right;
 };
 void RadixSortTest() {
-  const int N = 20;
+  const int N = 1024000;
   const int way = 4;
-  const int gridDim_x = 1;
-  const int blockDim_x = 4;
+  const int log2way = 2;
+  const int gridDim_x = 128;
+  const int blockDim_x = 256;
   int num_blocks = (N - 1) / blockDim_x + 1;
   int tot_sz = N * 2 + num_blocks * blockDim_x + num_blocks * way * 2;
 
@@ -210,18 +212,25 @@ void RadixSortTest() {
   ID3D11Buffer* buf1_cpu = CreateRawBufferCPUWriteable(tot_sz * 4);
   D3D11_MAPPED_SUBRESOURCE mapped{};
   g_context11->Map(buf1_cpu, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-  std::vector<int> d_h = { 1,2,0,3, 0,1,1,0, 3,3,3,2, 1,2,2,0, 2,0,0,2 };
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::vector<int> d_h;
+  for (int i = 0; i < N; i++) {
+    d_h.push_back(g() & 0x7FFFFFFF);
+  }
   /*
   for (int i = 0; i < N; i++) {
     d_h.push_back(i);
   }
   */
-  std::random_device rd;
-  std::mt19937 g(rd());
-  //std::shuffle(d_h.begin(), d_h.end(), g);
+  std::shuffle(d_h.begin(), d_h.end(), g);
   printf("Input:");
   for (int i = 0; i < N; i++) {
     printf(" %d", d_h[i]);
+    if (i >= 100 && i < N - 1) {
+      printf(" ... (%d elts omitted)", N - 1 - i);
+      break;
+    }
   }
   printf("\n");
   memcpy(mapped.pData, d_h.data(), sizeof(int) * N);
@@ -247,64 +256,119 @@ void RadixSortTest() {
   cb.shift_right = 0;
 
   ID3D11Buffer* radixsort_cb = CreateConstantBuffer(sizeof(RadixSortCB));
-  g_context11->Map(radixsort_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-  memcpy(mapped.pData, &cb, sizeof(cb));
-  g_context11->Unmap(radixsort_cb, 0);
 
-  g_context11->CSSetShader(s, nullptr, 0);  // Count Bit Patterns
-  g_context11->CSSetUnorderedAccessViews(1, 1, &uav1, nullptr);
-  g_context11->CSSetConstantBuffers(0, 1, &radixsort_cb);
-  g_context11->Dispatch(gridDim_x, 1, 1);
+  const bool verbose = false;
+  
+  LARGE_INTEGER ticks0, ticks1, freq;
+  QueryPerformanceCounter(&ticks0);
 
-  g_context11->CSSetShader(s1, nullptr, 0);  // Compute Block Sums
-  g_context11->Dispatch(way, 1, 1);
+  for (int shift_right = 0, iter = 0; shift_right < sizeof(int) * 8; shift_right += log2way, iter++) {
+    if (iter > 0) {
+      std::swap(cb.offset_ping, cb.offset_pong);
+    }
+    cb.shift_right = shift_right;
 
-  g_context11->CSSetShader(s2, nullptr, 0);  // Shuffle
-  g_context11->Dispatch(gridDim_x, 1, 1);
+    g_context11->Map(radixsort_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    memcpy(mapped.pData, &cb, sizeof(cb));
+    g_context11->Unmap(radixsort_cb, 0);
 
-  {
-    int* tmp = new int[tot_sz];
-    g_context11->Map(buf1, 0, D3D11_MAP_READ, 0, &mapped);
-    memcpy(tmp, mapped.pData, sizeof(int) * tot_sz);
-    printf("tmp:");
-    printf("\nN:");
-    for (int i = 0; i < N; i++) {
-      if (i % 16 == 0) {
-        printf("\n[%d]:", i);
+    g_context11->CSSetShader(s, nullptr, 0);  // Count Bit Patterns
+    g_context11->CSSetUnorderedAccessViews(1, 1, &uav1, nullptr);
+    g_context11->CSSetConstantBuffers(0, 1, &radixsort_cb);
+    g_context11->Dispatch(gridDim_x, 1, 1);
+
+    g_context11->CSSetShader(s1, nullptr, 0);  // Compute Block Sums
+    g_context11->Dispatch(way, 1, 1);
+
+    g_context11->CSSetShader(s2, nullptr, 0);  // Shuffle
+    g_context11->Dispatch(gridDim_x, 1, 1);
+
+    if (verbose) {
+      int* tmp = new int[tot_sz];
+      g_context11->Map(buf1, 0, D3D11_MAP_READ, 0, &mapped);
+      memcpy(tmp, mapped.pData, sizeof(int) * tot_sz);
+      printf("shift_right=%d\n", shift_right);
+      printf("\nN ping:");
+      for (int i = 0; i < N; i++) {
+        if (i % 16 == 0) {
+          printf("\n[%d]:", i);
+        }
+        printf(" %d", tmp[cb.offset_ping / 4 + i]);
       }
-      printf(" %d", tmp[i]);
-    }
-    printf("\n");
-    printf("N #2:");
-    for (int i = 0; i < N; i++) {
-      if (i % 16 == 0) {
-        printf("\n[%d]:", i);
+      printf("\n");
+      printf("N pong:");
+      for (int i = 0; i < N; i++) {
+        if (i % 16 == 0) {
+          printf("\n[%d]:", i);
+        }
+        printf(" %d", tmp[cb.offset_pong / 4 + i]);
       }
-      printf(" %d", tmp[i+N]);
-    }
-    printf("\n");
-    printf("Local block sums:");
-    for (int i = 0; i < num_blocks * blockDim_x; i++) {
-      printf(" %d", tmp[2 * N + i]);
-    }
-    printf("\nGlobal block sums, cumsum'ed:");
-    for (int i = 0; i < num_blocks * way; i++) {
-      if (i % num_blocks == 0) {
-        printf("\n%d:", i / num_blocks);
+      printf("\n");
+      printf("Local block sums:");
+      for (int i = 0; i < num_blocks * blockDim_x; i++) {
+        printf(" %d", tmp[2 * N + i]);
       }
-      printf(" %d", tmp[2 * N + num_blocks * blockDim_x + i]);
-    }
-    printf("\n");
-    printf("\nGlobal block sums cumsum'ed:");
-    for (int i = 0; i < num_blocks * way; i++) {
-      if (i % num_blocks == 0) {
-        printf("\n%d:", i / num_blocks);
+      printf("\nGlobal block sums, cumsum'ed:");
+      for (int i = 0; i < num_blocks * way; i++) {
+        if (i % num_blocks == 0) {
+          printf("\n%d:", i / num_blocks);
+        }
+        printf(" %d", tmp[2 * N + num_blocks * blockDim_x + i]);
       }
-      printf(" %d", tmp[2 * N + num_blocks * blockDim_x + num_blocks * way + i]);
+      printf("\n");
+      printf("\nGlobal block sums cumsum'ed:");
+      for (int i = 0; i < num_blocks * way; i++) {
+        if (i % num_blocks == 0) {
+          printf("\n%d:", i / num_blocks);
+        }
+        printf(" %d", tmp[2 * N + num_blocks * blockDim_x + num_blocks * way + i]);
+      }
+      printf("\n");
+      g_context11->Unmap(buf1, 0);
+      delete[] tmp;
     }
-    printf("\n");
-    g_context11->Unmap(buf1, 0);
-    delete[] tmp;
+  }
+
+  printf("Checking results.\n");
+  int* tmp = new int[tot_sz];
+  g_context11->Map(buf1, 0, D3D11_MAP_READ, 0, &mapped);
+
+  // Do this after Map is done to make sure the sorting is completed
+  QueryPerformanceCounter(&ticks1);
+  QueryPerformanceFrequency(&freq);
+  LARGE_INTEGER elapsed_usec{};
+  elapsed_usec.QuadPart = ticks1.QuadPart - ticks0.QuadPart;
+  elapsed_usec.QuadPart *= 1000000;
+  elapsed_usec.QuadPart /= freq.QuadPart;
+
+  float secs = elapsed_usec.QuadPart / 1000000.0f;
+  printf("CPU-side time: sorting %d elts took %.2f ms (%.2f M elts / s)\n",
+    N, secs * 1000.0f, (N / secs) / 1000000.0f);
+
+  memcpy(tmp, mapped.pData, sizeof(int) * tot_sz);
+  bool ok = true;
+  for (int i = 0; i < N - 1; i++) {
+    printf("%d ", tmp[cb.offset_pong / 4 + i]);
+    if (i >= 100 && i < N - 1) {
+      printf(" ... (%d elts omitted)", N - 1 - i);
+      break;
+    }
+  }
+  printf("\n");
+  for (int i = 0; i < N - 1; i++) {
+    const int x0 = tmp[cb.offset_pong / 4 + i];
+    const int x1 = tmp[cb.offset_pong / 4 + i + 1];
+    if (x0 > x1) {
+      printf("[%d]=%d, [%d]=%d\n", i, x0, i + 1, x1);
+      ok = false;
+    }
+  }
+  delete[] tmp;
+  if (ok) {
+    printf("Sorting %d elements using <<<%d,%d>>> ok.\n", N, cb.gridDim_x, blockDim_x);
+  }
+  else {
+    printf("Sorting %d elements using <<<%d,%d>>> Not OK.\n", N, cb.gridDim_x, blockDim_x);
   }
 }
 
