@@ -204,7 +204,7 @@ void RadixSortTest() {
   const int gridDim_x = 1;
   const int blockDim_x = 4;
   int num_blocks = (N - 1) / blockDim_x + 1;
-  int tot_sz = N * 2 + num_blocks * blockDim_x + num_blocks * way;
+  int tot_sz = N * 2 + num_blocks * blockDim_x + num_blocks * way * 2;
 
   ID3D11Buffer* buf1 = CreateRawBuffer(tot_sz * 4);
   ID3D11Buffer* buf1_cpu = CreateRawBufferCPUWriteable(tot_sz * 4);
@@ -231,6 +231,7 @@ void RadixSortTest() {
   ID3D11UnorderedAccessView* uav1 = CreateBufferUAV(buf1);
 
   ID3D11ComputeShader* s = BuildComputeShader(L"shaders/radix4sort.hlsl", "CountBitPatterns");
+  ID3D11ComputeShader* s1 = BuildComputeShader(L"shaders/radix4sort.hlsl", "ComputeBlockSums");
 
   RadixSortCB cb{};
   cb.offset_ping = 0;  // N elements
@@ -253,6 +254,9 @@ void RadixSortTest() {
   g_context11->CSSetUnorderedAccessViews(1, 1, &uav1, nullptr);
   g_context11->CSSetConstantBuffers(0, 1, &radixsort_cb);
   g_context11->Dispatch(gridDim_x, 1, 1);
+
+  g_context11->CSSetShader(s1, nullptr, 0);
+  g_context11->Dispatch(way, 1, 1);
 
   {
     int* tmp = new int[tot_sz];
@@ -279,12 +283,20 @@ void RadixSortTest() {
     for (int i = 0; i < num_blocks * blockDim_x; i++) {
       printf(" %d", tmp[2 * N + i]);
     }
-    printf("\nGlobal block sums:");
+    printf("\nGlobal block sums, cumsum'ed:");
     for (int i = 0; i < num_blocks * way; i++) {
       if (i % num_blocks == 0) {
         printf("\n%d:", i / num_blocks);
       }
       printf(" %d", tmp[2 * N + num_blocks * blockDim_x + i]);
+    }
+    printf("\n");
+    printf("\nGlobal block sums cumsum'ed:");
+    for (int i = 0; i < num_blocks * way; i++) {
+      if (i % num_blocks == 0) {
+        printf("\n%d:", i / num_blocks);
+      }
+      printf(" %d", tmp[2 * N + num_blocks * blockDim_x + num_blocks * way + i]);
     }
     printf("\n");
     g_context11->Unmap(buf1, 0);
