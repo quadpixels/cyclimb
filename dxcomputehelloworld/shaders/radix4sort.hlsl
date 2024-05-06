@@ -167,10 +167,12 @@ void Shuffle(uint3 dispatch_tid : SV_DispatchThreadID, uint3 threadIdx : SV_Grou
   const int nthds = num_threads_total;
   const int num_blocks = (N - 1) / NT + 1;
 
+  const int offset_global_block_cumsums = offset_global_block_sums + 4 * num_blocks * way;
+
   int offsets123[16];
   offsets123[0] = 0;
   for (int i = 1; i < way; i++) {
-    offsets123[i] = buffer1.Load(offset_global_block_sums + 4 * (num_blocks * way + num_blocks * i - 1)) + offsets123[i - 1];
+    offsets123[i] = buffer1.Load(offset_global_block_cumsums + 4 * (+ num_blocks * i - 1)) + offsets123[i - 1];
   }
   for (int i = blockIdx.x * NT, bidx = blockIdx.x; i < N; i += nthds, bidx += gridDim_x) {
     for (int bmask = 0; bmask < way; bmask++) {
@@ -179,12 +181,10 @@ void Shuffle(uint3 dispatch_tid : SV_DispatchThreadID, uint3 threadIdx : SV_Grou
         elt = elt & (way - 1);
         if (elt == bmask) {
           const int lbs = buffer1.Load(offset_local_block_sums + (NT * bidx + threadIdx.x) * 4);
-          int goffset = (bidx > 0) ? buffer1.Load(offset_global_block_sums + (num_blocks * bmask + bidx - 1) * 4) : 0;
+          int goffset = (bidx > 0) ? buffer1.Load(offset_global_block_cumsums + (num_blocks * bmask + bidx - 1) * 4) : 0;
           goffset += offsets123[bmask];
           int x = buffer1.Load(offset_ping + (i + threadIdx.x) * 4);
-          //buffer1.Store(offset_pong + (goffset + lbs) * 4, 233333);// threadIdx.x);
-          //buffer1.Store(offset_pong + (goffset + lbs) * 4, x);
-          buffer1.Store(offset_pong + (i + threadIdx.x) * 4, (goffset));
+          buffer1.Store(offset_pong + (goffset + lbs) * 4, x);
         }
       }
     }

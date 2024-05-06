@@ -232,6 +232,7 @@ void RadixSortTest() {
 
   ID3D11ComputeShader* s = BuildComputeShader(L"shaders/radix4sort.hlsl", "CountBitPatterns");
   ID3D11ComputeShader* s1 = BuildComputeShader(L"shaders/radix4sort.hlsl", "ComputeBlockSums");
+  ID3D11ComputeShader* s2 = BuildComputeShader(L"shaders/radix4sort.hlsl", "Shuffle");
 
   RadixSortCB cb{};
   cb.offset_ping = 0;  // N elements
@@ -250,13 +251,16 @@ void RadixSortTest() {
   memcpy(mapped.pData, &cb, sizeof(cb));
   g_context11->Unmap(radixsort_cb, 0);
 
-  g_context11->CSSetShader(s, nullptr, 0);
+  g_context11->CSSetShader(s, nullptr, 0);  // Count Bit Patterns
   g_context11->CSSetUnorderedAccessViews(1, 1, &uav1, nullptr);
   g_context11->CSSetConstantBuffers(0, 1, &radixsort_cb);
   g_context11->Dispatch(gridDim_x, 1, 1);
 
-  g_context11->CSSetShader(s1, nullptr, 0);
+  g_context11->CSSetShader(s1, nullptr, 0);  // Compute Block Sums
   g_context11->Dispatch(way, 1, 1);
+
+  g_context11->CSSetShader(s2, nullptr, 0);  // Shuffle
+  g_context11->Dispatch(gridDim_x, 1, 1);
 
   {
     int* tmp = new int[tot_sz];
