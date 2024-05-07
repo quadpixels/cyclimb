@@ -8,6 +8,7 @@
 
 #include "scene.hpp"
 #include "util.hpp"
+#include "textrender.hpp"
 
 ID3D12Device5* g_device12;
 IDXGIFactory4* g_factory;
@@ -47,6 +48,10 @@ int g_font_size;
 ID3D11VertexShader* g_vs_textrender;
 ID3D11PixelShader* g_ps_textrender;
 GLuint g_programs[10];
+
+void do_RenderText_D3D12(const std::wstring& text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform) {
+  assert(0 && "Should not get here rendertext should be in the scene");
+}
 
 long long MillisecondsNow() {
   static LARGE_INTEGER s_frequency;
@@ -90,6 +95,32 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     break;
   }
   default: break;
+  }
+
+  if (g_scene_idx == 0) {
+    ObjScene* s = (ObjScene*)g_scenes[0];
+    switch (wParam) {
+    case 'W': s->axes[2] = 1; break;
+    case 'S': s->axes[2] = -1; break;
+    case 'A': s->axes[0] = 1; break;
+    case 'D': s->axes[0] = -1; break;
+    case 'Q': s->axes[1] = 1; break;
+    case 'E': s->axes[1] = -1; break;
+    }
+  }
+}
+
+void OnKeyUp(WPARAM wParam, LPARAM lParam) {
+  if (g_scene_idx == 0) {
+    ObjScene* s = (ObjScene*)g_scenes[0];
+    switch (wParam) {
+    case 'W': s->axes[2] = 0; break;
+    case 'S': s->axes[2] = 0; break;
+    case 'A': s->axes[0] = 0; break;
+    case 'D': s->axes[0] = 0; break;
+    case 'Q': s->axes[1] = 0; break;
+    case 'E': s->axes[1] = 0; break;
+    }
   }
 }
 
@@ -218,6 +249,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
   }
   case WM_KEYDOWN:
     OnKeyDown(wParam, lParam);
+    return 0;
+  case WM_KEYUP:
+    OnKeyUp(wParam, lParam);
     return 0;
   case WM_PAINT: {
     long long ms = MillisecondsNow();

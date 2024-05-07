@@ -8,6 +8,7 @@
 #include <d3dcompiler.h>
 #include <dxcapi.h>
 
+#include "camera.hpp"
 #include "scene.hpp"
 #include <util.hpp>
 
@@ -30,12 +31,19 @@ void WaitForPreviousFrame();
 
 ObjScene::ObjScene() : root_sig(nullptr), is_raster(true) {
   InitDX12Stuff();
+  camera = new Camera();
+
+  camera->pos = glm::vec3(603.74, 655.15, -130.53);
+  camera->lookdir = glm::normalize(glm::vec3(-602.74, 655.15, -130.4) - camera->pos);
+  camera->up = glm::vec3(0, 1, 0);
+
   std::thread* init_thd = new std::thread([&]() {
     LoadModel();
     CreateAS();
     CreateRaytracingPipeline();
     CreateRaytracingOutputBufferAndSRVs();
     CreateShaderBindingTable();
+    status_string = L"Done";
   });
 }
 
@@ -48,6 +56,7 @@ void ObjScene::LoadModel() {
   std::string warn;
   std::string err;
 
+  status_string = L"Starting loading OBJ file";
   printf("[tinyobj] Starting loading %s\n", inputfile.c_str());
   auto t0 = std::chrono::steady_clock::now();
   bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, inputfile.c_str());
@@ -76,6 +85,7 @@ void ObjScene::LoadModel() {
   printf("total %d triangles\n", num_verts / 3);
 
   // Replace diffuse color with textures' color on the center pixel
+  status_string = L"Reading textures' center pixel colors";
   for (int i = 0; i < materials.size(); i++) {
     std::string dt = materials[i].diffuse_texname;
     if (std::filesystem::exists(dt)) {
@@ -189,6 +199,8 @@ void ObjScene::InitDX12Stuff() {
 
   CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
     IID_PPV_ARGS(&command_allocator)));
+  CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+    IID_PPV_ARGS(&command_allocator1)));
 
   // Shader (hello triangle)
   ID3DBlob* vs_blob, * ps_blob;
@@ -234,6 +246,10 @@ void ObjScene::InitDX12Stuff() {
   CE(g_device12->CreateCommandList(
     0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator,
     pipeline_state, IID_PPV_ARGS(&command_list)));
+  CE(g_device12->CreateCommandList(
+    0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator1,
+    pipeline_state, IID_PPV_ARGS(&command_list1)));
+  command_list1->Close();
 
   // Dummy global and local rootsigs
   {
@@ -281,9 +297,16 @@ void ObjScene::InitDX12Stuff() {
     dsv_desc.Flags = D3D12_DSV_FLAG_NONE;
     g_device12->CreateDepthStencilView(depth_map, &dsv_desc, dsv_heap->GetCPUDescriptorHandleForHeapStart());
   }
+
+  // Text pass
+  text_pass = new TextPass(g_device12, g_command_queue, command_list1, command_allocator1);
+  text_pass->AllocateConstantBuffers(1024);
+  text_pass->InitD3D12();
+  text_pass->InitFreetype();
 }
 
 void ObjScene::CreateAS() {
+  status_string = L"Create AS";
   printf("Creating AS for %d verts\n", num_verts);
   auto t0 = std::chrono::steady_clock::now();
   // 1. BLAS
@@ -870,15 +893,70 @@ void ObjScene::CreateShaderBindingTable() {
 }
 
 void ObjScene::Render() {
-  if (!inited) return;
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
+    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    g_frame_index, g_rtv_descriptor_size);
+
+  float bg_color[] = { 1.0f, 1.0f, 0.8f, 1.0f };
+  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
+  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
+
+  // Show "loading" screen
+  if (!inited) {
+    text_pass->StartPass();
+    text_pass->AddText(status_string, 8, 24, 1.0f, glm::vec3(0, 0, 1), glm::mat4(1));
+    CE(command_allocator1->Reset());
+    CE(command_list1->Reset(command_allocator1, text_pass->pipeline_state));
+    command_list1->SetGraphicsRootSignature(text_pass->root_signature);
+
+    command_list1->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      g_rendertargets[g_frame_index],
+      D3D12_RESOURCE_STATE_PRESENT,
+      D3D12_RESOURCE_STATE_RENDER_TARGET)));
+    command_list1->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+
+
+    // TextPass's rendering procedure
+    ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
+    command_list1->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
+    command_list1->RSSetViewports(1, &viewport);
+    command_list1->RSSetScissorRects(1, &scissor);
+   
+    command_list1->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
+    float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    command_list1->OMSetBlendFactor(blend_factor);
+
+    command_list1->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    for (size_t i = 0; i < text_pass->characters_to_display.size(); i++) {
+      const TextPass::CharacterToDisplay& ctd = text_pass->characters_to_display[i];
+      command_list1->IASetVertexBuffers(0, 1, &ctd.vbv);
+      command_list1->SetGraphicsRootConstantBufferView(0, text_pass->per_scene_cbs->GetGPUVirtualAddress() + sizeof(TextCbPerScene) * ctd.per_scene_cb_index);
+      CD3DX12_GPU_DESCRIPTOR_HANDLE srv_handle(
+        text_pass->srv_heap->GetGPUDescriptorHandleForHeapStart(),
+        ctd.character->offset_in_srv_heap, text_pass->srv_descriptor_size);
+      command_list1->SetGraphicsRootDescriptorTable(1, srv_handle);
+      command_list1->DrawInstanced(6, 1, 0, 0);
+    }
+
+
+    command_list1->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      g_rendertargets[g_frame_index],
+      D3D12_RESOURCE_STATE_RENDER_TARGET,
+      D3D12_RESOURCE_STATE_PRESENT)));
+
+    CE(command_list1->Close());
+    g_command_queue->ExecuteCommandLists(1,
+      (ID3D12CommandList* const*)&command_list1);
+    CE(g_swapchain->Present(1, 0));
+    WaitForPreviousFrame();
+
+    return;
+  }
+
   CE(command_allocator->Reset());
   CE(command_list->Reset(command_allocator, pipeline_state));
   command_list->SetGraphicsRootSignature(root_sig);
 
-  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
-    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
-    g_frame_index, g_rtv_descriptor_size);
-  float bg_color[] = { 1.0f, 1.0f, 0.8f, 1.0f };
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_PRESENT,
@@ -891,8 +969,6 @@ void ObjScene::Render() {
       depth_map, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE)));
     command_list->ClearDepthStencilView(dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     command_list->OMSetRenderTargets(1, &handle_rtv, false, &dsv_handle);
-    D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
-    D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
     command_list->RSSetViewports(1, &viewport);
     command_list->RSSetScissorRects(1, &scissor);
     command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1010,9 +1086,15 @@ glm::vec3 GetUp(const glm::vec3& eye, const glm::vec3& center) {
 
 void ObjScene::Update(float secs) {
   if (!inited) return;
-  glm::vec3 eye(603.74, 655.15, -130.53);
-  glm::vec3 center(-602.74, 655.15, -130.4);
-  glm::vec3 up(0, 1, 0);
+
+  float dist = secs * 100.0f;
+  camera->MoveFront(dist * axes[2]);
+  camera->MoveLeft(dist * axes[0]);
+  camera->MoveUp(dist * axes[1]);
+
+  glm::vec3 eye = camera->pos;// (603.74, 655.15, -130.53);
+  glm::vec3 center = camera->pos + camera->lookdir;// (-602.74, 655.15, -130.4);
+  glm::vec3 up = camera->up; // (0, 1, 0);
 
   glm::mat4 view = glm::lookAt(eye, center, up);
   glm::mat4 proj = glm::perspectiveLH_ZO(glm::radians(90.0f), -1.0f * WIN_W / WIN_H, -0.1f, -499.0f) * (-1.0f);

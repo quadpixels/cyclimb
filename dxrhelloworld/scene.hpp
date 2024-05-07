@@ -4,6 +4,11 @@
 #include <dxcapi.h>
 #include <DirectXMath.h>
 
+#include "camera.hpp"
+#include "textrender.hpp"
+
+#include <string>
+
 class Scene {
 public:
   virtual void Render() = 0;
@@ -49,6 +54,8 @@ public:
 
 class ObjScene : public Scene {
 public:
+  char axes[6]; // Camera movement
+
   struct Vertex {
     DirectX::XMFLOAT3 position;
     DirectX::XMFLOAT4 color;
@@ -78,6 +85,8 @@ public:
   ID3D12PipelineState* pipeline_state;
   ID3D12CommandAllocator* command_allocator;
   ID3D12GraphicsCommandList4* command_list;
+  ID3D12CommandAllocator* command_allocator1; // for showing text
+  ID3D12GraphicsCommandList* command_list1;   // for showing text
   ID3D12Resource* vb_obj;
   D3D12_VERTEX_BUFFER_VIEW vbv_obj;
   ID3D12Resource* vb_triangle;
@@ -115,4 +124,7 @@ public:
 
   bool is_raster;
   bool inited = false;
+  Camera* camera;
+  TextPass* text_pass;
+  std::wstring status_string;
 };

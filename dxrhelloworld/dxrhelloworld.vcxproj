@@ -147,12 +147,16 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\camera.cpp" />
+    <ClCompile Include="..\textrender.cpp" />
     <ClCompile Include="..\util.cpp" />
     <ClCompile Include="DxrObjScene.cpp" />
     <ClCompile Include="DxrTriangleScene.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\camera.hpp" />
+    <ClInclude Include="..\textrender.hpp" />
     <ClInclude Include="..\util.hpp" />
     <ClInclude Include="dxcapi.use.h" />
     <ClInclude Include="scene.hpp" />

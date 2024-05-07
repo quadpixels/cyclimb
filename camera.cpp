@@ -52,9 +52,9 @@ void Camera::do_MoveInLocalCoords(glm::vec3 local_dir, float dist) {
   glm::vec3 world_x = glm::cross(up, lookdir),
             world_z = -lookdir,
             world_y = up,
-            delta = world_x * local_dir.x +
-                    world_y * local_dir.y +
-                    world_z * local_dir.z;
+            delta = world_x * local_dir.x * dist +
+                    world_y * local_dir.y * dist +
+                    world_z * local_dir.z * dist;
   pos += delta;
 }
 
