@@ -18,8 +18,7 @@ public:
 class MoreTrianglesScene : public Scene {
 public:
   struct Vertex {
-    DirectX::XMFLOAT3 position;
-    DirectX::XMFLOAT4 color;
+    float x, y, z;
   };
   MoreTrianglesScene();
   void Render() override;
@@ -33,6 +32,17 @@ public:
   // RT PSO
   ID3D12StateObject* rt_state_object;
   ID3D12StateObjectProperties* rt_state_object_props;
+
+  // RT SRV descriptor heap
+  ID3D12DescriptorHeap* srv_uav_heap;
+  int srv_uav_descriptor_size;
+  ID3D12Resource* vertex_buffer;
+  ID3D12Resource* index_buffer;
+  
+  // Building AS
+  ID3D12Resource* as_scratch;
+  ID3D12Resource* tlas;
+  ID3D12Resource* blas;
 };
 
 class TriangleScene : public Scene {

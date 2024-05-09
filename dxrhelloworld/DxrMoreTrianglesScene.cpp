@@ -1,5 +1,7 @@
 #include "scene.hpp"
 
+#include <d3dx12.h>
+
 extern int WIN_W, WIN_H;
 extern ID3D12Device5* g_device12;
 
@@ -36,6 +38,8 @@ MoreTrianglesScene::MoreTrianglesScene() {
     D3D12_ROOT_SIGNATURE_DESC rootsig_desc{};
     rootsig_desc.NumStaticSamplers = 0;
     rootsig_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    rootsig_desc.NumParameters = 2;
+    rootsig_desc.pParameters = root_params;
 
     ID3DBlob* signature, * error;
     CE(D3D12SerializeRootSignature(
@@ -84,6 +88,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     // 1 - Pipeline config
 
     std::vector<D3D12_STATE_SUBOBJECT> subobjects;
+    subobjects.reserve(7);
 
     // 1. DXIL library
     D3D12_DXIL_LIBRARY_DESC dxil_lib_desc = {};
@@ -122,8 +127,9 @@ MoreTrianglesScene::MoreTrianglesScene() {
     D3D12_STATE_SUBOBJECT subobj_shaderconfig = {};
     subobj_shaderconfig.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
     D3D12_RAYTRACING_SHADER_CONFIG shader_config = {};
-    shader_config.MaxAttributeSizeInBytes = 16;  // float4 color
+    shader_config.MaxPayloadSizeInBytes = 16;  // float4 color
     shader_config.MaxAttributeSizeInBytes = 8;  // float2 bary
+    subobj_shaderconfig.pDesc = &shader_config;
     subobjects.push_back(subobj_shaderconfig);
 
     // 4. Local root signature
@@ -161,6 +167,147 @@ MoreTrianglesScene::MoreTrianglesScene() {
     rtpso_desc.NumSubobjects = 7;
     rtpso_desc.pSubobjects = subobjects.data();
     g_device12->CreateStateObject(&rtpso_desc, IID_PPV_ARGS(&rt_state_object));
+  }
+
+  // SRV heap
+  {
+    D3D12_DESCRIPTOR_HEAP_DESC dhd{};
+    dhd.NumDescriptors = 1;
+    dhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    dhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    dhd.NodeMask = 0;
+    g_device12->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&srv_uav_heap));
+    srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+  }
+
+  // Geometry
+  {
+    int16_t indices[] = { 0,1,2 };
+    const float l = 0.7f;
+    Vertex vertices[] = {
+      { 0, -l, 1.0 },
+      { -l, l, 1.0 },
+      { l, l, 1.0 },
+    };
+
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(indices))),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      nullptr,
+      IID_PPV_ARGS(&index_buffer)));
+    void* mapped;
+    index_buffer->Map(0, nullptr, &mapped);
+    memcpy(mapped, indices, sizeof(indices));
+    index_buffer->Unmap(0, nullptr);
+
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(vertices))),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      nullptr,
+      IID_PPV_ARGS(&vertex_buffer)));
+    vertex_buffer->Map(0, nullptr, &mapped);
+    memcpy(mapped, vertices, sizeof(vertices));
+    vertex_buffer->Unmap(0, nullptr);
+  }
+
+  // AS
+  {
+    D3D12_RAYTRACING_GEOMETRY_DESC geom_desc{};
+    geom_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+    geom_desc.Triangles.VertexBuffer.StartAddress = vertex_buffer->GetGPUVirtualAddress();
+    geom_desc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+    geom_desc.Triangles.VertexCount = vertex_buffer->GetDesc().Width / sizeof(Vertex);
+    geom_desc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+    geom_desc.Triangles.IndexBuffer = index_buffer->GetGPUVirtualAddress();
+    geom_desc.Triangles.IndexFormat = DXGI_FORMAT_R16_UINT;
+    geom_desc.Triangles.IndexCount = index_buffer->GetDesc().Width / sizeof(int16_t);
+    geom_desc.Triangles.Transform3x4 = 0;
+    geom_desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO tlas_buildinfo{};
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas_buildinfo{};
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlas_inputs{};
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS blas_inputs{};
+    tlas_inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    tlas_inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
+    tlas_inputs.NumDescs = 1;
+    tlas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+
+    g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &tlas_buildinfo);
+    blas_inputs = tlas_inputs;
+    blas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    blas_inputs.pGeometryDescs = &geom_desc;
+    g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas_inputs, &blas_buildinfo);
+    printf("Scratch space: TLAS = %d, BLAS = %d\n",
+      tlas_buildinfo.ScratchDataSizeInBytes, blas_buildinfo.ScratchDataSizeInBytes);
+    printf("AS space: TLAS = %d, BLAS = %d\n",
+      tlas_buildinfo.ResultDataMaxSizeInBytes, blas_buildinfo.ResultDataMaxSizeInBytes);
+    printf("Update space: TLAS = %d, BLAS = %d\n",
+      tlas_buildinfo.UpdateScratchDataSizeInBytes, blas_buildinfo.UpdateScratchDataSizeInBytes);
+
+    int scratch_size = std::max(
+      blas_buildinfo.ScratchDataSizeInBytes,
+      tlas_buildinfo.ScratchDataSizeInBytes);
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(scratch_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
+      D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+      nullptr,
+      IID_PPV_ARGS(&as_scratch)));
+
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(tlas_buildinfo.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
+      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+      nullptr,
+      IID_PPV_ARGS(&tlas)));
+
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(blas_buildinfo.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
+      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+      nullptr,
+      IID_PPV_ARGS(&blas)));
+
+    ID3D12Resource* instance_descs;
+    D3D12_RAYTRACING_INSTANCE_DESC instance_desc{};
+    instance_desc.Transform[0][0] = 1;
+    instance_desc.Transform[1][1] = 1;
+    instance_desc.Transform[2][2] = 1;
+    instance_desc.InstanceMask = 1;
+    instance_desc.AccelerationStructure = blas->GetGPUVirtualAddress();
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(instance_desc))),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      nullptr,
+      IID_PPV_ARGS(&instance_descs)));
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC tlas_build_desc{};
+    tlas_inputs.InstanceDescs = instance_descs->GetGPUVirtualAddress();
+    tlas_build_desc.Inputs = tlas_inputs;
+    tlas_build_desc.DestAccelerationStructureData = tlas->GetGPUVirtualAddress();
+    tlas_build_desc.ScratchAccelerationStructureData = as_scratch->GetGPUVirtualAddress();
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC blas_build_desc{};
+    blas_build_desc.Inputs = blas_inputs;
+    blas_build_desc.DestAccelerationStructureData = blas->GetGPUVirtualAddress();
+    blas_build_desc.ScratchAccelerationStructureData = as_scratch->GetGPUVirtualAddress();
+
+    command_list->Close();
+    command_list->Reset(command_allocator, nullptr);
+    command_list->BuildRaytracingAccelerationStructure(&blas_build_desc, 0, nullptr);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas)));
+    command_list->BuildRaytracingAccelerationStructure(&tlas_build_desc, 0, nullptr);
   }
 }
 
