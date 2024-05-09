@@ -7,6 +7,7 @@ extern ID3D12Device5* g_device12;
 
 // In DxrObjScene.cpp
 IDxcBlob* CompileShaderLibrary(LPCWSTR fileName);
+int RoundUp(int x, int align);
 
 MoreTrianglesScene::MoreTrianglesScene() {
   // Create command list
@@ -167,6 +168,8 @@ MoreTrianglesScene::MoreTrianglesScene() {
     rtpso_desc.NumSubobjects = 7;
     rtpso_desc.pSubobjects = subobjects.data();
     g_device12->CreateStateObject(&rtpso_desc, IID_PPV_ARGS(&rt_state_object));
+
+    rt_state_object->QueryInterface(IID_PPV_ARGS(&rt_state_object_props));
   }
 
   // SRV heap
@@ -308,6 +311,81 @@ MoreTrianglesScene::MoreTrianglesScene() {
     command_list->BuildRaytracingAccelerationStructure(&blas_build_desc, 0, nullptr);
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas)));
     command_list->BuildRaytracingAccelerationStructure(&tlas_build_desc, 0, nullptr);
+  }
+
+  // Shader binding table
+  {
+    void* raygen_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyRaygenShader");
+    struct RootArguments {
+      RayGenConstantBuffer cb;
+    } root_args;
+    root_args.cb.viewport.left = -1;
+    root_args.cb.viewport.top = -1;
+    root_args.cb.viewport.right = -1;
+    root_args.cb.viewport.bottom = -1;
+    float border = 0.1f;
+    float ar = WIN_W * 1.0f / WIN_H;
+    if (WIN_W < WIN_H) {
+      root_args.cb.stencil = {
+        -1 + border, -1 + border * ar,
+        1 - border, 1 - border * ar
+      };
+    }
+    else {
+      root_args.cb.stencil = {
+        -1 + border / ar, -1 + border,
+        1 - border / ar, 1 - border
+      };
+    }
+    int shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + sizeof(root_args);
+    shader_record_size = RoundUp(shader_record_size, D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT);
+    D3D12_RESOURCE_DESC sbt_desc{};
+    sbt_desc.DepthOrArraySize = 1;
+    sbt_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    sbt_desc.Format = DXGI_FORMAT_UNKNOWN;
+    sbt_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    sbt_desc.Width = shader_record_size;
+    sbt_desc.Height = 1;
+    sbt_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    sbt_desc.SampleDesc.Count = 1;
+    sbt_desc.SampleDesc.Quality = 0;
+    sbt_desc.MipLevels = 1;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE, &sbt_desc,
+      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+      IID_PPV_ARGS(&raygen_sbt_storage)));
+    char* mapped;
+    raygen_sbt_storage->Map(0, nullptr, (void**)&mapped);
+    memcpy(mapped, raygen_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    mapped += D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+    memcpy(mapped, &root_args, sizeof(root_args));
+    raygen_sbt_storage->Unmap(0, nullptr);
+    printf("Raygen's SBT size is %d\n", D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + sizeof(root_args));
+
+    void* miss_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyMissShader");
+    shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+    sbt_desc.Width = shader_record_size;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE, &sbt_desc,
+      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+      IID_PPV_ARGS(&miss_sbt_storage)));
+    miss_sbt_storage->Map(0, nullptr, (void**)&mapped);
+    memcpy(mapped, miss_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    miss_sbt_storage->Unmap(0, nullptr);
+
+    void* hit_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup");
+    shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+    sbt_desc.Width = shader_record_size;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE, &sbt_desc,
+      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+      IID_PPV_ARGS(&hit_sbt_storage)));
+    hit_sbt_storage->Map(0, nullptr, (void**)&mapped);
+    memcpy(mapped, hit_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    hit_sbt_storage->Unmap(0, nullptr);
   }
 }
 

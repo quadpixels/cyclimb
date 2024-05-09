@@ -20,6 +20,19 @@ public:
   struct Vertex {
     float x, y, z;
   };
+  struct Viewport
+  {
+    float left;
+    float top;
+    float right;
+    float bottom;
+  };
+  struct RayGenConstantBuffer
+  {
+    Viewport viewport;
+    Viewport stencil;
+  };
+
   MoreTrianglesScene();
   void Render() override;
   void Update(float secs) override;
@@ -43,6 +56,11 @@ public:
   ID3D12Resource* as_scratch;
   ID3D12Resource* tlas;
   ID3D12Resource* blas;
+
+  // SBT
+  ID3D12Resource* raygen_sbt_storage;
+  ID3D12Resource* miss_sbt_storage;
+  ID3D12Resource* hit_sbt_storage;
 };
 
 class TriangleScene : public Scene {

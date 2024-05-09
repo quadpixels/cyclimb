@@ -832,7 +832,7 @@ void ObjScene::CreateRaytracingOutputBufferAndSRVs() {
   g_device12->CreateConstantBufferView(&cbv_desc, srv_handle);
 }
 
-static int RoundUp(int x, int align) {
+int RoundUp(int x, int align) {
   return align * ((x - 1) / align + 1);
 }
 
