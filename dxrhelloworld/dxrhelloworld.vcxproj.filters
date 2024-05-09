@@ -33,6 +33,9 @@
     <ClCompile Include="..\textrender.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="DxrMoreTrianglesScene.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="scene.hpp">

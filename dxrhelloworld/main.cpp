@@ -22,7 +22,7 @@ ID3D12Resource* g_rendertargets[FRAME_COUNT];
 int WIN_W = 512, WIN_H = 512;
 HWND g_hwnd;
 static long long g_last_ms;
-static Scene* g_scenes[2];
+static Scene* g_scenes[3];
 static int g_scene_idx = 0;
 ID3D12Fence* g_fence;
 int g_fence_value = 0;
@@ -328,6 +328,7 @@ int main(int argc, char** argv) {
 
   g_scenes[0] = new ObjScene();
   g_scenes[1] = new TriangleScene();
+  g_scenes[2] = new MoreTrianglesScene();
 
   // Main message loop
   g_last_ms = MillisecondsNow();

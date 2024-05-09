@@ -15,6 +15,21 @@ public:
   virtual void Update(float secs) = 0;
 };
 
+class MoreTrianglesScene : public Scene {
+public:
+  struct Vertex {
+    DirectX::XMFLOAT3 position;
+    DirectX::XMFLOAT4 color;
+  };
+  MoreTrianglesScene();
+  void Render() override;
+  void Update(float secs) override;
+
+  ID3D12CommandAllocator* command_allocator;
+  ID3D12GraphicsCommandList4* command_list;
+  ID3D12RootSignature* global_rootsig;
+};
+
 class TriangleScene : public Scene {
 public:
   struct Vertex {

@@ -150,6 +150,7 @@
     <ClCompile Include="..\camera.cpp" />
     <ClCompile Include="..\textrender.cpp" />
     <ClCompile Include="..\util.cpp" />
+    <ClCompile Include="DxrMoreTrianglesScene.cpp" />
     <ClCompile Include="DxrObjScene.cpp" />
     <ClCompile Include="DxrTriangleScene.cpp" />
     <ClCompile Include="main.cpp" />
