@@ -28,6 +28,11 @@ public:
   ID3D12CommandAllocator* command_allocator;
   ID3D12GraphicsCommandList4* command_list;
   ID3D12RootSignature* global_rootsig;
+  ID3D12RootSignature* local_rootsig;
+
+  // RT PSO
+  ID3D12StateObject* rt_state_object;
+  ID3D12StateObjectProperties* rt_state_object_props;
 };
 
 class TriangleScene : public Scene {
