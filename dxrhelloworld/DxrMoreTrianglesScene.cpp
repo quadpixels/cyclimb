@@ -172,17 +172,6 @@ MoreTrianglesScene::MoreTrianglesScene() {
     rt_state_object->QueryInterface(IID_PPV_ARGS(&rt_state_object_props));
   }
 
-  // SRV heap
-  {
-    D3D12_DESCRIPTOR_HEAP_DESC dhd{};
-    dhd.NumDescriptors = 1;
-    dhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    dhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    dhd.NodeMask = 0;
-    g_device12->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&srv_uav_heap));
-    srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-  }
-
   // Geometry
   {
     int16_t indices[] = { 0,1,2 };
@@ -387,9 +376,44 @@ MoreTrianglesScene::MoreTrianglesScene() {
     memcpy(mapped, hit_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
     hit_sbt_storage->Unmap(0, nullptr);
   }
+
+  // Output resource
+  {
+    D3D12_RESOURCE_DESC desc{};
+    desc.DepthOrArraySize = 1;
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    desc.Width = WIN_W;
+    desc.Height = WIN_H;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE, &desc,
+      D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr,
+      IID_PPV_ARGS(&rt_output_resource)));
+
+    // UAV heap
+    D3D12_DESCRIPTOR_HEAP_DESC dhd{};
+    dhd.NumDescriptors = 1;
+    dhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    dhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    dhd.NodeMask = 0;
+    g_device12->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&srv_uav_heap));
+    srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+  
+    CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart(), 0, srv_uav_descriptor_size);
+
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc{};
+    uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    g_device12->CreateUnorderedAccessView(rt_output_resource, nullptr, &uav_desc, uav_handle);
+  }
 }
 
 void MoreTrianglesScene::Render() {
+
 }
 
 void MoreTrianglesScene::Update(float secs) {

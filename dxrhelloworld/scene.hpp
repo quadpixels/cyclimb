@@ -61,6 +61,9 @@ public:
   ID3D12Resource* raygen_sbt_storage;
   ID3D12Resource* miss_sbt_storage;
   ID3D12Resource* hit_sbt_storage;
+
+  // Output
+  ID3D12Resource* rt_output_resource;
 };
 
 class TriangleScene : public Scene {
