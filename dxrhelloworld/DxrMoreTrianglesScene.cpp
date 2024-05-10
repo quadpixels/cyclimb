@@ -1,13 +1,21 @@
 #include "scene.hpp"
 
 #include <d3dx12.h>
+#include <dxgi1_4.h>
 
 extern int WIN_W, WIN_H;
 extern ID3D12Device5* g_device12;
+extern ID3D12DescriptorHeap* g_rtv_heap;
+extern int g_rtv_descriptor_size;
+extern int g_frame_index;
+extern ID3D12Resource* g_rendertargets[];
+extern ID3D12CommandQueue* g_command_queue;
+extern IDXGISwapChain3* g_swapchain;
 
 // In DxrObjScene.cpp
 IDxcBlob* CompileShaderLibrary(LPCWSTR fileName);
 int RoundUp(int x, int align);
+void WaitForPreviousFrame();
 
 MoreTrianglesScene::MoreTrianglesScene() {
   // Create command list
@@ -277,12 +285,16 @@ MoreTrianglesScene::MoreTrianglesScene() {
     instance_desc.InstanceMask = 1;
     instance_desc.AccelerationStructure = blas->GetGPUVirtualAddress();
     CE(g_device12->CreateCommittedResource(
-      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
       D3D12_HEAP_FLAG_NONE,
       &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(instance_desc))),
       D3D12_RESOURCE_STATE_GENERIC_READ,
       nullptr,
       IID_PPV_ARGS(&instance_descs)));
+    char* mapped;
+    instance_descs->Map(0, nullptr, (void**)&mapped);
+    memcpy(mapped, &instance_desc, sizeof(instance_desc));
+    instance_descs->Unmap(0, nullptr);
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC tlas_build_desc{};
     tlas_inputs.InstanceDescs = instance_descs->GetGPUVirtualAddress();
@@ -300,6 +312,8 @@ MoreTrianglesScene::MoreTrianglesScene() {
     command_list->BuildRaytracingAccelerationStructure(&blas_build_desc, 0, nullptr);
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas)));
     command_list->BuildRaytracingAccelerationStructure(&tlas_build_desc, 0, nullptr);
+    command_list->Close();
+    g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
   }
 
   // Shader binding table
@@ -310,8 +324,8 @@ MoreTrianglesScene::MoreTrianglesScene() {
     } root_args;
     root_args.cb.viewport.left = -1;
     root_args.cb.viewport.top = -1;
-    root_args.cb.viewport.right = -1;
-    root_args.cb.viewport.bottom = -1;
+    root_args.cb.viewport.right = 1;
+    root_args.cb.viewport.bottom = 1;
     float border = 0.1f;
     float ar = WIN_W * 1.0f / WIN_H;
     if (WIN_W < WIN_H) {
@@ -397,7 +411,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     // UAV heap
     D3D12_DESCRIPTOR_HEAP_DESC dhd{};
-    dhd.NumDescriptors = 1;
+    dhd.NumDescriptors = 2;
     dhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     dhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     dhd.NodeMask = 0;
@@ -410,10 +424,85 @@ MoreTrianglesScene::MoreTrianglesScene() {
     uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     g_device12->CreateUnorderedAccessView(rt_output_resource, nullptr, &uav_desc, uav_handle);
   }
+
+  // SRV of TLAS
+  {
+    CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart(), 1, srv_uav_descriptor_size);
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+    srv_desc.Format = DXGI_FORMAT_UNKNOWN;
+    srv_desc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+    srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv_desc.RaytracingAccelerationStructure.Location = tlas->GetGPUVirtualAddress();
+    g_device12->CreateShaderResourceView(nullptr, &srv_desc, srv_handle);
+  }
+
 }
 
 void MoreTrianglesScene::Render() {
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
+    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    g_frame_index, g_rtv_descriptor_size);
 
+  float bg_color[] = { 0.8f, 1.0f, 1.0f, 1.0f };
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, nullptr));
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_PRESENT,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+
+  command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    rt_output_resource,
+    D3D12_RESOURCE_STATE_COPY_SOURCE,
+    D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
+
+  command_list->SetComputeRootSignature(global_rootsig);
+  command_list->SetDescriptorHeaps(1, &srv_uav_heap);
+
+  CD3DX12_GPU_DESCRIPTOR_HANDLE handle_uav(
+    srv_uav_heap->GetGPUDescriptorHandleForHeapStart());
+  command_list->SetComputeRootDescriptorTable(0, handle_uav);
+  command_list->SetComputeRootShaderResourceView(1, tlas->GetGPUVirtualAddress());
+
+  D3D12_DISPATCH_RAYS_DESC desc{};
+  desc.RayGenerationShaderRecord.StartAddress = raygen_sbt_storage->GetGPUVirtualAddress();
+  desc.RayGenerationShaderRecord.SizeInBytes = 64;
+  desc.MissShaderTable.StartAddress = miss_sbt_storage->GetGPUVirtualAddress();
+  desc.MissShaderTable.SizeInBytes = 32;
+  desc.MissShaderTable.StrideInBytes = 32;
+  desc.HitGroupTable.StartAddress = hit_sbt_storage->GetGPUVirtualAddress();
+  desc.HitGroupTable.SizeInBytes = 32;
+  desc.HitGroupTable.StrideInBytes = 32;
+  desc.Width = WIN_W;
+  desc.Height = WIN_H;
+  desc.Depth = 1;
+
+  command_list->SetPipelineState1(rt_state_object);
+  command_list->DispatchRays(&desc);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    rt_output_resource,
+    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+    D3D12_RESOURCE_STATE_COPY_SOURCE)));
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_COPY_DEST)));
+  command_list->CopyResource(g_rendertargets[g_frame_index], rt_output_resource);
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_COPY_DEST,
+    D3D12_RESOURCE_STATE_PRESENT)));
+
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1,
+    (ID3D12CommandList* const*)&command_list);
+  CE(g_swapchain->Present(1, 0));
+  WaitForPreviousFrame();
 }
 
 void MoreTrianglesScene::Update(float secs) {

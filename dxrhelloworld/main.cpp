@@ -85,14 +85,11 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     }
     break;
   }
-  case '0': {
-    printf("Current scene set to 0\n");
-    g_scene_idx = 0; break;
-  }
-  case '1': {
-    printf("Current scene set to 1\n");
-    g_scene_idx = 1;
-    break;
+  case '0':
+  case '1': 
+  case '2': {
+    printf("Current scene set to %c\n", wParam);
+    g_scene_idx = wParam - '0'; break;
   }
   default: break;
   }
