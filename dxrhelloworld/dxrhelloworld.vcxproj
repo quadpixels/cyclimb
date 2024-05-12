@@ -161,8 +161,14 @@
     <ClInclude Include="..\util.hpp" />
     <ClInclude Include="dxcapi.use.h" />
     <ClInclude Include="scene.hpp" />
+    <None Include="shaders\RaytracingHlslCompat.h" />
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="tiny_obj_loader.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\raytracing_tutorial.hlsl">
+      <FileType>Document</FileType>
+    </None>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

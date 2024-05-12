@@ -23,6 +23,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     IID_PPV_ARGS(&command_allocator)));
   CE(g_device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator,
     nullptr, IID_PPV_ARGS(&command_list)));
+  command_list->Close();
 
   // 1. Root signatures (global and local)
   {
@@ -214,6 +215,48 @@ MoreTrianglesScene::MoreTrianglesScene() {
     vertex_buffer->Unmap(0, nullptr);
   }
 
+  {
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(512)),
+      D3D12_RESOURCE_STATE_COPY_DEST,
+      nullptr,
+      IID_PPV_ARGS(&transform_matrices)));
+
+    ID3D12Resource* tmp;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(512)),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      nullptr,
+      IID_PPV_ARGS(&tmp)));
+
+    char* mapped;
+    Mat3x4 mat{};
+    mat.m[0][0] = 0.4f;
+    mat.m[1][1] = 0.4f;
+    mat.m[2][2] = 0.4f;
+    mat.m[0][3] = -0.5f;
+    mat.m[1][3] = -0.5f;
+    mat.m[2][3] = 0.0f;
+    tmp->Map(0, nullptr, (void**)(&mapped));
+    memcpy(mapped, &mat, sizeof(mat));
+    tmp->Unmap(0, nullptr);
+
+    command_list->Reset(command_allocator, nullptr);
+    command_list->CopyResource(transform_matrices, tmp);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      transform_matrices,
+      D3D12_RESOURCE_STATE_COPY_DEST,
+      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)));
+    command_list->Close();
+    g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
+    WaitForPreviousFrame();
+    tmp->Release();
+  }
+
   // AS
   {
     D3D12_RAYTRACING_GEOMETRY_DESC geom_desc{};
@@ -225,7 +268,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     geom_desc.Triangles.IndexBuffer = index_buffer->GetGPUVirtualAddress();
     geom_desc.Triangles.IndexFormat = DXGI_FORMAT_R16_UINT;
     geom_desc.Triangles.IndexCount = index_buffer->GetDesc().Width / sizeof(int16_t);
-    geom_desc.Triangles.Transform3x4 = 0;
+    geom_desc.Triangles.Transform3x4 = transform_matrices->GetGPUVirtualAddress();
     geom_desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
 
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO tlas_buildinfo{};
@@ -240,6 +283,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &tlas_buildinfo);
     blas_inputs = tlas_inputs;
+    blas_inputs.NumDescs = 1;
     blas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
     blas_inputs.pGeometryDescs = &geom_desc;
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas_inputs, &blas_buildinfo);

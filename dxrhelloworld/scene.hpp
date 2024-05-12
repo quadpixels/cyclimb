@@ -32,6 +32,9 @@ public:
     Viewport viewport;
     Viewport stencil;
   };
+  struct Mat3x4 {
+    float m[3][4];
+  };
 
   MoreTrianglesScene();
   void Render() override;
@@ -41,6 +44,8 @@ public:
   ID3D12GraphicsCommandList4* command_list;
   ID3D12RootSignature* global_rootsig;
   ID3D12RootSignature* local_rootsig;
+
+  ID3D12Resource* transform_matrices;
 
   // RT PSO
   ID3D12StateObject* rt_state_object;
