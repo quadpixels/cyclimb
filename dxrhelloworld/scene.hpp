@@ -54,13 +54,19 @@ public:
   // RT SRV descriptor heap
   ID3D12DescriptorHeap* srv_uav_heap;
   int srv_uav_descriptor_size;
+
+  // Triangle geometry
   ID3D12Resource* vertex_buffer;
   ID3D12Resource* index_buffer;
+
+  // AABB proc geometry
+  ID3D12Resource* proc_aabb_buffer;
   
   // Building AS
   ID3D12Resource* as_scratch;
   ID3D12Resource* tlas;
-  ID3D12Resource* blas;
+  ID3D12Resource* blas0;  // Triangle
+  ID3D12Resource* blas1;  // Procedural
 
   // SBT
   ID3D12Resource* raygen_sbt_storage;

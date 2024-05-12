@@ -213,6 +213,26 @@ MoreTrianglesScene::MoreTrianglesScene() {
     vertex_buffer->Map(0, nullptr, &mapped);
     memcpy(mapped, vertices, sizeof(vertices));
     vertex_buffer->Unmap(0, nullptr);
+
+    // AABBs
+    const float eps = 1e-4;
+    D3D12_RAYTRACING_AABB aabb{};
+    aabb.MinX = -l;
+    aabb.MinY = -l;
+    aabb.MinZ = -eps;
+    aabb.MaxX = l;
+    aabb.MaxY = l;
+    aabb.MaxZ = eps;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(aabb))),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      nullptr,
+      IID_PPV_ARGS(&proc_aabb_buffer)));
+    proc_aabb_buffer->Map(0, nullptr, &mapped);
+    memcpy(mapped, &aabb, sizeof(aabb));
+    proc_aabb_buffer->Unmap(0, nullptr);
   }
 
   {
@@ -232,6 +252,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
       D3D12_RESOURCE_STATE_GENERIC_READ,
       nullptr,
       IID_PPV_ARGS(&tmp)));
+    tmp->SetName(L"temp for transform_matrices");
 
     char* mapped;
     Mat3x4 mat{};
@@ -254,7 +275,6 @@ MoreTrianglesScene::MoreTrianglesScene() {
     command_list->Close();
     g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
     WaitForPreviousFrame();
-    tmp->Release();
   }
 
   // AS
@@ -271,32 +291,49 @@ MoreTrianglesScene::MoreTrianglesScene() {
     geom_desc.Triangles.Transform3x4 = transform_matrices->GetGPUVirtualAddress();
     geom_desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
 
+    D3D12_RAYTRACING_GEOMETRY_DESC proc_desc{};
+    proc_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
+    proc_desc.AABBs.AABBCount = 1;
+    proc_desc.AABBs.AABBs.StartAddress = proc_aabb_buffer->GetGPUVirtualAddress();
+    proc_desc.AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
+    proc_desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO tlas_buildinfo{};
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas_buildinfo{};
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas0_buildinfo{};
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas1_buildinfo{};
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlas_inputs{};
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS blas_inputs{};
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS blas0_inputs{};
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS blas1_inputs{};
     tlas_inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
     tlas_inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
-    tlas_inputs.NumDescs = 1;
+    tlas_inputs.NumDescs = 2;
     tlas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
 
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &tlas_buildinfo);
-    blas_inputs = tlas_inputs;
-    blas_inputs.NumDescs = 1;
-    blas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-    blas_inputs.pGeometryDescs = &geom_desc;
-    g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas_inputs, &blas_buildinfo);
-    printf("Scratch space: TLAS = %d, BLAS = %d\n",
-      tlas_buildinfo.ScratchDataSizeInBytes, blas_buildinfo.ScratchDataSizeInBytes);
-    printf("AS space: TLAS = %d, BLAS = %d\n",
-      tlas_buildinfo.ResultDataMaxSizeInBytes, blas_buildinfo.ResultDataMaxSizeInBytes);
-    printf("Update space: TLAS = %d, BLAS = %d\n",
-      tlas_buildinfo.UpdateScratchDataSizeInBytes, blas_buildinfo.UpdateScratchDataSizeInBytes);
+    blas0_inputs = tlas_inputs;
+    blas0_inputs.NumDescs = 1;
+    blas0_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    blas0_inputs.pGeometryDescs = &geom_desc;
+    
+    blas1_inputs = tlas_inputs;
+    blas1_inputs.NumDescs = 1;
+    blas1_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    blas1_inputs.pGeometryDescs = &proc_desc;
 
-    int scratch_size = std::max(
-      blas_buildinfo.ScratchDataSizeInBytes,
-      tlas_buildinfo.ScratchDataSizeInBytes);
+    g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas0_inputs, &blas0_buildinfo);
+    g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas1_inputs, &blas1_buildinfo);
+
+    printf("Scratch space: TLAS=%d, BLAS0=%d, BLAS1=%d\n",
+      tlas_buildinfo.ScratchDataSizeInBytes, blas0_buildinfo.ScratchDataSizeInBytes, blas1_buildinfo.ScratchDataSizeInBytes);
+    printf("AS space: TLAS=%d, BLAS0=%d, BLAS1=%d\n",
+      tlas_buildinfo.ResultDataMaxSizeInBytes, blas0_buildinfo.ResultDataMaxSizeInBytes, blas1_buildinfo.ResultDataMaxSizeInBytes);
+    printf("Update space: TLAS=%d, BLAS0=%d, BLAS1=%d\n",
+      tlas_buildinfo.UpdateScratchDataSizeInBytes, blas0_buildinfo.UpdateScratchDataSizeInBytes, blas1_buildinfo.UpdateScratchDataSizeInBytes);
+
+    size_t scratch_size = std::max(blas0_buildinfo.ScratchDataSizeInBytes, tlas_buildinfo.ScratchDataSizeInBytes);
+    scratch_size = std::max(blas1_buildinfo.ScratchDataSizeInBytes, scratch_size);
+
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
       D3D12_HEAP_FLAG_NONE,
@@ -316,28 +353,42 @@ MoreTrianglesScene::MoreTrianglesScene() {
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
       D3D12_HEAP_FLAG_NONE,
-      &keep(CD3DX12_RESOURCE_DESC::Buffer(blas_buildinfo.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(blas0_buildinfo.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
       D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
       nullptr,
-      IID_PPV_ARGS(&blas)));
+      IID_PPV_ARGS(&blas0)));
+
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(blas1_buildinfo.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
+      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+      nullptr,
+      IID_PPV_ARGS(&blas1)));
 
     ID3D12Resource* instance_descs;
-    D3D12_RAYTRACING_INSTANCE_DESC instance_desc{};
-    instance_desc.Transform[0][0] = 1;
-    instance_desc.Transform[1][1] = 1;
-    instance_desc.Transform[2][2] = 1;
-    instance_desc.InstanceMask = 1;
-    instance_desc.AccelerationStructure = blas->GetGPUVirtualAddress();
+    D3D12_RAYTRACING_INSTANCE_DESC instance_descs_cpu[2] = {};
+    instance_descs_cpu[0].Transform[0][0] = 1;
+    instance_descs_cpu[0].Transform[1][1] = 1;
+    instance_descs_cpu[0].Transform[2][2] = 1;
+    instance_descs_cpu[0].InstanceMask = 1;
+    instance_descs_cpu[0].AccelerationStructure = blas0->GetGPUVirtualAddress();
+    instance_descs_cpu[1].Transform[0][0] = 1;
+    instance_descs_cpu[1].Transform[1][1] = 1;
+    instance_descs_cpu[1].Transform[2][2] = 1;
+    instance_descs_cpu[1].InstanceMask = 1;
+    instance_descs_cpu[1].AccelerationStructure = blas1->GetGPUVirtualAddress();
+
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
       D3D12_HEAP_FLAG_NONE,
-      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(instance_desc))),
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(instance_descs_cpu))),
       D3D12_RESOURCE_STATE_GENERIC_READ,
       nullptr,
       IID_PPV_ARGS(&instance_descs)));
     char* mapped;
     instance_descs->Map(0, nullptr, (void**)&mapped);
-    memcpy(mapped, &instance_desc, sizeof(instance_desc));
+    memcpy(mapped, &(instance_descs_cpu[0]), sizeof(instance_descs_cpu));
     instance_descs->Unmap(0, nullptr);
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC tlas_build_desc{};
@@ -346,15 +397,22 @@ MoreTrianglesScene::MoreTrianglesScene() {
     tlas_build_desc.DestAccelerationStructureData = tlas->GetGPUVirtualAddress();
     tlas_build_desc.ScratchAccelerationStructureData = as_scratch->GetGPUVirtualAddress();
 
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC blas_build_desc{};
-    blas_build_desc.Inputs = blas_inputs;
-    blas_build_desc.DestAccelerationStructureData = blas->GetGPUVirtualAddress();
-    blas_build_desc.ScratchAccelerationStructureData = as_scratch->GetGPUVirtualAddress();
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC blas0_build_desc{};
+    blas0_build_desc.Inputs = blas0_inputs;
+    blas0_build_desc.DestAccelerationStructureData = blas0->GetGPUVirtualAddress();
+    blas0_build_desc.ScratchAccelerationStructureData = as_scratch->GetGPUVirtualAddress();
 
-    command_list->Close();
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC blas1_build_desc{};
+    blas1_build_desc.Inputs = blas1_inputs;
+    blas1_build_desc.DestAccelerationStructureData = blas1->GetGPUVirtualAddress();
+    blas1_build_desc.ScratchAccelerationStructureData = as_scratch->GetGPUVirtualAddress();
+
     command_list->Reset(command_allocator, nullptr);
-    command_list->BuildRaytracingAccelerationStructure(&blas_build_desc, 0, nullptr);
-    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas)));
+    command_list->BuildRaytracingAccelerationStructure(&blas0_build_desc, 0, nullptr);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas0)));
+    // Need to have a barrier between building 2 BLAS's
+    command_list->BuildRaytracingAccelerationStructure(&blas1_build_desc, 0, nullptr);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas1)));
     command_list->BuildRaytracingAccelerationStructure(&tlas_build_desc, 0, nullptr);
     command_list->Close();
     g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
