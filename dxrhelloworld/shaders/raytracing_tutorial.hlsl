@@ -70,13 +70,34 @@ void MyRaygenShader()
 void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
 {
     float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
-    payload.color = float4(barycentrics, 1);
+    int pidx = PrimitiveIndex();
+    if (pidx == 0) {
+      payload.color = float4(1.0, 0.2, 0.2, 1);
+    }
+    else if (pidx == 1) {
+      payload.color = float4(1.0, 1.0, 0.2, 1);
+    }
+    else {
+      payload.color = float4(barycentrics, 1);
+    }
 }
 
 [shader("miss")]
 void MyMissShader(inout RayPayload payload)
 {
     payload.color = float4(0, 0, 0, 1);
+}
+
+[shader("intersection")]
+void MyIntersectionShader()
+{
+  RayDesc ray;
+  ray.Origin = ObjectRayOrigin();
+  ray.Direction = ObjectRayDirection();
+  MyAttributes attr;
+  attr.barycentrics.x = ray.Origin.x;
+  attr.barycentrics.y = ray.Origin.y;
+  ReportHit(1.0f, 0, attr);
 }
 
 #endif // RAYTRACING_HLSL

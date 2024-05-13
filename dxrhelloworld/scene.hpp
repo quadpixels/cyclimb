@@ -45,8 +45,6 @@ public:
   ID3D12RootSignature* global_rootsig;
   ID3D12RootSignature* local_rootsig;
 
-  ID3D12Resource* transform_matrices;
-
   // RT PSO
   ID3D12StateObject* rt_state_object;
   ID3D12StateObjectProperties* rt_state_object_props;
@@ -67,6 +65,8 @@ public:
   ID3D12Resource* tlas;
   ID3D12Resource* blas0;  // Triangle
   ID3D12Resource* blas1;  // Procedural
+
+  ID3D12Resource* transform_matrices0;
 
   // SBT
   ID3D12Resource* raygen_sbt_storage;
