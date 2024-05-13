@@ -230,22 +230,27 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     // AABBs
     const float eps = 1e-4;
-    D3D12_RAYTRACING_AABB aabb{};
-    aabb.MinX = -l * 0.4f + 0.5f;
-    aabb.MinY = -l * 0.4f - 0.5f;
-    aabb.MinZ = 0.4f - eps;
-    aabb.MaxX = l * 0.4f + 0.5f;
-    aabb.MaxY = l * 0.4f - 0.5f;
-    aabb.MaxZ = 0.4f + eps;
+    D3D12_RAYTRACING_AABB aabbs[2] = {};
+    aabbs[0].MinX = -l * 0.4f + 0.5f;
+    aabbs[0].MinY = -l * 0.4f - 0.5f;
+    aabbs[0].MinZ = 0.4f - eps;
+    aabbs[0].MaxX = l * 0.4f + 0.5f;
+    aabbs[0].MaxY = l * 0.4f - 0.5f;
+    aabbs[0].MaxZ = 0.4f + eps;
+
+    aabbs[1] = aabbs[0];
+    aabbs[1].MinY = -l * 0.4f + 0.5f;
+    aabbs[1].MaxY = l * 0.4f + 0.5f;
+
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
       D3D12_HEAP_FLAG_NONE,
-      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(aabb))),
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(aabbs))),
       D3D12_RESOURCE_STATE_GENERIC_READ,
       nullptr,
       IID_PPV_ARGS(&proc_aabb_buffer)));
     proc_aabb_buffer->Map(0, nullptr, &mapped);
-    memcpy(mapped, &aabb, sizeof(aabb));
+    memcpy(mapped, &(aabbs[0]), sizeof(aabbs));
     proc_aabb_buffer->Unmap(0, nullptr);
   }
 
@@ -290,7 +295,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     D3D12_RAYTRACING_GEOMETRY_DESC proc_desc{};
     proc_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
-    proc_desc.AABBs.AABBCount = 1;
+    proc_desc.AABBs.AABBCount = 2;
     proc_desc.AABBs.AABBs.StartAddress = proc_aabb_buffer->GetGPUVirtualAddress();
     proc_desc.AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
     proc_desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
