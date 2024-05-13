@@ -71,14 +71,23 @@ void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
 {
     float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
     int pidx = PrimitiveIndex();
-    if (pidx == 0) {
-      payload.color = float4(1.0, 0.2, 0.2, 1);
-    }
-    else if (pidx == 1) {
-      payload.color = float4(1.0, 1.0, 0.2, 1);
-    }
-    else {
-      payload.color = float4(barycentrics, 1);
+    int gidx = GeometryIndex();
+    payload.color = float4(barycentrics, 1);
+    switch (gidx) {
+      case 0: {
+        switch (pidx) {
+          case 0: payload.color = float4(1.0, 0.2, 0.2, 1); break;
+          case 1: payload.color = float4(0.2, 1.0, 0.2, 1); break;
+        }
+        break;
+      }
+      case 1: {
+        switch (pidx) {
+          case 0: payload.color = float4(1.0, 1.0, 0.2, 1); break;
+          case 1: payload.color = float4(0.2, 1.0, 1.0, 1); break;
+        }
+        break;
+      }
     }
 }
 

@@ -264,15 +264,19 @@ MoreTrianglesScene::MoreTrianglesScene() {
       IID_PPV_ARGS(&transform_matrices0)));
 
     char* mapped;
-    Mat3x4 mat{};
-    mat.m[0][0] = 0.4f;
-    mat.m[1][1] = 0.4f;
-    mat.m[2][2] = 0.4f;
-    mat.m[0][3] = -0.5f;  // left-top
-    mat.m[1][3] = -0.5f;
-    mat.m[2][3] = 0.0f;
+    Mat3x4 mats[2] = {};
+    mats[0].m[0][0] = 0.4f;
+    mats[0].m[1][1] = 0.4f;
+    mats[0].m[2][2] = 0.4f;
+    mats[0].m[0][3] = -0.5f;  // left-top
+    mats[0].m[1][3] = -0.5f;
+    mats[0].m[2][3] = 0.0f;
+
+    mats[1] = mats[0];
+    mats[1].m[1][3] = 0.5f;  // left-bottom
+
     transform_matrices0->Map(0, nullptr, (void**)(&mapped));
-    memcpy(mapped, &mat, sizeof(mat));
+    memcpy(mapped, &(mats[0]), sizeof(mats));
     transform_matrices0->Unmap(0, nullptr);
 
     g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
@@ -281,17 +285,20 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
   // AS
   {
-    D3D12_RAYTRACING_GEOMETRY_DESC geom_desc{};
-    geom_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-    geom_desc.Triangles.VertexBuffer.StartAddress = vertex_buffer->GetGPUVirtualAddress();
-    geom_desc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
-    geom_desc.Triangles.VertexCount = vertex_buffer->GetDesc().Width / sizeof(Vertex);
-    geom_desc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-    geom_desc.Triangles.IndexBuffer = index_buffer->GetGPUVirtualAddress();
-    geom_desc.Triangles.IndexFormat = DXGI_FORMAT_R16_UINT;
-    geom_desc.Triangles.IndexCount = index_buffer->GetDesc().Width / sizeof(int16_t);
-    geom_desc.Triangles.Transform3x4 = transform_matrices0->GetGPUVirtualAddress();
-    geom_desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+    D3D12_RAYTRACING_GEOMETRY_DESC geom_desc[2];
+    geom_desc[0].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+    geom_desc[0].Triangles.VertexBuffer.StartAddress = vertex_buffer->GetGPUVirtualAddress();
+    geom_desc[0].Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+    geom_desc[0].Triangles.VertexCount = vertex_buffer->GetDesc().Width / sizeof(Vertex);
+    geom_desc[0].Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+    geom_desc[0].Triangles.IndexBuffer = index_buffer->GetGPUVirtualAddress();
+    geom_desc[0].Triangles.IndexFormat = DXGI_FORMAT_R16_UINT;
+    geom_desc[0].Triangles.IndexCount = index_buffer->GetDesc().Width / sizeof(int16_t);
+    geom_desc[0].Triangles.Transform3x4 = transform_matrices0->GetGPUVirtualAddress();
+    geom_desc[0].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+
+    geom_desc[1] = geom_desc[0];
+    geom_desc[1].Triangles.Transform3x4 = transform_matrices0->GetGPUVirtualAddress() + sizeof(float) * 12;
 
     D3D12_RAYTRACING_GEOMETRY_DESC proc_desc{};
     proc_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
@@ -314,9 +321,9 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &tlas_buildinfo);
     blas0_inputs = tlas_inputs;
-    blas0_inputs.NumDescs = 1;
+    blas0_inputs.NumDescs = 2;
     blas0_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-    blas0_inputs.pGeometryDescs = &geom_desc;
+    blas0_inputs.pGeometryDescs = geom_desc;
     
     blas1_inputs = tlas_inputs;
     blas1_inputs.NumDescs = 1;

@@ -488,7 +488,7 @@ IDxcBlob* CompileShaderLibrary(LPCWSTR fileName) {
 
   // Compile
   IDxcOperationResult* pResult;
-  CE(pCompiler->Compile(pTextBlob, fileName, L"", L"lib_6_3", nullptr, 0, nullptr, 0,
+  CE(pCompiler->Compile(pTextBlob, fileName, L"", L"lib_6_5", nullptr, 0, nullptr, 0,
     dxcIncludeHandler, &pResult));
 
   // Verify the result
