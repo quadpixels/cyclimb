@@ -53,7 +53,7 @@ void MyRaygenShader()
         // TMin should be kept small to prevent missing geometry at close contact areas.
         ray.TMin = 0.001;
         ray.TMax = 10000.0;
-        RayPayload payload = { float4(0, 0, 0, 0) };
+        RayPayload payload = { float4(0, 0, 0, 1) };
         TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 1, 0, ray, payload);
 
         // Write the raytraced color to the output texture.
@@ -91,10 +91,19 @@ void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
     }
 }
 
+[shader("anyhit")]
+void MyAnyHitShader(inout RayPayload payload, in MyAttributes attr)
+{
+  payload.color.r += 0.2f;
+  payload.color.g += 0.2f;
+  IgnoreHit();  
+}
+
 [shader("miss")]
 void MyMissShader(inout RayPayload payload)
 {
-    payload.color = float4(0, 0, 0, 1);
+  // Don't do anything
+  //payload.color = float4(0, 0, 0, 1);
 }
 
 [shader("intersection")]

@@ -91,19 +91,19 @@ MoreTrianglesScene::MoreTrianglesScene() {
     // 7 subobjects:
     //
     // 1 - DXIL library
-    // 1 - Triangle hit group
+    // 3 - My 3 hit groups.
     // 1 - Shader config
     // 2 - Local root signature and association
     // 1 - Global root signature
     // 1 - Pipeline config
 
     std::vector<D3D12_STATE_SUBOBJECT> subobjects;
-    subobjects.reserve(8);
+    subobjects.reserve(9);
 
     // 1. DXIL library
     D3D12_DXIL_LIBRARY_DESC dxil_lib_desc = {};
     IDxcBlob* dxil_library = CompileShaderLibrary(L"shaders/raytracing_tutorial.hlsl");
-    D3D12_EXPORT_DESC dxil_lib_exports[4];
+    D3D12_EXPORT_DESC dxil_lib_exports[5];
     dxil_lib_exports[0].Flags = D3D12_EXPORT_FLAG_NONE;
     dxil_lib_exports[0].ExportToRename = nullptr;
     dxil_lib_exports[0].Name = L"MyRaygenShader";
@@ -116,9 +116,12 @@ MoreTrianglesScene::MoreTrianglesScene() {
     dxil_lib_exports[3].Flags = D3D12_EXPORT_FLAG_NONE;
     dxil_lib_exports[3].ExportToRename = nullptr;
     dxil_lib_exports[3].Name = L"MyIntersectionShader";
+    dxil_lib_exports[4].Flags = D3D12_EXPORT_FLAG_NONE;
+    dxil_lib_exports[4].ExportToRename = nullptr;
+    dxil_lib_exports[4].Name = L"MyAnyHitShader";
     dxil_lib_desc.DXILLibrary.pShaderBytecode = dxil_library->GetBufferPointer();
     dxil_lib_desc.DXILLibrary.BytecodeLength = dxil_library->GetBufferSize();
-    dxil_lib_desc.NumExports = 4;
+    dxil_lib_desc.NumExports = 5;
     dxil_lib_desc.pExports = dxil_lib_exports;
 
     D3D12_STATE_SUBOBJECT subobj_dxil_lib = {};
@@ -146,6 +149,16 @@ MoreTrianglesScene::MoreTrianglesScene() {
     hitgroup_desc1.HitGroupExport = L"MyHitGroup1";
     subobj_hitgroup1.pDesc = &hitgroup_desc1;
     subobjects.push_back(subobj_hitgroup1);
+
+    // 2.2 Hit group for anyhit triangles
+    D3D12_STATE_SUBOBJECT subobj_hitgroup2 = {};
+    subobj_hitgroup2.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
+    D3D12_HIT_GROUP_DESC hitgroup_desc2 = {};
+    hitgroup_desc2.AnyHitShaderImport = L"MyAnyHitShader";
+    hitgroup_desc2.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+    hitgroup_desc2.HitGroupExport = L"MyHitGroup2";
+    subobj_hitgroup2.pDesc = &hitgroup_desc2;
+    subobjects.push_back(subobj_hitgroup2);
 
     // 3. Shader config
     D3D12_STATE_SUBOBJECT subobj_shaderconfig = {};
@@ -188,17 +201,17 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     D3D12_STATE_OBJECT_DESC rtpso_desc{};
     rtpso_desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
-    rtpso_desc.NumSubobjects = 8;
+    rtpso_desc.NumSubobjects = int(subobjects.size());
     rtpso_desc.pSubobjects = subobjects.data();
-    g_device12->CreateStateObject(&rtpso_desc, IID_PPV_ARGS(&rt_state_object));
+    CE(g_device12->CreateStateObject(&rtpso_desc, IID_PPV_ARGS(&rt_state_object)));
 
     rt_state_object->QueryInterface(IID_PPV_ARGS(&rt_state_object_props));
   }
 
   // Geometry
+  const float l = 0.7f;
   {
     int16_t indices[] = { 0,1,2 };
-    const float l = 0.7f;
     Vertex vertices[] = {
       { 0, -l, 1.0 },
       { -l, l, 1.0 },
@@ -252,6 +265,39 @@ MoreTrianglesScene::MoreTrianglesScene() {
     proc_aabb_buffer->Map(0, nullptr, &mapped);
     memcpy(mapped, &(aabbs[0]), sizeof(aabbs));
     proc_aabb_buffer->Unmap(0, nullptr);
+  }
+
+  // Triangles in the center for any-hit
+  std::vector<Vertex> vertices2;
+  for (int i=-2; i<=2; i++) {
+    const float l0 = 0.1f;
+    Vertex v0(0, -l0, 1.0);
+    Vertex v1(-l0, l0, 1.0);
+    Vertex v2(l0, l0, 1.0);
+    const float dx = l0 * 0.2f;
+    v0.x += i * dx;
+    v1.x += i * dx;
+    v2.x += i * dx;
+    v0.z += i * 0.01f;
+    v1.z += i * 0.01f;
+    v2.z += i * 0.01f;
+    vertices2.push_back(v0);
+    vertices2.push_back(v1);
+    vertices2.push_back(v2);
+  };
+
+  {
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(Vertex) * vertices2.size())),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      nullptr,
+      IID_PPV_ARGS(&anyhit_vertex_buffer)));
+    char* mapped;
+    anyhit_vertex_buffer->Map(0, nullptr, (void**)&mapped);
+    memcpy(mapped, vertices2.data(), sizeof(Vertex)* vertices2.size());
+    anyhit_vertex_buffer->Unmap(0, nullptr);
   }
 
   {
@@ -310,13 +356,15 @@ MoreTrianglesScene::MoreTrianglesScene() {
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO tlas_buildinfo{};
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas0_buildinfo{};
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas1_buildinfo{};
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas2_buildinfo{};
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlas_inputs{};
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS blas0_inputs{};
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS blas1_inputs{};
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS blas2_inputs{};
     tlas_inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
     tlas_inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE;
-    tlas_inputs.NumDescs = 2;
+    tlas_inputs.NumDescs = 3;
     tlas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
 
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &tlas_buildinfo);
@@ -330,18 +378,46 @@ MoreTrianglesScene::MoreTrianglesScene() {
     blas1_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
     blas1_inputs.pGeometryDescs = &proc_desc;
 
+    D3D12_RAYTRACING_GEOMETRY_DESC geom_desc2;
+    geom_desc2.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+    geom_desc2.Triangles.VertexBuffer.StartAddress = anyhit_vertex_buffer->GetGPUVirtualAddress();
+    geom_desc2.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+    geom_desc2.Triangles.VertexCount = vertices2.size();
+    geom_desc2.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+    geom_desc2.Triangles.IndexBuffer = 0;
+    geom_desc2.Triangles.IndexFormat = DXGI_FORMAT_UNKNOWN;
+    geom_desc2.Triangles.IndexCount = 0;
+    geom_desc2.Triangles.Transform3x4 = 0;
+    geom_desc2.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+
+    blas2_inputs = tlas_inputs;
+    blas2_inputs.NumDescs = 1;
+    blas2_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    blas2_inputs.pGeometryDescs = &geom_desc2;
+
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas0_inputs, &blas0_buildinfo);
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas1_inputs, &blas1_buildinfo);
+    g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas1_inputs, &blas2_buildinfo);
 
-    printf("Scratch space: TLAS=%d, BLAS0=%d, BLAS1=%d\n",
-      tlas_buildinfo.ScratchDataSizeInBytes, blas0_buildinfo.ScratchDataSizeInBytes, blas1_buildinfo.ScratchDataSizeInBytes);
-    printf("AS space: TLAS=%d, BLAS0=%d, BLAS1=%d\n",
-      tlas_buildinfo.ResultDataMaxSizeInBytes, blas0_buildinfo.ResultDataMaxSizeInBytes, blas1_buildinfo.ResultDataMaxSizeInBytes);
-    printf("Update space: TLAS=%d, BLAS0=%d, BLAS1=%d\n",
-      tlas_buildinfo.UpdateScratchDataSizeInBytes, blas0_buildinfo.UpdateScratchDataSizeInBytes, blas1_buildinfo.UpdateScratchDataSizeInBytes);
+    printf("Scratch space: TLAS=%d, BLAS0=%d, BLAS1=%d, BLAS2=%d\n",
+      tlas_buildinfo.ScratchDataSizeInBytes,
+      blas0_buildinfo.ScratchDataSizeInBytes,
+      blas1_buildinfo.ScratchDataSizeInBytes,
+      blas2_buildinfo.ScratchDataSizeInBytes);
+    printf("AS space: TLAS=%d, BLAS0=%d, BLAS1=%d, BLAS2=%d\n",
+      tlas_buildinfo.ResultDataMaxSizeInBytes,
+      blas0_buildinfo.ResultDataMaxSizeInBytes,
+      blas1_buildinfo.ResultDataMaxSizeInBytes,
+      blas2_buildinfo.ResultDataMaxSizeInBytes);
+    printf("Update space: TLAS=%d, BLAS0=%d, BLAS1=%d, BLAS2=%d\n",
+      tlas_buildinfo.UpdateScratchDataSizeInBytes,
+      blas0_buildinfo.UpdateScratchDataSizeInBytes,
+      blas1_buildinfo.UpdateScratchDataSizeInBytes,
+      blas2_buildinfo.UpdateScratchDataSizeInBytes);
 
     size_t scratch_size = std::max(blas0_buildinfo.ScratchDataSizeInBytes, tlas_buildinfo.ScratchDataSizeInBytes);
     scratch_size = std::max(blas1_buildinfo.ScratchDataSizeInBytes, scratch_size);
+    scratch_size = std::max(blas2_buildinfo.ScratchDataSizeInBytes, scratch_size);
 
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
@@ -375,8 +451,16 @@ MoreTrianglesScene::MoreTrianglesScene() {
       nullptr,
       IID_PPV_ARGS(&blas1)));
 
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(blas2_buildinfo.ResultDataMaxSizeInBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)),
+      D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+      nullptr,
+      IID_PPV_ARGS(&blas2)));
+
     ID3D12Resource* instance_descs;
-    D3D12_RAYTRACING_INSTANCE_DESC instance_descs_cpu[2] = {};
+    D3D12_RAYTRACING_INSTANCE_DESC instance_descs_cpu[3] = {};
     instance_descs_cpu[0].Transform[0][0] = 1;
     instance_descs_cpu[0].Transform[1][1] = 1;
     instance_descs_cpu[0].Transform[2][2] = 1;
@@ -388,6 +472,12 @@ MoreTrianglesScene::MoreTrianglesScene() {
     instance_descs_cpu[1].InstanceMask = 1;
     instance_descs_cpu[1].AccelerationStructure = blas1->GetGPUVirtualAddress();
     instance_descs_cpu[1].InstanceContributionToHitGroupIndex = 1;  // Use hit group 1, intersection shader
+    instance_descs_cpu[2].Transform[0][0] = 1;
+    instance_descs_cpu[2].Transform[1][1] = 1;
+    instance_descs_cpu[2].Transform[2][2] = 1;
+    instance_descs_cpu[2].InstanceMask = 1;
+    instance_descs_cpu[2].AccelerationStructure = blas2->GetGPUVirtualAddress();
+    instance_descs_cpu[2].InstanceContributionToHitGroupIndex = 2; // Anyhit shader
 
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
@@ -417,12 +507,19 @@ MoreTrianglesScene::MoreTrianglesScene() {
     blas1_build_desc.DestAccelerationStructureData = blas1->GetGPUVirtualAddress();
     blas1_build_desc.ScratchAccelerationStructureData = as_scratch->GetGPUVirtualAddress();
 
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC blas2_build_desc{};
+    blas2_build_desc.Inputs = blas2_inputs;
+    blas2_build_desc.DestAccelerationStructureData = blas2->GetGPUVirtualAddress();
+    blas2_build_desc.ScratchAccelerationStructureData = as_scratch->GetGPUVirtualAddress();
+
     command_list->Reset(command_allocator, nullptr);
     command_list->BuildRaytracingAccelerationStructure(&blas0_build_desc, 0, nullptr);
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas0)));
     // Need to have a barrier between building 2 BLAS's
     command_list->BuildRaytracingAccelerationStructure(&blas1_build_desc, 0, nullptr);
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas1)));
+    command_list->BuildRaytracingAccelerationStructure(&blas2_build_desc, 0, nullptr);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas2)));
     command_list->BuildRaytracingAccelerationStructure(&tlas_build_desc, 0, nullptr);
     command_list->Close();
     g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
@@ -492,8 +589,9 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     void* hit_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup");
     void* hit_shader_id1 = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup1");
+    void* hit_shader_id2 = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup2");
     shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    sbt_desc.Width = shader_record_size * 2;
+    sbt_desc.Width = shader_record_size * 3;
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
       D3D12_HEAP_FLAG_NONE, &sbt_desc,
@@ -502,6 +600,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     hit_sbt_storage->Map(0, nullptr, (void**)&mapped);
     memcpy(mapped, hit_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
     memcpy(mapped + 32, hit_shader_id1, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    memcpy(mapped + 64, hit_shader_id2, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
     hit_sbt_storage->Unmap(0, nullptr);
   }
 

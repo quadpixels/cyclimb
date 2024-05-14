@@ -59,12 +59,16 @@ public:
 
   // AABB proc geometry
   ID3D12Resource* proc_aabb_buffer;
+
+  // Anyhit triangle geometry
+  ID3D12Resource* anyhit_vertex_buffer;
   
   // Building AS
   ID3D12Resource* as_scratch;
   ID3D12Resource* tlas;
   ID3D12Resource* blas0;  // Triangle
   ID3D12Resource* blas1;  // Procedural
+  ID3D12Resource* blas2;  // Anyhit
 
   ID3D12Resource* transform_matrices0;
 
