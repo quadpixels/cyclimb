@@ -303,6 +303,33 @@ void ObjScene::InitDX12Stuff() {
   text_pass->AllocateConstantBuffers(1024);
   text_pass->InitD3D12();
   text_pass->InitFreetype();
+
+  // Query Heap
+  {
+    D3D12_QUERY_HEAP_DESC qh_desc{};
+    qh_desc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    qh_desc.Count = 2;
+    g_device12->CreateQueryHeap(&qh_desc, IID_PPV_ARGS(&query_heap));
+
+    D3D12_RESOURCE_DESC buf_desc{};
+    buf_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buf_desc.Width = sizeof(UINT64) * 2;
+    buf_desc.Height = 1;
+    buf_desc.DepthOrArraySize = 1;
+    buf_desc.MipLevels = 1;
+    buf_desc.Format = DXGI_FORMAT_UNKNOWN;
+    buf_desc.SampleDesc.Count = 1;
+    buf_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    buf_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK)),
+      D3D12_HEAP_FLAG_NONE,
+      &buf_desc,
+      D3D12_RESOURCE_STATE_COPY_DEST,
+      nullptr,
+      IID_PPV_ARGS(&timestamp_resource));
+  }
 }
 
 void ObjScene::CreateAS() {
@@ -949,7 +976,6 @@ void ObjScene::Render() {
       (ID3D12CommandList* const*)&command_list1);
     CE(g_swapchain->Present(1, 0));
     WaitForPreviousFrame();
-
     return;
   }
 
@@ -1000,7 +1026,9 @@ void ObjScene::Render() {
     desc.Depth = 1;
 
     command_list->SetPipelineState1(rt_state_object);
+    command_list->EndQuery(query_heap, D3D12_QUERY_TYPE_TIMESTAMP, 0);
     command_list->DispatchRays(&desc);
+    command_list->EndQuery(query_heap, D3D12_QUERY_TYPE_TIMESTAMP, 1);
     
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
       rt_output_resource,
@@ -1015,6 +1043,9 @@ void ObjScene::Render() {
       g_rendertargets[g_frame_index],
       D3D12_RESOURCE_STATE_COPY_DEST,
       D3D12_RESOURCE_STATE_RENDER_TARGET)));
+
+    command_list->ResolveQueryData(query_heap, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timestamp_resource, 0);
+    
   }
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
@@ -1026,6 +1057,16 @@ void ObjScene::Render() {
     (ID3D12CommandList* const*)&command_list);
   CE(g_swapchain->Present(1, 0));
   WaitForPreviousFrame();
+
+  {
+    uint64_t* timestamp_data, freq;
+    D3D12_RANGE read_range = { 0, sizeof(uint64_t) * 2 };
+    timestamp_resource->Map(0, &read_range, (void**)&timestamp_data);
+    g_command_queue->GetTimestampFrequency(&freq);
+    timestamp_resource->Unmap(0, nullptr);
+    float elapsed = (timestamp_data[1] - timestamp_data[0]) * 1.0f / freq;
+    printf("Elapsed: %g ms\n", elapsed * 1000.0f);
+  }
 }
 
 // From util.cpp

@@ -188,6 +188,10 @@ public:
   int dsv_descriptor_size;
   ID3D12Resource* depth_map;
 
+  // Time measurement
+  ID3D12QueryHeap* query_heap;
+  ID3D12Resource* timestamp_resource;
+
   bool is_raster;
   bool inited = false;
   Camera* camera;
