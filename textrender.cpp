@@ -3,6 +3,7 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #ifdef WIN32
+#include <d3d12.h>
 #include "d3dx12.h"
 #include <d3dcompiler.h>
 #include <DirectXMath.h>
@@ -620,6 +621,20 @@ void TextPass::AddText(std::wstring text, float x, float y, float scale, glm::ve
     ctd.vbv = vbv;
     ctd.per_scene_cb_index = per_scene_cb_index;
     characters_to_display.push_back(ctd);
+  }
+}
+
+void TextPass::RenderText(ID3D12GraphicsCommandList* command_list) {
+  command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+  for (size_t i = 0; i < characters_to_display.size(); i++) {
+    const TextPass::CharacterToDisplay& ctd = characters_to_display[i];
+    command_list->IASetVertexBuffers(0, 1, &ctd.vbv);
+    command_list->SetGraphicsRootConstantBufferView(0, per_scene_cbs->GetGPUVirtualAddress() + sizeof(TextCbPerScene) * ctd.per_scene_cb_index);
+    CD3DX12_GPU_DESCRIPTOR_HANDLE srv_handle(
+      srv_heap->GetGPUDescriptorHandleForHeapStart(),
+      ctd.character->offset_in_srv_heap, srv_descriptor_size);
+    command_list->SetGraphicsRootDescriptorTable(1, srv_handle);
+    command_list->DrawInstanced(6, 1, 0, 0);
   }
 }
 

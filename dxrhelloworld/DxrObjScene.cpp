@@ -201,6 +201,7 @@ void ObjScene::InitDX12Stuff() {
     IID_PPV_ARGS(&command_allocator)));
   CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
     IID_PPV_ARGS(&command_allocator1)));
+  command_allocator1->SetName(L"command_allocator1");
 
   // Shader (hello triangle)
   ID3DBlob* vs_blob, * ps_blob;
@@ -249,6 +250,7 @@ void ObjScene::InitDX12Stuff() {
   CE(g_device12->CreateCommandList(
     0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator1,
     pipeline_state, IID_PPV_ARGS(&command_list1)));
+  command_list1->SetName(L"command_list1");
   command_list1->Close();
 
   // Dummy global and local rootsigs
@@ -953,18 +955,7 @@ void ObjScene::Render() {
     float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
     command_list1->OMSetBlendFactor(blend_factor);
 
-    command_list1->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    for (size_t i = 0; i < text_pass->characters_to_display.size(); i++) {
-      const TextPass::CharacterToDisplay& ctd = text_pass->characters_to_display[i];
-      command_list1->IASetVertexBuffers(0, 1, &ctd.vbv);
-      command_list1->SetGraphicsRootConstantBufferView(0, text_pass->per_scene_cbs->GetGPUVirtualAddress() + sizeof(TextCbPerScene) * ctd.per_scene_cb_index);
-      CD3DX12_GPU_DESCRIPTOR_HANDLE srv_handle(
-        text_pass->srv_heap->GetGPUDescriptorHandleForHeapStart(),
-        ctd.character->offset_in_srv_heap, text_pass->srv_descriptor_size);
-      command_list1->SetGraphicsRootDescriptorTable(1, srv_handle);
-      command_list1->DrawInstanced(6, 1, 0, 0);
-    }
-
+    text_pass->RenderText(command_list1);
 
     command_list1->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
       g_rendertargets[g_frame_index],
@@ -1044,8 +1035,7 @@ void ObjScene::Render() {
       D3D12_RESOURCE_STATE_COPY_DEST,
       D3D12_RESOURCE_STATE_RENDER_TARGET)));
 
-    command_list->ResolveQueryData(query_heap, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timestamp_resource, 0);
-    
+    command_list->ResolveQueryData(query_heap, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, timestamp_resource, 0);  
   }
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
@@ -1053,6 +1043,44 @@ void ObjScene::Render() {
     D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATE_PRESENT)));
   CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1,
+    (ID3D12CommandList* const*)&command_list);
+  WaitForPreviousFrame();
+
+  // Draw text
+  {
+    text_pass->StartPass();
+    float ms = fps.GetFrameTimeMs();
+    float mrays_per_sec = WIN_W * WIN_H / 1000000.0f / (ms / 1000.0f);
+    std::wstringstream wss;
+    wss << std::setprecision(4) << ms << L" ms, " << std::setprecision(3) << mrays_per_sec << L" MRays/s";
+    text_pass->AddText(wss.str(), 8, 24, 1.0f, glm::vec3(0, 0.8, 1), glm::mat4(1));
+    CE(command_allocator->Reset());
+    CE(command_list->Reset(command_allocator1, text_pass->pipeline_state));
+    command_list->SetGraphicsRootSignature(text_pass->root_signature);
+
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      g_rendertargets[g_frame_index],
+      D3D12_RESOURCE_STATE_PRESENT,
+      D3D12_RESOURCE_STATE_RENDER_TARGET)));
+    // TextPass's rendering procedure
+    ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
+    command_list->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
+    command_list->RSSetViewports(1, &viewport);
+    command_list->RSSetScissorRects(1, &scissor);
+
+    command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
+    float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    command_list->OMSetBlendFactor(blend_factor);
+
+    text_pass->RenderText(command_list);
+
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      g_rendertargets[g_frame_index],
+      D3D12_RESOURCE_STATE_RENDER_TARGET,
+      D3D12_RESOURCE_STATE_PRESENT)));
+    CE(command_list->Close());
+  }
   g_command_queue->ExecuteCommandLists(1,
     (ID3D12CommandList* const*)&command_list);
   CE(g_swapchain->Present(1, 0));
@@ -1065,7 +1093,7 @@ void ObjScene::Render() {
     g_command_queue->GetTimestampFrequency(&freq);
     timestamp_resource->Unmap(0, nullptr);
     float elapsed = (timestamp_data[1] - timestamp_data[0]) * 1.0f / freq;
-    printf("Elapsed: %g ms\n", elapsed * 1000.0f);
+    fps.AddFrameTime(elapsed);
   }
 }
 

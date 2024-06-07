@@ -64,6 +64,7 @@ public:
   void InitD3D12();
   Character_D3D12* CreateOrGetChar(wchar_t ch);
   void AddText(std::wstring text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform);
+  void RenderText(ID3D12GraphicsCommandList* command_list);
 
   ID3D12RootSignature* root_signature;
   ID3D12PipelineState* pipeline_state;

@@ -7,6 +7,9 @@
 #include "camera.hpp"
 #include "textrender.hpp"
 
+#include <iomanip>
+#include <list>
+#include <sstream>
 #include <string>
 
 class Scene {
@@ -118,6 +121,42 @@ public:
   }
 };
 
+class FPS {
+public:
+  std::list<std::pair<unsigned, float>> frame_times;
+  float GetFrameTimeMs() {
+    if (frame_times.empty()) {
+      return last_frame_time;
+    }
+    float ms = GetElapsedMillis();
+    const int THRESH = 500;
+    if (frame_times.begin()->first < ms - THRESH) {
+      int n = 0;
+      float sum = 0;
+      for (const auto& x : frame_times) {
+        sum += x.second;
+        n++;
+      }
+      sum = sum * 1000.0f / n;
+      frame_times.clear();
+      last_frame_time = sum;
+    }
+    return last_frame_time;
+  }
+  void AddFrameTime(float secs) {
+    unsigned ms = GetElapsedMillis();
+    frame_times.emplace_back(ms, secs);
+  }
+  std::wstring GetStatusString() {
+    std::wstringstream wss;
+    wss << std::setprecision(4);
+    wss << GetFrameTimeMs() << L"ms frame time";
+    return wss.str();
+  }
+  float last_frame_time = 0;
+  unsigned last_millis = 0;
+};
+
 class ObjScene : public Scene {
 public:
   char axes[6]; // Camera movement
@@ -197,4 +236,5 @@ public:
   Camera* camera;
   TextPass* text_pass;
   std::wstring status_string;
+  FPS fps;
 };
