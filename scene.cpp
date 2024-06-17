@@ -83,6 +83,7 @@ extern bool IsGL();
 extern bool IsD3D11();
 extern bool IsD3D12();
 extern glm::vec3 WindowCoordToPickRayDir(Camera* cam, int x, int y);
+extern glm::vec3 WindowCoordToGamePlane(Camera* cam, int x, int y);
 extern int g_mouse_x, g_mouse_y;
 
 const glm::vec3 ClimbScene::PLAYER_ROPE_ENDPOINT[8] = 
@@ -155,21 +156,32 @@ void ClimbScene::PrepareSpriteListForRender() {
   bool should_add_hl = false;
   glm::vec3 campos = camera->pos;
   campos.z = 0;
+  hovered_sprite = nullptr;
   for (Platform* p : platforms) {
     Sprite* sp = p->GetSpriteForDisplay();
     if (this->game_state == ClimbGameStateInEditing && 
         sp != nullptr &&
         curr_edit_option == 0) {
       ChunkSprite* csp = dynamic_cast<ChunkSprite*>(sp);
+
+      if (is_dragging && dragged_sprite) {
+        glm::vec3 drag_delta = WindowCoordToGamePlane(camera, mouse_x, mouse_y) - drag_pos0;
+        dragged_sprite->pos = dragged_sprite_pos0 + drag_delta;
+      }
+
       if (csp) {
         AABB aabb = csp->GetAABBInWorld();
 
-        glm::vec3 pickray_dir = WindowCoordToPickRayDir(camera, g_mouse_x, g_mouse_y);
+        glm::vec3 pickray_dir = WindowCoordToPickRayDir(camera, mouse_x, mouse_y);
         glm::vec3 pickray_orig = camera->pos;
 
         bool x1 = (campos.x >= aabb.lb.x && campos.x <= aabb.ub.x &&
           campos.y >= aabb.lb.y && campos.y <= aabb.ub.y);
         bool x2 = aabb.IntersectRay(pickray_orig, pickray_dir);
+
+        if (x2) {
+          hovered_sprite = csp;
+        }
 
         if (x1 || x2) {
           highlight_sprite->pos = sp->pos;
@@ -1166,6 +1178,27 @@ Sprite* ClimbScene::CurrentCursorSprite() {
   if (curr_edit_option >= 0 && curr_edit_option <= 4) {
     return cursor_sprites[curr_edit_option];
   } else return nullptr;
+}
+
+void ClimbScene::OnMouseMove(int mx, int my) {
+  mouse_x = mx;
+  mouse_y = my;
+}
+
+void ClimbScene::OnMouseDown() {
+  is_dragging = true;
+  drag_mouse_x0 = mouse_x;
+  drag_mouse_y0 = mouse_y;
+  drag_pos0 = WindowCoordToGamePlane(camera, drag_mouse_x0, drag_mouse_y0);
+  dragged_sprite = hovered_sprite;
+  if (dragged_sprite) {
+    dragged_sprite_pos0 = dragged_sprite->pos;
+  }
+}
+
+void ClimbScene::OnMouseUp() {
+  is_dragging = false;
+  dragged_sprite = nullptr;
 }
 
 // 2019-12-18

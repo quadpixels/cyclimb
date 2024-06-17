@@ -28,6 +28,10 @@ public:
   virtual void                  OnKeyPressed(char key) { };
   virtual void                  OnKeyReleased(char key) { };
   
+  virtual void                  OnMouseMove(int mx, int my) { };
+  virtual void                  OnMouseDown() { };
+  virtual void                  OnMouseUp() { };
+
   Camera* camera;
   
   GameScene() : camera(&g_cam) { }
@@ -315,6 +319,16 @@ public:
   Sprite* CurrentCursorSprite();
   Sprite* highlight_sprite;
   bool CanHideMenu();
+
+  int drag_mouse_x0, drag_mouse_y0;
+  glm::vec3 drag_pos0, dragged_sprite_pos0;
+  int mouse_x, mouse_y;
+  bool is_dragging = false;
+  ChunkSprite* dragged_sprite, *hovered_sprite;
+
+  virtual void OnMouseMove(int mx, int my);
+  virtual void OnMouseDown();
+  virtual void OnMouseUp();
 };
 
 class LightTestScene : public GameScene {

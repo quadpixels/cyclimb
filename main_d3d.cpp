@@ -1035,6 +1035,7 @@ void OnKeyUp(WPARAM wParam, LPARAM lParam) {
 void OnMouseMove(int x, int y) {
   g_mouse_x = x;
   g_mouse_y = y + g_titlebar_size;
+  GetCurrentGameScene()->OnMouseMove(g_mouse_x, g_mouse_y);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
@@ -1065,6 +1066,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
     break;
   case WM_MOUSEMOVE:
     OnMouseMove(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+    break;
+  case WM_LBUTTONDOWN:
+    GetCurrentGameScene()->OnMouseDown();
+    break;
+  case WM_LBUTTONUP:
+    GetCurrentGameScene()->OnMouseUp();
     break;
   default:
     return DefWindowProc(hwnd, message, wparam, lparam);

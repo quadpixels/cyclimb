@@ -71,6 +71,14 @@ glm::vec3 WindowCoordToPickRayDir(Camera* cam, int x, int y) {
   return ret;
 }
 
+glm::vec3 WindowCoordToGamePlane(Camera* cam, int x, int y) {
+  glm::vec3 ray_dir = WindowCoordToPickRayDir(cam, x, y);
+  glm::vec3 orig = cam->pos;
+  float t = (0 - orig.z) / ray_dir.z;
+  glm::vec3 ret = orig + ray_dir * t;
+  return ret;
+}
+
 // These are all scaffolds
 Triangle *g_triangle[2];
 ColorCube *g_colorcube[2];
