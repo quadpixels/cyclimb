@@ -62,6 +62,7 @@ public:
     else if (ret.z > ub.z) ret.z = ub.z;
     return ret;
   }
+  bool IntersectRay(const glm::vec3& o, const glm::vec3& d);
 };
 
 // Indices for multiple Chunk's

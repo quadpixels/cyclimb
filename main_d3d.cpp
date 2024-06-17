@@ -3,6 +3,7 @@
 #pragma comment(lib, "dxguid.lib")
 
 #include <Windows.h>
+#include <windowsx.h>  // GET_{X,Y}_LPARAM
 #undef max
 #undef min
 
@@ -50,6 +51,9 @@ extern MainMenu* g_mainmenu;
 extern Chunk* ALLNULLS[26];
 extern TextMessage* g_textmessage;
 extern Particles*  g_particles;
+extern int g_mouse_x, g_mouse_y;
+extern glm::vec3 WindowCoordToPickRayDir(Camera* cam, int x, int y);
+int g_titlebar_size;
 
 bool init_done = false;
 ID3D11Device *g_device11;
@@ -598,6 +602,12 @@ void CreateCyclimbWindow() {
     WIN_W, WIN_H,
     nullptr, nullptr,
     hinstance, nullptr);
+
+  TITLEBARINFOEX* ptinfo = (TITLEBARINFOEX*)malloc(sizeof(TITLEBARINFOEX));
+  ptinfo->cbSize = sizeof(TITLEBARINFOEX);
+  SendMessage(g_hwnd, WM_GETTITLEBARINFOEX, 0, (LPARAM)ptinfo);
+  g_titlebar_size = ptinfo->rcTitleBar.bottom - ptinfo->rcTitleBar.top;
+  delete ptinfo;
 }
 
 int main_d3d11(int argc, char** argv) {
@@ -1022,6 +1032,11 @@ void OnKeyUp(WPARAM wParam, LPARAM lParam) {
   else GetCurrentGameScene()->OnKeyReleased(char(tolower(wParam)));
 }
 
+void OnMouseMove(int x, int y) {
+  g_mouse_x = x;
+  g_mouse_y = y + g_titlebar_size;
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
   switch (message)
@@ -1047,6 +1062,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
       }
     }
     update();
+    break;
+  case WM_MOUSEMOVE:
+    OnMouseMove(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
     break;
   default:
     return DefWindowProc(hwnd, message, wparam, lparam);

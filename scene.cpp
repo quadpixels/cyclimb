@@ -82,6 +82,8 @@ const float ClimbScene::INVERSE_INERTIA = 0.05f;
 extern bool IsGL();
 extern bool IsD3D11();
 extern bool IsD3D12();
+extern glm::vec3 WindowCoordToPickRayDir(Camera* cam, int x, int y);
+extern int g_mouse_x, g_mouse_y;
 
 const glm::vec3 ClimbScene::PLAYER_ROPE_ENDPOINT[8] = 
   {
@@ -161,8 +163,15 @@ void ClimbScene::PrepareSpriteListForRender() {
       ChunkSprite* csp = dynamic_cast<ChunkSprite*>(sp);
       if (csp) {
         AABB aabb = csp->GetAABBInWorld();
-        if (campos.x >= aabb.lb.x && campos.x <= aabb.ub.x &&
-          campos.y >= aabb.lb.y && campos.y <= aabb.ub.y) {
+
+        glm::vec3 pickray_dir = WindowCoordToPickRayDir(camera, g_mouse_x, g_mouse_y);
+        glm::vec3 pickray_orig = camera->pos;
+
+        bool x1 = (campos.x >= aabb.lb.x && campos.x <= aabb.ub.x &&
+          campos.y >= aabb.lb.y && campos.y <= aabb.ub.y);
+        bool x2 = aabb.IntersectRay(pickray_orig, pickray_dir);
+
+        if (x1 || x2) {
           highlight_sprite->pos = sp->pos;
           float phase = fabs(sin(light_phase * 4));
           highlight_sprite->scale.x = (aabb.ub.x - aabb.lb.x) + phase + 1;

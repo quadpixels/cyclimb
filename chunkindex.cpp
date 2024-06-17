@@ -406,3 +406,25 @@ void ChunkGrid::FromIX(int ix, int& x, int& y, int& z) {
   y = ix / zdim;
   z = ix % zdim;
 }
+
+bool AABB::IntersectRay(const glm::vec3& o, const glm::vec3& d) {
+  glm::vec3 inv_dir = 1.0f / d;
+  glm::vec3 t0 = (lb - o) * inv_dir;
+  glm::vec3 t1 = (ub - o) * inv_dir;
+
+  if (inv_dir.x < 0) {
+    std::swap(t0.x, t1.x);
+  }
+  if (inv_dir.y < 0) {
+    std::swap(t0.y, t1.y);
+  }
+  if (inv_dir.z < 0) {
+    std::swap(t0.z, t1.z);
+  }
+
+  float t00 = std::max(t0.z, std::max(t0.y, t0.x));
+  float t11 = std::min(t1.z, std::min(t1.y, t1.x));
+
+  if (0 <= t11 && t00 <= t11) return true;
+  else return false;
+}

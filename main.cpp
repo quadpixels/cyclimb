@@ -58,6 +58,19 @@ char g_cam_dx = 0,   g_cam_dy = 0,   g_cam_dz = 0,  // CONTROL axes, not OpenGL 
      g_arrow_dx = 0, g_arrow_dy = 0, g_arrow_dz = 0;
 std::bitset<18> g_cam_flags;
 
+glm::vec3 WindowCoordToPickRayDir(Camera* cam, int x, int y) {
+  glm::vec3 cam_right = glm::normalize(glm::cross(cam->lookdir, cam->up));
+  glm::vec3 cam_up = glm::normalize(cam->up);
+  float u = (x * 2.0f / WIN_W) - 1.0f;
+  float v = -((y * 2.0f / WIN_H) - 1.0f);
+  const float t = tanf(30.0f / (180.0f / 3.14159f));
+  v = v * t;
+  u = u * t * WIN_W / WIN_H;
+  glm::vec3 ret = cam_right * u + cam_up * v + cam->lookdir;
+  ret = glm::normalize(ret);
+  return ret;
+}
+
 // These are all scaffolds
 Triangle *g_triangle[2];
 ColorCube *g_colorcube[2];
@@ -104,6 +117,8 @@ bool g_aa = true, g_shadows = true;
 
 unsigned g_test_tri_vao;
 unsigned g_test_quad_vao;
+
+int g_mouse_x = 0, g_mouse_y = 0;
 
 void MyInit() {
   {
