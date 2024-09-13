@@ -111,7 +111,8 @@ public:
   ID3D12Resource* blas_scratch, * blas_result;
   ID3D12Resource* tlas_scratch, * tlas_result, * tlas_instance;
   ID3D12Resource* px_counter;
-  ID3D12DescriptorHeap* srv_uav_heap;
+  ID3D12DescriptorHeap* srv_uav_heap;  // GPU-visible
+  ID3D12DescriptorHeap* srv_uav_heap_cpu;
   int srv_uav_descriptor_size;
 
   ID3D12Resource* cb_scene;

@@ -194,6 +194,8 @@ void TriangleScene::InitDX12Stuff() {
   heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
   heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   CE(g_device12->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&srv_uav_heap)));
+  heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+  CE(g_device12->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&srv_uav_heap_cpu)));
 
   // UAV
   D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc = {};
@@ -205,9 +207,12 @@ void TriangleScene::InitDX12Stuff() {
   uav_desc.Format = DXGI_FORMAT_R32_TYPELESS;
   uav_desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
   CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart());
+  CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle_cpu(srv_uav_heap_cpu->GetCPUDescriptorHandleForHeapStart());  // Handle to the same resource but on a CPU-only heap
   srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
   uav_handle.Offset(srv_uav_descriptor_size);
+  uav_handle_cpu.Offset(srv_uav_descriptor_size);
   g_device12->CreateUnorderedAccessView(px_counter, nullptr, &uav_desc, uav_handle);
+  g_device12->CreateUnorderedAccessView(px_counter, nullptr, &uav_desc, uav_handle_cpu);
 
   // CB for per-scene data
   CE(g_device12->CreateCommittedResource(
@@ -396,7 +401,7 @@ void TriangleScene::Render() {
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
 
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_uav_cpu(
-    srv_uav_heap->GetCPUDescriptorHandleForHeapStart(),
+    srv_uav_heap_cpu->GetCPUDescriptorHandleForHeapStart(),
     1, srv_uav_descriptor_size);
   CD3DX12_GPU_DESCRIPTOR_HANDLE handle_uav_gpu(
     srv_uav_heap->GetGPUDescriptorHandleForHeapStart(),
@@ -407,10 +412,10 @@ void TriangleScene::Render() {
     px_counter,
     D3D12_RESOURCE_STATE_GENERIC_READ,
     D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
-  command_list->ClearUnorderedAccessViewUint(handle_uav_gpu, handle_uav_cpu, px_counter, uav_clearcolor, 0, nullptr);
 
   command_list->SetGraphicsRootSignature(root_sig);
   command_list->SetDescriptorHeaps(1, &srv_uav_heap);
+  command_list->ClearUnorderedAccessViewUint(handle_uav_gpu, handle_uav_cpu, px_counter, uav_clearcolor, 0, nullptr);
   command_list->SetGraphicsRootDescriptorTable(0, srv_uav_heap->GetGPUDescriptorHandleForHeapStart());
   command_list->SetGraphicsRootUnorderedAccessView(1, px_counter->GetGPUVirtualAddress());
   command_list->SetGraphicsRootConstantBufferView(2, cb_scene->GetGPUVirtualAddress());

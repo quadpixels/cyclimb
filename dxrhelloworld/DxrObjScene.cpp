@@ -1,6 +1,7 @@
 #include <chrono>
 #include <filesystem>
 #include <sstream>
+#include <thread>
 
 #include <d3dx12.h>
 #include <DirectXMath.h>
@@ -235,6 +236,7 @@ void ObjScene::InitDX12Stuff() {
   psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
   psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
   psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+  psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
   psoDesc.SampleMask = UINT_MAX;
   psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
   psoDesc.NumRenderTargets = 1;
@@ -278,20 +280,23 @@ void ObjScene::InitDX12Stuff() {
     dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     dsv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     CE(g_device12->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(&dsv_heap)));
+    dsv_heap->SetName(L"DSV heap");
     dsv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 
     D3D12_CLEAR_VALUE depth_clear{};
     depth_clear.Format = DXGI_FORMAT_D32_FLOAT;
     depth_clear.DepthStencil.Depth = 1.0f;
+    depth_clear.DepthStencil.Stencil = 0;
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
       D3D12_HEAP_FLAG_NONE,
       &keep(CD3DX12_RESOURCE_DESC::Tex2D(
-        DXGI_FORMAT_R32_TYPELESS, WIN_W, WIN_H, 1, 0, 1, 0,
+        DXGI_FORMAT_D32_FLOAT, WIN_W, WIN_H, 1, 0, 1, 0,
         D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)),
       D3D12_RESOURCE_STATE_GENERIC_READ,
       &depth_clear,
       IID_PPV_ARGS(&depth_map)));
+    depth_map->SetName(L"Depth map");
 
     D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
     dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
@@ -934,7 +939,6 @@ void ObjScene::Render() {
   if (!inited) {
     text_pass->StartPass();
     text_pass->AddText(status_string, 8, 24, 1.0f, glm::vec3(0, 0, 1), glm::mat4(1));
-    CE(command_allocator1->Reset());
     CE(command_list1->Reset(command_allocator1, text_pass->pipeline_state));
     command_list1->SetGraphicsRootSignature(text_pass->root_signature);
 
@@ -967,6 +971,7 @@ void ObjScene::Render() {
       (ID3D12CommandList* const*)&command_list1);
     CE(g_swapchain->Present(1, 0));
     WaitForPreviousFrame();
+    CE(command_allocator1->Reset());
     return;
   }
 
@@ -990,7 +995,7 @@ void ObjScene::Render() {
     command_list->RSSetScissorRects(1, &scissor);
     command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     command_list->IASetVertexBuffers(0, 1, &vbv_obj);
-    command_list->SetGraphicsRootConstantBufferView(1, raster_cb->GetGPUVirtualAddress());
+    command_list->SetGraphicsRootConstantBufferView(0, raster_cb->GetGPUVirtualAddress());
     command_list->DrawInstanced(num_verts, 1, 0, 0);
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
       depth_map, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ)));
@@ -1055,7 +1060,6 @@ void ObjScene::Render() {
     std::wstringstream wss;
     wss << std::setprecision(4) << ms << L" ms, " << std::setprecision(3) << mrays_per_sec << L" MRays/s";
     text_pass->AddText(wss.str(), 8, 24, 1.0f, glm::vec3(0, 0.8, 1), glm::mat4(1));
-    CE(command_allocator->Reset());
     CE(command_list->Reset(command_allocator1, text_pass->pipeline_state));
     command_list->SetGraphicsRootSignature(text_pass->root_signature);
 
@@ -1085,6 +1089,7 @@ void ObjScene::Render() {
     (ID3D12CommandList* const*)&command_list);
   CE(g_swapchain->Present(1, 0));
   WaitForPreviousFrame();
+  CE(command_allocator1->Reset());
 
   {
     uint64_t* timestamp_data, freq;
