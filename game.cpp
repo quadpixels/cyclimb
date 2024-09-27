@@ -41,6 +41,7 @@ extern ID3D11PixelShader* g_ps_default_palette;
 extern ID3D11SamplerState* g_sampler11;
 extern ID3D11Buffer* g_perobject_cb_default_palette;
 extern ID3D11Buffer* g_perscene_cb_default_palette;
+extern ID3D11Buffer* g_lightscatter_cb;
 extern DirectionalLight* g_dir_light;
 extern DirectX::XMMATRIX g_projection_helpinfo_d3d11;
 extern D3D11_VIEWPORT g_viewport11;
@@ -366,17 +367,49 @@ void MainMenu::DrawHelpScreen() {
     const glm::vec3 pos_backup = cam_helpinfo->pos;
     cam_helpinfo->pos = glm::vec3(0, 0, 199);
 
-    //UpdateGlobalPerObjectCB(nullptr, &(cam_helpinfo->GetViewMatrix_D3D11()), &P);
-    //UpdatePerSceneCB(&g_dir_light->GetDir_D3D11(), &(g_dir_light->GetPV_D3D11()), &(cam_helpinfo->GetPos_D3D11()));
+    ////UpdateGlobalPerObjectCB(nullptr, &(cam_helpinfo->GetViewMatrix_D3D11()), &P);
+    ////UpdatePerSceneCB(&g_dir_light->GetDir_D3D11(), &(g_dir_light->GetPV_D3D11()), &(cam_helpinfo->GetPos_D3D11()));
 
-    //float zeros[] = { 0, 0, 0, 0 };
-    //g_context11->ClearRenderTargetView(g_gbuffer_rtv11, zeros);
-    //g_context11->ClearDepthStencilView(g_dsv11, D3D11_CLEAR_DEPTH, 1.0f, 0);
+    ////float zeros[] = { 0, 0, 0, 0 };
+    ////g_context11->ClearRenderTargetView(g_gbuffer_rtv11, zeros);
+    ////g_context11->ClearDepthStencilView(g_dsv11, D3D11_CLEAR_DEPTH, 1.0f, 0);
 
-    g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, g_dsv11);
-    PrepareLightsForGoalDemo();
-    RenderLightsForGoalDemo();
-    g_context11->OMSetRenderTargets(2, rtvs, g_dsv11);
+    //g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, g_dsv11);
+    //PrepareLightsForGoalDemo();
+    //RenderLightsForGoalDemo();
+    //g_context11->OMSetRenderTargets(2, rtvs, g_dsv11);
+
+    // Prepare
+    glm::vec3 world_pos = glm::vec3(0, 0, 0);
+    float a = 0.0f;
+    world_pos.x += cos(3.0f * a) * 10.0f;
+    world_pos.y += sin(3.0f * a) * 10.0f;
+    world_pos.z *= -1;
+    glm::mat4 V = cam_helpinfo->GetViewMatrix();
+    glm::mat4 P = glm::perspective(60.0f * 3.14159f / 180.0f, viewport_vollight.Width * 1.0f / viewport_vollight.Height, 0.1f, 499.0f);
+    glm::vec4 clip_pos = P * V * glm::vec4(world_pos, 1.0f);
+    float x = (clip_pos.x / clip_pos.w + 1.0f) * 0.5f * viewport_vollight.Width;
+    float y = viewport_vollight.Height - (clip_pos.y / clip_pos.w + 1.0f) * 0.5f * viewport_vollight.Height;
+
+    LightScatterDrawLightCB h_lightscatter_cb{};
+    h_lightscatter_cb.light_x = x;
+    h_lightscatter_cb.light_y = y;
+    h_lightscatter_cb.light_z = -world_pos.z;
+    h_lightscatter_cb.light_r = 50 + sin(a) * 20.0f;
+    h_lightscatter_cb.WIN_W = WIN_W;
+    h_lightscatter_cb.WIN_H = WIN_H;
+    h_lightscatter_cb.light_color.m128_f32[0] = 1.0f;
+    h_lightscatter_cb.light_color.m128_f32[1] = 1.0f;
+    h_lightscatter_cb.light_color.m128_f32[2] = 0.1f;
+    h_lightscatter_cb.light_color.m128_f32[3] = 1.0f;
+    h_lightscatter_cb.global_alpha = 1.0f;
+
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    CE(g_context11->Map(g_lightscatter_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+    memcpy(mapped.pData, &h_lightscatter_cb, sizeof(LightScatterDrawLightCB));
+    g_context11->Unmap(g_lightscatter_cb, 0);
+
+
     cam_helpinfo->pos = pos_backup;
   }
 
