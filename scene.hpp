@@ -329,6 +329,8 @@ public:
   virtual void OnMouseMove(int mx, int my);
   virtual void OnMouseDown();
   virtual void OnMouseUp();
+
+  bool is_shift_down = false;  // Align to 1?
 };
 
 class LightTestScene : public GameScene {

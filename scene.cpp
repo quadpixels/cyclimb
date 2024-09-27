@@ -167,6 +167,10 @@ void ClimbScene::PrepareSpriteListForRender() {
       if (is_dragging && dragged_sprite) {
         glm::vec3 drag_delta = WindowCoordToGamePlane(camera, mouse_x, mouse_y) - drag_pos0;
         dragged_sprite->pos = dragged_sprite_pos0 + drag_delta;
+        if (is_shift_down) {
+          dragged_sprite->pos.x = int(dragged_sprite->pos.x);
+          dragged_sprite->pos.y = int(dragged_sprite->pos.y);
+        }
       }
 
       if (csp) {
@@ -600,6 +604,11 @@ void ClimbScene::do_RenderHUD(GraphicsAPI api) {
       RenderText(api, buf, dx + w / 2 - 4, 116, 1.0f, c, uitransform);
       dx += 8 + w;
     }
+
+    if (is_shift_down) {
+      swprintf(buf, 50, L"SHIFT");
+      RenderText(api, buf, dx, 116, 1.0f, glm::vec3(1,1,0.2f), uitransform);
+    }
   }
 
   std::wstring text(buf);
@@ -646,6 +655,45 @@ void ClimbScene::RenderHUD_D3D12() {
 void ClimbScene::OnKeyPressed(char k) {
   bool should_step = !g_main_menu_visible;
 
+  // Editing
+  if (game_state == ClimbGameStateInEditing) {
+    if (k >= '1' && k <= '5') {
+      int blah = k - '1';
+      curr_edit_option = blah;
+    }
+    else if (k == 'i') {
+      const float x = camera->pos.x, y = camera->pos.y;
+      switch (curr_edit_option) {
+      case 1: {
+        ChunkSprite* s = new ChunkSprite(model_platforms[0]);
+        s->pos = glm::vec3(x, y, 0);
+        platforms.push_back(new NormalPlatform(s));
+        break;
+      }
+      case 2: {
+        ChunkSprite* s = new ChunkSprite(model_platforms[1]);
+        s->pos = glm::vec3(x, y, 0);
+        platforms.push_back(new DamagablePlatform(s));
+        break;
+      }
+      case 3:
+      {
+        ChunkSprite* s = new ChunkSprite(model_coin);
+        s->pos = glm::vec3(x, y, 0);
+        coins.push_back(s);
+        break;
+      }
+      default: break;
+      }
+    }
+    else if (k == 'p') {
+      DumpCurrentLevelToText();
+    }
+    else if (k == VK_SHIFT) {
+      is_shift_down = true;
+    }
+  }
+
   if (k == 'g') { 
     is_debug = !is_debug;
     debug_vel = glm::vec3(0, 0, 0);
@@ -653,38 +701,6 @@ void ClimbScene::OnKeyPressed(char k) {
     if (StartLevel(k - '0')) {
       SetGameState(ClimbGameStateStartCountdown);
     }
-  }
-  else if (k >= '1'&& k <= '5' && game_state == ClimbGameStateInEditing) {
-    int blah = k - '1';
-    curr_edit_option = blah;
-  }
-  else if (k == 'i' && game_state == ClimbGameStateInEditing) {
-    const float x = camera->pos.x, y = camera->pos.y;
-    switch (curr_edit_option) {
-    case 1: {
-      ChunkSprite* s = new ChunkSprite(model_platforms[0]);
-      s->pos = glm::vec3(x, y, 0);
-      platforms.push_back(new NormalPlatform(s));
-      break;
-    }
-    case 2: {
-      ChunkSprite* s = new ChunkSprite(model_platforms[1]);
-      s->pos = glm::vec3(x, y, 0);
-      platforms.push_back(new DamagablePlatform(s));
-      break;
-    }
-    case 3:
-    {
-      ChunkSprite* s = new ChunkSprite(model_coin);
-      s->pos = glm::vec3(x, y, 0);
-      coins.push_back(s);
-      break;
-    }
-    default: break;
-    }
-  }
-  else if (k == 'p' && game_state == ClimbGameStateInEditing) {
-    DumpCurrentLevelToText();
   }
   else if (k == ' ') {
     if (game_state == ClimbGameStateLevelEndWaitKey) {
@@ -787,6 +803,9 @@ void ClimbScene::OnKeyReleased(char k) {
   else if (game_state == ClimbGameStateInEditing) {
     for (int i = 0; i < 9; i++) {
       if (keys[i] == k) { keyflags.reset(i); break; }
+    }
+    if (k == VK_SHIFT) {
+      is_shift_down = false;
     }
   }
 }
