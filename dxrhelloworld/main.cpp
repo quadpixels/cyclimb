@@ -22,7 +22,7 @@ ID3D12Resource* g_rendertargets[FRAME_COUNT];
 int WIN_W = 512, WIN_H = 512;
 HWND g_hwnd;
 static long long g_last_ms;
-static Scene* g_scenes[3];
+static Scene* g_scenes[4];
 static int g_scene_idx = 0;
 ID3D12Fence* g_fence;
 int g_fence_value = 0;
@@ -87,7 +87,8 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   }
   case '0':
   case '1': 
-  case '2': {
+  case '2':
+  case '3': {
     printf("Current scene set to %c\n", wParam);
     g_scene_idx = wParam - '0'; break;
   }
@@ -149,7 +150,7 @@ void InitDeviceAndCommandQ() {
       if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
       else {
         CE(D3D12CreateDevice(hw_adapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&g_device12)));
-        printf("Created a hardware device = %p\n", g_device12);
+        printf("Created a hardware device = %p, %ls\n", g_device12, desc.Description);
         break;
       }
     }
@@ -324,8 +325,9 @@ int main(int argc, char** argv) {
   ShowWindow(g_hwnd, SW_RESTORE);
 
   g_scenes[0] = new ObjScene();
-  g_scenes[1] = new TriangleScene();
+  //g_scenes[1] = new TriangleScene();
   g_scenes[2] = new MoreTrianglesScene();
+  g_scenes[3] = new ObjScene1();
 
   // Main message loop
   g_last_ms = MillisecondsNow();

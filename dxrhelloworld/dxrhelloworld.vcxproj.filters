@@ -36,6 +36,9 @@
     <ClCompile Include="DxrMoreTrianglesScene.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="DxrObjScene1.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="scene.hpp">
@@ -65,6 +68,15 @@
       <Filter>Resource Files</Filter>
     </None>
     <None Include="shaders\RaytracingHlslCompat.h">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="shaders\RayGen.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="shaders\minimal.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="shaders\hellotriangle_mvp.hlsl">
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>

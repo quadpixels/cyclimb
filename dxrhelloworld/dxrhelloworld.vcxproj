@@ -152,6 +152,7 @@
     <ClCompile Include="..\util.cpp" />
     <ClCompile Include="DxrMoreTrianglesScene.cpp" />
     <ClCompile Include="DxrObjScene.cpp" />
+    <ClCompile Include="DxrObjScene1.cpp" />
     <ClCompile Include="DxrTriangleScene.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
@@ -161,12 +162,34 @@
     <ClInclude Include="..\util.hpp" />
     <ClInclude Include="dxcapi.use.h" />
     <ClInclude Include="scene.hpp" />
-    <None Include="shaders\RaytracingHlslCompat.h" />
+    <None Include="shaders\RaytracingHlslCompat.h">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </None>
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="tiny_obj_loader.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\raytracing_tutorial.hlsl">
+      <FileType>Document</FileType>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\RayGen.hlsl">
+      <FileType>Document</FileType>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\minimal.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\hellotriangle_mvp.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>

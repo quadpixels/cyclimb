@@ -239,3 +239,18 @@ public:
   std::wstring status_string;
   FPS fps;
 };
+
+// For finding out why ObjScene does not work in Release mode ...
+class ObjScene1 : public Scene {
+public:
+  ObjScene1();
+  void InitDX12Stuff();
+  void CreateRTPipeline();
+  void Render() override;
+  void Update(float secs) override;
+
+private:
+  ID3D12RootSignature* root_sig;
+  ID3D12CommandAllocator* command_allocator;
+  ID3D12GraphicsCommandList* command_list;
+};
