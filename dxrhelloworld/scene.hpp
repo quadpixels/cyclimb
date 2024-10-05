@@ -250,7 +250,8 @@ public:
   void Update(float secs) override;
 
 private:
-  ID3D12RootSignature* root_sig;
-  ID3D12CommandAllocator* command_allocator;
-  ID3D12GraphicsCommandList* command_list;
+  ID3D12RootSignature* root_sig{};
+  ID3D12CommandAllocator* command_allocator{};
+  ID3D12GraphicsCommandList* command_list{};
+  ID3D12StateObject* rt_state_object{};
 };
