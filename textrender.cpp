@@ -441,7 +441,7 @@ void TextPass::InitD3D12() {
   pso_desc.NumRenderTargets = 2;
   pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
   pso_desc.RTVFormats[1] = DXGI_FORMAT_R32G32B32A32_FLOAT;
-  pso_desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+  pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
   pso_desc.SampleDesc.Count = 1;
   CE(device12->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state)));
 

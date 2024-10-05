@@ -937,6 +937,7 @@ void ObjScene::Render() {
 
   // Show "loading" screen
   if (!inited) {
+    CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_handle(dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
     text_pass->StartPass();
     text_pass->AddText(status_string, 8, 24, 1.0f, glm::vec3(0, 0, 1), glm::mat4(1));
     CE(command_list1->Reset(command_allocator1, text_pass->pipeline_state));
@@ -946,16 +947,17 @@ void ObjScene::Render() {
       g_rendertargets[g_frame_index],
       D3D12_RESOURCE_STATE_PRESENT,
       D3D12_RESOURCE_STATE_RENDER_TARGET)));
+    command_list1->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      depth_map, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE)));
     command_list1->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
-
+    command_list1->ClearDepthStencilView(dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
     // TextPass's rendering procedure
     ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
     command_list1->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
     command_list1->RSSetViewports(1, &viewport);
     command_list1->RSSetScissorRects(1, &scissor);
-   
-    command_list1->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
+    command_list1->OMSetRenderTargets(1, &handle_rtv, false, &dsv_handle);
     float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
     command_list1->OMSetBlendFactor(blend_factor);
 
@@ -965,6 +967,8 @@ void ObjScene::Render() {
       g_rendertargets[g_frame_index],
       D3D12_RESOURCE_STATE_RENDER_TARGET,
       D3D12_RESOURCE_STATE_PRESENT)));
+    command_list1->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      depth_map, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ)));
 
     CE(command_list1->Close());
     g_command_queue->ExecuteCommandLists(1,
@@ -1054,6 +1058,7 @@ void ObjScene::Render() {
 
   // Draw text
   {
+    CD3DX12_CPU_DESCRIPTOR_HANDLE dsv_handle(dsv_heap->GetCPUDescriptorHandleForHeapStart(), 0, dsv_descriptor_size);
     text_pass->StartPass();
     float ms = fps.GetFrameTimeMs();
     float mrays_per_sec = WIN_W * WIN_H / 1000000.0f / (ms / 1000.0f);
@@ -1067,13 +1072,16 @@ void ObjScene::Render() {
       g_rendertargets[g_frame_index],
       D3D12_RESOURCE_STATE_PRESENT,
       D3D12_RESOURCE_STATE_RENDER_TARGET)));
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      depth_map, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE)));
     // TextPass's rendering procedure
     ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
     command_list->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
     command_list->RSSetViewports(1, &viewport);
     command_list->RSSetScissorRects(1, &scissor);
 
-    command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
+    command_list->ClearDepthStencilView(dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    command_list->OMSetRenderTargets(1, &handle_rtv, false, &dsv_handle);
     float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
     command_list->OMSetBlendFactor(blend_factor);
 
@@ -1083,6 +1091,8 @@ void ObjScene::Render() {
       g_rendertargets[g_frame_index],
       D3D12_RESOURCE_STATE_RENDER_TARGET,
       D3D12_RESOURCE_STATE_PRESENT)));
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+      depth_map, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_GENERIC_READ)));
     CE(command_list->Close());
   }
   g_command_queue->ExecuteCommandLists(1,
