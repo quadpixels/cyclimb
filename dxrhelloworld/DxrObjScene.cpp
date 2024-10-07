@@ -20,6 +20,7 @@
 #include "stb_image.h"
 
 extern int WIN_W, WIN_H;
+extern std::string g_input_name;
 extern ID3D12Device5* g_device12;
 extern ID3D12DescriptorHeap* g_rtv_heap;
 extern int g_rtv_descriptor_size;
@@ -34,9 +35,16 @@ ObjScene::ObjScene() : root_sig(nullptr), is_raster(true) {
   InitDX12Stuff();
   camera = new Camera();
 
-  camera->pos = glm::vec3(603.74, 655.15, -130.53);
-  camera->lookdir = glm::normalize(glm::vec3(-602.74, 655.15, -130.4) - camera->pos);
-  camera->up = glm::vec3(0, 1, 0);
+  if (g_input_name == "hairball") {
+    camera->pos = glm::vec3(0, 0, -4);
+    camera->lookdir = glm::normalize(glm::vec3(0, 0, 0) - camera->pos);
+    camera->up = glm::vec3(0, 1, 0);
+  }
+  else {
+    camera->pos = glm::vec3(603.74, 655.15, -130.53);
+    camera->lookdir = glm::normalize(glm::vec3(-602.74, 655.15, -130.4) - camera->pos);
+    camera->up = glm::vec3(0, 1, 0);
+  }
 
   std::thread* init_thd = new std::thread([&]() {
     LoadModel();
@@ -49,7 +57,13 @@ ObjScene::ObjScene() : root_sig(nullptr), is_raster(true) {
 }
 
 void ObjScene::LoadModel() {
-  std::string inputfile = "sponza-matgroups.obj";
+  std::string inputfile;
+  if (g_input_name == "hairball") {
+    inputfile = "hairball.obj";
+  }
+  else {
+    inputfile = "sponza-matgroups.obj";
+  }
   tinyobj::attrib_t attrib;
   std::vector<tinyobj::shape_t> shapes;
   std::vector<tinyobj::material_t> materials;
@@ -115,17 +129,21 @@ void ObjScene::LoadModel() {
       Vertex& v = verts[idx];
       int vidx = shapes[i].mesh.indices[j].vertex_index;
       int midx = shapes[i].mesh.material_ids[j / 3];
-      tinyobj::real_t* diffuse = materials[midx].diffuse;
+      if (midx != -1) {
+        tinyobj::real_t* diffuse = materials[midx].diffuse;
+        v.color.x = diffuse[0];
+        v.color.y = diffuse[1];
+        v.color.z = diffuse[2];
+        v.color.w = 1.0f;
+      }
+      else {
+        v.color.x = v.color.y = v.color.z = 0.5f;
+        v.color.w = 1.0f;
+      }
 
       v.position.x = attrib.vertices[vidx * 3];
       v.position.y = attrib.vertices[vidx * 3 + 1];
-      v.position.z = attrib.vertices[vidx * 3 + 2];
-
-      int pidx = idx % 3;
-      v.color.x = diffuse[0];
-      v.color.y = diffuse[1];
-      v.color.z = diffuse[2];
-      v.color.w = 1.0f;
+      v.position.z = attrib.vertices[vidx * 3 + 2];     
       idx++;
     }
   }
@@ -154,7 +172,7 @@ void ObjScene::LoadModel() {
     vbv_triangle.StrideInBytes = sizeof(Vertex);
     vbv_triangle.SizeInBytes = sizeof(triangleVerts);
   }
-
+  
   // Vertex buffer and VBV
   CE(g_device12->CreateCommittedResource(
     &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
@@ -188,7 +206,7 @@ void ObjScene::InitDX12Stuff() {
   // Root signature (empty)
   CD3DX12_ROOT_PARAMETER root_params[1];
   root_params[0].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_VERTEX);
-  CD3DX12_ROOT_SIGNATURE_DESC root_sig_desc;
+  CD3DX12_ROOT_SIGNATURE_DESC root_sig_desc{};
   root_sig_desc.Init(1, root_params, 0, nullptr,
     D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
   ID3DBlob* signature, * error;

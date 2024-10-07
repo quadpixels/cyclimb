@@ -20,6 +20,7 @@ const int FRAME_COUNT = 2;
 ID3D12Resource* g_rendertargets[FRAME_COUNT];
 
 int WIN_W = 512, WIN_H = 512;
+std::string g_input_name;
 HWND g_hwnd;
 static long long g_last_ms;
 static Scene* g_scenes[4];
@@ -316,6 +317,10 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "-h") && argc > i + 1) {
       WIN_H = std::atoi(argv[i + 1]);
       printf("WIN_H set to %d\n", WIN_H);
+    }
+    else if (!strcmp(argv[i], "-i") && argc > i + 1) {
+      printf("Input name set to %s\n", argv[i + 1]);
+      g_input_name = std::string(argv[i + 1]);
     }
   }
 

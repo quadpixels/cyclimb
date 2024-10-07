@@ -54,3 +54,4 @@ textures/spnza_bricks_a_spec.png filter=lfs diff=lfs merge=lfs -text
 textures/lion_bump.png filter=lfs diff=lfs merge=lfs -text
 textures/vase_hanging.png filter=lfs diff=lfs merge=lfs -text
 textures/sponza_details_diff.png filter=lfs diff=lfs merge=lfs -text
+hairball.obj filter=lfs diff=lfs merge=lfs -text

@@ -203,30 +203,30 @@ public:
   ID3D12Resource* tlas_scratch, * tlas_result, * tlas_instance;
 
   // RT pipeline
-  IDxcBlob* raygen_library, * miss_library, * hit_library;
-  D3D12_EXPORT_DESC raygen_export, miss_export, hit_export;
-  D3D12_DXIL_LIBRARY_DESC raygen_lib_desc, miss_lib_desc, hit_lib_desc;
-  ID3D12RootSignature* raygen_rootsig, * miss_rootsig, * hit_rootsig;
-  D3D12_HIT_GROUP_DESC hitgroup_desc;
-  ID3D12RootSignature* dummy_global_rootsig, * dummy_local_rootsig;
-  ID3D12StateObject* rt_state_object;
-  ID3D12StateObjectProperties* rt_state_object_props;
+  IDxcBlob* raygen_library{}, * miss_library{}, * hit_library{};
+  D3D12_EXPORT_DESC raygen_export{}, miss_export{}, hit_export{};
+  D3D12_DXIL_LIBRARY_DESC raygen_lib_desc{}, miss_lib_desc{}, hit_lib_desc{};
+  ID3D12RootSignature* raygen_rootsig{}, * miss_rootsig{}, * hit_rootsig{};
+  D3D12_HIT_GROUP_DESC hitgroup_desc{};
+  ID3D12RootSignature* dummy_global_rootsig{}, * dummy_local_rootsig{};
+  ID3D12StateObject* rt_state_object{};
+  ID3D12StateObjectProperties* rt_state_object_props{};
 
   // RT output buffer
-  ID3D12Resource* rt_output_resource;
-  ID3D12DescriptorHeap* srv_uav_heap;
+  ID3D12Resource* rt_output_resource{};
+  ID3D12DescriptorHeap* srv_uav_heap{};
 
   // SBT
-  ID3D12Resource* rt_sbt_storage;
+  ID3D12Resource* rt_sbt_storage{};
 
   // Constant Buffer for RayGen (inverse view and proj matrices)
-  ID3D12Resource* raygen_cb;
+  ID3D12Resource* raygen_cb{};
 
   // For raster view (MVP matrices)
-  ID3D12Resource* raster_cb;
-  ID3D12DescriptorHeap* dsv_heap;
-  int dsv_descriptor_size;
-  ID3D12Resource* depth_map;
+  ID3D12Resource* raster_cb{};
+  ID3D12DescriptorHeap* dsv_heap{};
+  int dsv_descriptor_size{};
+  ID3D12Resource* depth_map{};
 
   // Time measurement
   ID3D12QueryHeap* query_heap;
