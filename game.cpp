@@ -58,6 +58,21 @@ extern ID3D11ShaderResourceView* g_gbuffer_srv11;
 extern ID3D11SamplerState* g_sampler11;
 extern void UpdatePerSceneCB(const DirectX::XMVECTOR* dir_light, const DirectX::XMMATRIX* lightPV, const DirectX::XMVECTOR* camPos);
 extern void UpdateGlobalPerObjectCB(const DirectX::XMMATRIX* M, const DirectX::XMMATRIX* V, const DirectX::XMMATRIX* P);
+
+extern ID3D11RenderTargetView* g_lightmask_rtv11;
+extern ID3D11InputLayout* g_inputlayout_lightscatter;
+extern ID3D11VertexShader* g_vs_lightscatter_drawlight;
+extern ID3D11VertexShader* g_vs_lightscatter_combine;
+extern ID3D11PixelShader* g_ps_lightscatter_drawlight;
+extern ID3D11PixelShader* g_ps_lightscatter_combine;
+extern ID3D11Buffer* g_fsquad_for_lightscatter11;
+
+extern ID3D11ShaderResourceView* g_lightmask_srv11;
+extern ID3D11ShaderResourceView* g_maincanvas_srv11;
+extern ID3D11ShaderResourceView* g_gbuffer_srv11;
+extern ID3D11Texture2D* g_maincanvas;
+extern ID3D11Texture2D* g_backbuffer;
+
 #endif
 
 extern GameScene* GetCurrentGameScene();
@@ -325,7 +340,7 @@ void MainMenu::DrawHelpScreen() {
   // Directly render to backbuffer
   // Normal Pass
 #ifdef WIN32
-  ID3D11RenderTargetView* rtvs[] = { g_backbuffer_rtv11, nullptr }; // Do not write gbuffer
+  ID3D11RenderTargetView* rtvs[] = { g_backbuffer_rtv11, g_gbuffer_rtv11 }; // Do not write gbuffer
   g_context11->OMSetRenderTargets(2, rtvs, g_dsv11);
   g_context11->RSSetScissorRects(1, &g_scissorrect11);
   g_context11->VSSetShader(g_vs_default_palette, nullptr, 0);
@@ -381,9 +396,9 @@ void MainMenu::DrawHelpScreen() {
 
     // Prepare
     glm::vec3 world_pos = glm::vec3(0, 0, 0);
-    float a = 0.0f;
+    float a = GetElapsedMillis() / 1000.0f;
     world_pos.x += cos(3.0f * a) * 10.0f;
-    world_pos.y += sin(3.0f * a) * 10.0f;
+    world_pos.y += sin(3.0f * a) * 10.0f + 20.0f;
     world_pos.z *= -1;
     glm::mat4 V = cam_helpinfo->GetViewMatrix();
     glm::mat4 P = glm::perspective(60.0f * 3.14159f / 180.0f, viewport_vollight.Width * 1.0f / viewport_vollight.Height, 0.1f, 499.0f);
@@ -392,28 +407,69 @@ void MainMenu::DrawHelpScreen() {
     float y = viewport_vollight.Height - (clip_pos.y / clip_pos.w + 1.0f) * 0.5f * viewport_vollight.Height;
 
     LightScatterDrawLightCB h_lightscatter_cb{};
-    h_lightscatter_cb.light_x = x;
-    h_lightscatter_cb.light_y = y;
-    h_lightscatter_cb.light_z = -world_pos.z;
-    h_lightscatter_cb.light_r = 50 + sin(a) * 20.0f;
-    h_lightscatter_cb.WIN_W = WIN_W;
-    h_lightscatter_cb.WIN_H = WIN_H;
+    h_lightscatter_cb.light_x = x + viewport_vollight.TopLeftX;  // v0 will be pixel position, we need their pos's within the viewport so offset
+    h_lightscatter_cb.light_y = y + viewport_vollight.TopLeftY;
+    h_lightscatter_cb.light_z = -1.0f;
+    h_lightscatter_cb.light_r = 80 + sin(a) * 20.0f;
+    h_lightscatter_cb.WIN_W = viewport_vollight.Width;
+    h_lightscatter_cb.WIN_H = viewport_vollight.Height;
     h_lightscatter_cb.light_color.m128_f32[0] = 1.0f;
     h_lightscatter_cb.light_color.m128_f32[1] = 1.0f;
     h_lightscatter_cb.light_color.m128_f32[2] = 0.1f;
     h_lightscatter_cb.light_color.m128_f32[3] = 1.0f;
     h_lightscatter_cb.global_alpha = 1.0f;
 
+
     D3D11_MAPPED_SUBRESOURCE mapped;
     CE(g_context11->Map(g_lightscatter_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
     memcpy(mapped.pData, &h_lightscatter_cb, sizeof(LightScatterDrawLightCB));
     g_context11->Unmap(g_lightscatter_cb, 0);
 
+    // 1. Draw light
+    ID3D11RenderTargetView* null_rtvs[] = { nullptr, nullptr, nullptr };
+    float zero4[] = { 0, 0, 0, 0 };
+    g_context11->ClearRenderTargetView(g_lightmask_rtv11, zero4);
+    g_context11->IASetInputLayout(g_inputlayout_lightscatter);
+    g_context11->OMSetRenderTargets(1, &g_lightmask_rtv11, nullptr);
+    g_context11->PSSetConstantBuffers(0, 1, &g_lightscatter_cb);
+    g_context11->PSSetShader(g_ps_lightscatter_drawlight, nullptr, 0);
+    g_context11->VSSetShader(g_vs_lightscatter_drawlight, nullptr, 0);
+    UINT zero = 0, stride = sizeof(float) * 5;
+    g_context11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_context11->IASetVertexBuffers(0, 1, &g_fsquad_for_lightscatter11, &stride, &zero);
+    g_context11->Draw(6, 0);
+
+    g_context11->OMSetRenderTargets(2, null_rtvs, nullptr);
+    g_context11->CopyResource(g_maincanvas, g_backbuffer);
+
+    // 2. Combine
+    g_context11->VSSetShader(g_vs_lightscatter_combine, nullptr, 0);
+    g_context11->PSSetShader(g_ps_lightscatter_combine, nullptr, 0);
+    ID3D11ShaderResourceView* srvs[] = {
+      g_maincanvas_srv11,
+      g_lightmask_srv11,
+      g_gbuffer_srv11
+    };
+    g_context11->RSSetViewports(1, &g_viewport11);
+
+    h_lightscatter_cb.WIN_W = WIN_W;
+    h_lightscatter_cb.WIN_H = WIN_H;
+    CE(g_context11->Map(g_lightscatter_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+    memcpy(mapped.pData, &h_lightscatter_cb, sizeof(LightScatterDrawLightCB));
+    g_context11->Unmap(g_lightscatter_cb, 0);
+
+    g_context11->PSSetConstantBuffers(0, 1, &g_lightscatter_cb);
+    g_context11->IASetVertexBuffers(0, 1, &g_fsquad_for_lightscatter11, &stride, &zero);
+    g_context11->PSSetSamplers(0, 1, &g_sampler11);
+    g_context11->PSSetShaderResources(0, 3, srvs);
+    g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, nullptr);
+    g_context11->Draw(6, 0);
+    g_context11->OMSetRenderTargets(3, null_rtvs, nullptr);
 
     cam_helpinfo->pos = pos_backup;
   }
 
-  g_context11->RSSetViewports(1, &g_viewport11);
+  g_context11->OMSetRenderTargets(2, rtvs, g_dsv11);
 
   for (ImageSprite2D* sp : keys_sprites) sp->Render_D3D11();
 #endif
