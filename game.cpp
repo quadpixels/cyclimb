@@ -382,18 +382,6 @@ void MainMenu::DrawHelpScreen() {
     const glm::vec3 pos_backup = cam_helpinfo->pos;
     cam_helpinfo->pos = glm::vec3(0, 0, 199);
 
-    ////UpdateGlobalPerObjectCB(nullptr, &(cam_helpinfo->GetViewMatrix_D3D11()), &P);
-    ////UpdatePerSceneCB(&g_dir_light->GetDir_D3D11(), &(g_dir_light->GetPV_D3D11()), &(cam_helpinfo->GetPos_D3D11()));
-
-    ////float zeros[] = { 0, 0, 0, 0 };
-    ////g_context11->ClearRenderTargetView(g_gbuffer_rtv11, zeros);
-    ////g_context11->ClearDepthStencilView(g_dsv11, D3D11_CLEAR_DEPTH, 1.0f, 0);
-
-    //g_context11->OMSetRenderTargets(1, &g_backbuffer_rtv11, g_dsv11);
-    //PrepareLightsForGoalDemo();
-    //RenderLightsForGoalDemo();
-    //g_context11->OMSetRenderTargets(2, rtvs, g_dsv11);
-
     // Prepare
     glm::vec3 world_pos = glm::vec3(0, 0, 0);
     float a = GetElapsedMillis() / 1000.0f;
