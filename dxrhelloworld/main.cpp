@@ -133,6 +133,13 @@ void InitDeviceAndCommandQ() {
       debug_controller->EnableDebugLayer();
       dxgi_factory_flags |= DXGI_CREATE_FACTORY_DEBUG;
       printf("Enabling debug layer\n");
+
+      ID3D12Debug1* debug_controller1;
+      debug_controller->QueryInterface(IID_PPV_ARGS(&debug_controller1));
+      if (debug_controller1) {
+        printf("Enabling GPU-based validation\n");
+        debug_controller1->SetEnableGPUBasedValidation(true);
+      }
     }
   }
 

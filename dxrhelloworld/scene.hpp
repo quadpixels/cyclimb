@@ -243,15 +243,41 @@ public:
 // For finding out why ObjScene does not work in Release mode ...
 class ObjScene1 : public Scene {
 public:
+  struct Viewport
+  {
+    float left;
+    float top;
+    float right;
+    float bottom;
+  };
+  struct RayGenConstantBuffer
+  {
+    Viewport viewport;
+    Viewport stencil;
+  };
   ObjScene1();
   void InitDX12Stuff();
   void CreateRTPipeline();
+  void CreateShaderBindingTable();
   void Render() override;
   void Update(float secs) override;
 
 private:
   ID3D12RootSignature* root_sig{};
   ID3D12CommandAllocator* command_allocator{};
-  ID3D12GraphicsCommandList* command_list{};
+  ID3D12GraphicsCommandList4* command_list{};
   ID3D12StateObject* rt_state_object{};
+  ID3D12StateObjectProperties* rt_state_object_props;
+  ID3D12RootSignature* raygen_rootsig{};
+  ID3D12RootSignature* global_rootsig{};
+  ID3D12RootSignature* local_rootsig{};
+
+  // RT output buffer
+  ID3D12Resource* rt_output_resource{};
+  ID3D12DescriptorHeap* srv_uav_heap{};
+  ID3D12Resource* rt_sbt_storage{};
+  // SBT
+  ID3D12Resource* raygen_sbt_storage;
+  ID3D12Resource* miss_sbt_storage;
+  ID3D12Resource* hit_sbt_storage;
 };
