@@ -243,6 +243,9 @@ public:
 // For finding out why ObjScene does not work in Release mode ...
 class ObjScene1 : public Scene {
 public:
+  struct Vertex {
+    DirectX::XMFLOAT3 position;
+  };
   struct Viewport
   {
     float left;
@@ -261,6 +264,7 @@ public:
   void CreateShaderBindingTable();
   void Render() override;
   void Update(float secs) override;
+  void CreateAS();
 
 private:
   ID3D12RootSignature* root_sig{};
@@ -280,4 +284,11 @@ private:
   ID3D12Resource* raygen_sbt_storage;
   ID3D12Resource* miss_sbt_storage;
   ID3D12Resource* hit_sbt_storage;
+
+  // Vertex buffer
+  ID3D12Resource* vb_triangle;
+
+  // AS
+  ID3D12Resource* blas_scratch, * blas_result;
+  ID3D12Resource* tlas_scratch, * tlas_result, * tlas_instance;
 };
