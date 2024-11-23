@@ -3,12 +3,13 @@
 #include <stdio.h>
 
 #include <d3d11.h>
+#include <dxgi1_3.h>
 #include <d3dcompiler.h>
 
 extern ID3D11Device* g_device11;
 extern ID3D11DeviceContext* g_context11;
 extern ID3D11RenderTargetView* g_backbuffer_rtv11;
-extern IDXGISwapChain* g_swapchain11;
+extern IDXGISwapChain1* g_swapchain11;
 extern D3D11_VIEWPORT g_viewport, g_viewport_shadowmap;
 extern D3D11_RECT g_scissor_rect;
 extern ID3D11Buffer* g_perobject_cb_default_palette;
