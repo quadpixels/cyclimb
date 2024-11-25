@@ -33,6 +33,85 @@ static void CE(HRESULT x, ID3DBlob* error) {
   }
 }
 
+bool CompileShader(
+  const std::wstring& fileName,
+  const std::string& entryPoint,
+  const std::string& profile,
+  ID3DBlob*& shaderBlob)
+{
+  constexpr uint32_t compileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+
+  ID3DBlob* tempShaderBlob = nullptr;
+  ID3DBlob* errorBlob = nullptr;
+  if (FAILED(D3DCompileFromFile(
+    fileName.data(),
+    nullptr,
+    D3D_COMPILE_STANDARD_FILE_INCLUDE,
+    entryPoint.data(),
+    profile.data(),
+    compileFlags,
+    0,
+    &tempShaderBlob,
+    &errorBlob)))
+  {
+    std::cerr << "D3D11: Failed to read shader from file\n";
+    if (errorBlob != nullptr)
+    {
+      std::cerr << "D3D11: With message: " << static_cast<const char*>(errorBlob->GetBufferPointer()) << "\n";
+    }
+
+    return false;
+  }
+
+  shaderBlob = std::move(tempShaderBlob);
+  return true;
+}
+
+ID3D11VertexShader* CreateVertexShader(
+  const std::wstring& fileName,
+  ID3DBlob*& vertexShaderBlob)
+{
+  if (!CompileShader(fileName, "VSMain", "vs_5_0", vertexShaderBlob))
+  {
+    return nullptr;
+  }
+
+  ID3D11VertexShader* vertexShader;
+  if (FAILED(g_device11->CreateVertexShader(
+    vertexShaderBlob->GetBufferPointer(),
+    vertexShaderBlob->GetBufferSize(),
+    nullptr,
+    &vertexShader)))
+  {
+    std::cerr << "D3D11: Failed to compile vertex shader\n";
+    return nullptr;
+  }
+
+  return vertexShader;
+}
+
+ID3D11PixelShader* CreatePixelShader(const std::wstring& fileName)
+{
+  ID3DBlob* pixelShaderBlob = nullptr;
+  if (!CompileShader(fileName, "PSMain", "ps_5_0", pixelShaderBlob))
+  {
+    return nullptr;
+  }
+
+  ID3D11PixelShader* pixelShader;
+  if (FAILED(g_device11->CreatePixelShader(
+    pixelShaderBlob->GetBufferPointer(),
+    pixelShaderBlob->GetBufferSize(),
+    nullptr,
+    &pixelShader)))
+  {
+    std::cerr << "D3D11: Failed to compile pixel shader\n";
+    return nullptr;
+  }
+
+  return pixelShader;
+}
+
 void DX11ClearScreenScene::Render() {
   float bgcolor[4] = { 0.1f, 0.1f, 0.4f, 1.0f };
   g_context11->ClearRenderTargetView(g_backbuffer_rtv11, bgcolor);
@@ -66,16 +145,10 @@ DX11HelloTriangleScene::DX11HelloTriangleScene() {
   // Shaders
   ID3DBlob* error = nullptr;
   UINT compileFlags = 0;
-  ID3DBlob* vs_shader_blob;
-  hr = D3DCompileFromFile(L"shaders/hellotriangle.hlsl", nullptr, nullptr, "VSMain", "vs_4_0", compileFlags, 0, &vs_shader_blob, &error);
-  assert(SUCCEEDED(g_device11->CreateVertexShader(vs_shader_blob->GetBufferPointer(),
-    vs_shader_blob->GetBufferSize(), nullptr, &vs)));
-  CE(hr, error);
-  ID3DBlob* ps_shader_blob;
-  hr = D3DCompileFromFile(L"shaders/hellotriangle.hlsl", nullptr, nullptr, "PSMain", "ps_4_0", compileFlags, 0, &ps_shader_blob, &error);
-  assert(SUCCEEDED(g_device11->CreatePixelShader(ps_shader_blob->GetBufferPointer(),
-    ps_shader_blob->GetBufferSize(), nullptr, &ps)));
-  CE(hr, error);
+  ID3DBlob* vs_shader_blob{};
+
+  vs = CreateVertexShader(L"shaders/hellotriangle.hlsl", vs_shader_blob);
+  ps = CreatePixelShader(L"shaders/hellotriangle.hlsl");
 
   // Input Layout
   D3D11_INPUT_ELEMENT_DESC inputdesc[] = {
@@ -139,22 +212,11 @@ DX11ChunksScene::DX11ChunksScene() {
   // Shaders
   ID3DBlob* error = nullptr;
   UINT compileFlags = 0;
-  ID3DBlob* vs_shader_blob;
+  ID3DBlob* vs_shader_blob{};
   HRESULT hr;
-  hr = D3DCompileFromFile(L"../shaders_hlsl/default_palette.hlsl", nullptr, nullptr, "VSMain", "vs_4_0", compileFlags, 0, &vs_shader_blob, &error);
-  hr = g_device11->CreateVertexShader(vs_shader_blob->GetBufferPointer(),
-    vs_shader_blob->GetBufferSize(), nullptr, &vs);
-  CE(hr, error);
-  if (error) {
-    printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
-  }
-  ID3DBlob* ps_shader_blob;
-  hr = D3DCompileFromFile(L"../shaders_hlsl/default_palette.hlsl", nullptr, nullptr, "PSMainWithShadow", "ps_4_0", compileFlags, 0, &ps_shader_blob, &error);
-  assert(SUCCEEDED(g_device11->CreatePixelShader(ps_shader_blob->GetBufferPointer(),
-    ps_shader_blob->GetBufferSize(), nullptr, &ps)));
-  if (error) {
-    printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
-  }
+
+  vs = CreateVertexShader(L"../shaders_hlsl/default_palette.hlsl", vs_shader_blob);
+  ps = CreatePixelShader(L"../shaders_hlsl/default_palette.hlsl");
 
   // IA
   D3D11_INPUT_ELEMENT_DESC inputdesc1[] = {
