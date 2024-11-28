@@ -69,9 +69,10 @@ bool CompileShader(
 
 ID3D11VertexShader* CreateVertexShader(
   const std::wstring& fileName,
+  const char* entrypoint,
   ID3DBlob*& vertexShaderBlob)
 {
-  if (!CompileShader(fileName, "VSMain", "vs_5_0", vertexShaderBlob))
+  if (!CompileShader(fileName, entrypoint, "vs_5_0", vertexShaderBlob))
   {
     return nullptr;
   }
@@ -90,10 +91,10 @@ ID3D11VertexShader* CreateVertexShader(
   return vertexShader;
 }
 
-ID3D11PixelShader* CreatePixelShader(const std::wstring& fileName)
+ID3D11PixelShader* CreatePixelShader(const std::wstring& fileName, const char* entrypoint)
 {
   ID3DBlob* pixelShaderBlob = nullptr;
-  if (!CompileShader(fileName, "PSMain", "ps_5_0", pixelShaderBlob))
+  if (!CompileShader(fileName, entrypoint, "ps_5_0", pixelShaderBlob))
   {
     return nullptr;
   }
@@ -147,8 +148,8 @@ DX11HelloTriangleScene::DX11HelloTriangleScene() {
   UINT compileFlags = 0;
   ID3DBlob* vs_shader_blob{};
 
-  vs = CreateVertexShader(L"shaders/hellotriangle.hlsl", vs_shader_blob);
-  ps = CreatePixelShader(L"shaders/hellotriangle.hlsl");
+  vs = CreateVertexShader(L"shaders/hellotriangle.hlsl", "VSMain", vs_shader_blob);
+  ps = CreatePixelShader(L"shaders/hellotriangle.hlsl", "PSMain");
 
   // Input Layout
   D3D11_INPUT_ELEMENT_DESC inputdesc[] = {
@@ -215,8 +216,8 @@ DX11ChunksScene::DX11ChunksScene() {
   ID3DBlob* vs_shader_blob{};
   HRESULT hr;
 
-  vs = CreateVertexShader(L"../shaders_hlsl/default_palette.hlsl", vs_shader_blob);
-  ps = CreatePixelShader(L"../shaders_hlsl/default_palette.hlsl");
+  vs = CreateVertexShader(L"shaders_hlsl/default_palette.hlsl", "VSMain", vs_shader_blob);
+  ps = CreatePixelShader(L"shaders_hlsl/default_palette.hlsl", "PSMainWithShadow");
 
   // IA
   D3D11_INPUT_ELEMENT_DESC inputdesc1[] = {

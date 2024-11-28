@@ -277,12 +277,19 @@ void MyTest() {
   glm::vec4 clip_pos2 = p1 * v * world_pos;  // 相比起 DX 的结果，z 与 w 各需要乘以 -1
 }
 
-int main() {
+int main(int argc, char** argv) {
   MyTest();
 
   CreateCyclimbWindow();
 
   InitDX11();
+
+  for (int i = 0; i < argc; i++) {
+    if (!strcmp(argv[i], "-scene") && argc > i + 1) {
+      printf("Scene set to %s\n", argv[i + 1]);
+      g_scene_idx = std::atoi(argv[i + 1]);
+    }
+  }
 
   g_scenes[0] = new DX11ClearScreenScene();
   g_scenes[1] = new DX11HelloTriangleScene();
