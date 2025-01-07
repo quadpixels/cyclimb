@@ -41,6 +41,13 @@ public:
 
 class MainMenu {
 public:
+  enum MenuKind {
+    MAIN = 0,
+    HELP = 1,
+    OPTIONS = 2,
+    EDIT_MODE = 3,
+    LEVEL_SELECT,
+  };
   enum class MenuItemType {
     Text,
     Selectable,
@@ -99,7 +106,7 @@ public:
   void OnLeftRightPressed(int delta); // -1: left; +1: right
   void OnEscPressed();
   void OnEnter();
-  void EnterMenu(const int idx, bool is_from_exit);
+  void EnterMenu(const MenuKind idx, bool is_from_exit);
   void ExitMenu();
   bool IsInHelp() { return is_in_help; }
   void DrawHelpScreen();
@@ -119,7 +126,8 @@ public:
   void RenderLightsForGoalDemo();
   DirectionalLight* lights[3];
 
-  std::vector<int> curr_selection, curr_menu;
+  std::vector<int> curr_selection;
+  std::vector<MenuKind> curr_menu;
   bool is_in_help;
   unsigned fade_millis0, fade_millis1, fade_millis;
   float fade_alpha0, fade_alpha1, fade_alpha;

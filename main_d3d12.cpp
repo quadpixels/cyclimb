@@ -471,7 +471,6 @@ void MyInit_D3D12() {
   Particles::InitStatic(g_chunkgrid[3]);
   ClimbScene::InitStatic();
   g_climbscene = new ClimbScene();
-  g_climbscene->Init();
 
   g_mainmenu = new MainMenu();
 
@@ -493,6 +492,7 @@ void MyInit_D3D12() {
   g_dir_light = new DirectionalLight(glm::vec3(1, -3, -1), glm::vec3(1, 3, -1));
 
   g_textmessage = new TextMessage();
+  g_climbscene->Init();
 
   init_done = true;
 }

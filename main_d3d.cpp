@@ -961,7 +961,7 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
         is_from_exit = false;
       }
       if (is_from_exit) {
-        g_mainmenu->EnterMenu(0, true);
+        g_mainmenu->EnterMenu(MainMenu::MenuKind::MAIN, true);
       }
       g_main_menu_visible = true;
     }

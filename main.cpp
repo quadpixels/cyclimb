@@ -568,7 +568,7 @@ void keydown(unsigned char key, int x, int y) {
         }
       } else {
         if (g_mainmenu->curr_menu.empty())
-          g_mainmenu->EnterMenu(0, false);
+          g_mainmenu->EnterMenu(MainMenu::MenuKind::MAIN, false);
         g_main_menu_visible = true;
       }
       break;

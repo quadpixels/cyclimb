@@ -234,7 +234,7 @@ MainMenu::MainMenu() {
   lights[1] = new DirectionalLight(glm::vec3(-1, -1, 0), glm::vec3(100, 0, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
   lights[2] = new DirectionalLight(glm::vec3(0, -1, 0), glm::vec3(0, 0, 0), glm::vec3(1, 0, 0), 15 * 3.14159f / 180.0f);
 
-  EnterMenu(0, false);
+  EnterMenu(MenuKind::MAIN, false);
 }
 
 /**
@@ -536,51 +536,79 @@ void MainMenu::OnUpDownPressed(int delta) {
   const int L = int(menuitems.size());
   if (menuitems.empty() == false && curr_selection.empty() == false) {
     int* pCh = &(curr_selection[curr_menu.size()-1]);
-    int new_ch = int(delta + (*pCh) + L) % L;
-    *pCh = new_ch;
+    int& ch = curr_selection[curr_menu.size() - 1];
+    ch = int(delta + ch + L) % L;
+  }
+
+  switch (curr_menu.back()) {
+  case MenuKind::LEVEL_SELECT: {
+    const int s = curr_selection[curr_menu.size() - 1];
+    const int nl = int(g_climbscene->levels.size());
+    if (s < nl) {
+      g_climbscene->StartLevel(s + 1);
+    }
+  }
+  default: break;
   }
 }
 
-void MainMenu::EnterMenu(int idx, bool is_from_exit) {
+// Layout
+void MainMenu::EnterMenu(const MenuKind idx, bool is_from_exit) {
   printf("EnterMenu(%d, %d)\n", idx, is_from_exit);
-  if (idx == 0) {
-    printf("");
-  }
   menutitle.clear();
   menuitems.clear();
   const wchar_t* title0 = L"C Y Climb",
-               * title1 = L"20190402";
+               * title1 = L"2019--2025";
 
-  if (idx == 0) {
-    menutitle.push_back(title0);
-    menutitle.push_back(title1);
-    menutitle.push_back(L"Main Menu");
+  switch (idx) {
+    case MenuKind::MAIN: {
+      menutitle.push_back(title0);
+      menutitle.push_back(title1);
+      menutitle.push_back(L"Main Menu");
 
-    menuitems.push_back(MenuItem(L"Start Game"));
-    menuitems.push_back(MenuItem(L"Edit Mode"));
-    menuitems.push_back(MenuItem(L"Options"));
-    menuitems.push_back(MenuItem(L"Help"));
-    menuitems.push_back(MenuItem(L"Exit"));
-  } else if (idx == 1) {
-    menutitle.push_back(title0);
-    menutitle.push_back(title1);
-    menutitle.push_back(L"Main Menu");
-    FadeInHelpScreen();
-    menuitems.push_back(MenuItem(L" "));
-  } else if (idx == 2) {
-    menutitle.push_back(title0);
-    menutitle.push_back(title1);
+      menuitems.push_back(MenuItem(L"Start Game"));
+      menuitems.push_back(MenuItem(L"Level Select"));
+      menuitems.push_back(MenuItem(L"Edit Mode"));
+      menuitems.push_back(MenuItem(L"Options"));
+      menuitems.push_back(MenuItem(L"Help"));
+      menuitems.push_back(MenuItem(L"Exit"));
+      break;
+    }
+    case MenuKind::HELP: {  // Edit mode
+      menutitle.push_back(title0);
+      menutitle.push_back(title1);
+      menutitle.push_back(L"Main Menu");
+      FadeInHelpScreen();
+      menuitems.push_back(MenuItem(L" "));
+      break;
+    }
+    case MenuKind::OPTIONS: {  // Options
+      menutitle.push_back(title0);
+      menutitle.push_back(title1);
 
-    menuitems.push_back(GetMenuItem("antialias"));
-    menuitems.push_back(GetMenuItem("shadows"));
+      menuitems.push_back(GetMenuItem("antialias"));
+      menuitems.push_back(GetMenuItem("shadows"));
+      break;
+    }
+    case MenuKind::EDIT_MODE: {
+      menutitle.push_back(L"[Edit Mode Menu]");
+      menuitems.push_back(MenuItem(L"Test Play"));
+      menuitems.push_back(MenuItem(L"Return to Editing"));
+      menuitems.push_back(MenuItem(L"Exit Edit Mode"));
+      break;
+    }
+    case MenuKind::LEVEL_SELECT: {
+      menutitle.push_back(L"[Level Select]");
+      for (int i = 0; i < static_cast<int>(g_climbscene->levels.size()); i++) {
+        std::wstring x = L"Level " + std::to_wstring(i + 1);
+        menuitems.push_back(MenuItem(x.c_str()));
+      }
+      menuitems.push_back(MenuItem(L"Back"));
+      break;
+    }
+    default:
+      break;
   }
-  else if (idx == 3) {
-    menutitle.push_back(L"[Edit Mode Menu]");
-    menuitems.push_back(MenuItem(L"Test Play"));
-    menuitems.push_back(MenuItem(L"Return to Editing"));
-    menuitems.push_back(MenuItem(L"Exit Edit Mode"));
-  }
-
   if (!is_from_exit || curr_menu.empty()) {
     curr_menu.push_back(idx);
     curr_selection.push_back(0);
@@ -590,7 +618,7 @@ void MainMenu::EnterMenu(int idx, bool is_from_exit) {
 
 void MainMenu::OnEnter() {
   switch (curr_menu.back()) {
-    case 0: {
+    case MenuKind::MAIN: {
       switch (curr_selection[curr_menu.size()-1]) {
       case 0:
         g_climbscene->is_test_playing = false;
@@ -598,13 +626,17 @@ void MainMenu::OnEnter() {
         StartGame(false); // Start Game
         break;
       case 1: {
-        EnterMenu(3, false);
+        EnterMenu(MenuKind::LEVEL_SELECT, false);
+        break;
+      }
+      case 2: {
+        EnterMenu(MenuKind::EDIT_MODE, false);
         EnterEditMode();
         break;
       }
-      case 2: EnterMenu(2, false); break; // Options
-      case 3: EnterMenu(1, false); break; // Help
-      case 4: {
+      case 3: EnterMenu(MenuKind::OPTIONS, false); break; // Options
+      case 4: EnterMenu(MenuKind::HELP, false); break; // Help
+      case 5: {
         // close glfw window
         glfwSetWindowShouldClose(g_window, true); 
         glfwDestroyWindow(g_window);
@@ -618,12 +650,12 @@ void MainMenu::OnEnter() {
       }
       break;
     }
-    case 1: {
+    case MenuKind::HELP: {
       FadeOutHelpScreen();
       ExitMenu();
       break;
     }
-    case 3: {
+    case MenuKind::EDIT_MODE: {
       switch (curr_selection[curr_menu.size() - 1]) {
         case 0:
           if (g_climbscene->is_test_playing == false) {
@@ -651,7 +683,17 @@ void MainMenu::OnEnter() {
       }
       break;
     }
-    case 2:
+    case MenuKind::LEVEL_SELECT: {
+      const int s = curr_selection[curr_menu.size() - 1];
+      const int nl = int(g_climbscene->levels.size());
+      if (s >= nl) {
+        ExitMenu();
+      }
+      else {
+        g_climbscene->StartLevel(s + 1);
+      }
+      break;
+    }
     default: break;
   }
 }
