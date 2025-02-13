@@ -10,6 +10,7 @@
 
 using Microsoft::WRL::ComPtr;
 
+extern std::string LoadShaderSourceFromResource(int res_id);
 extern int WIN_W, WIN_H;
 extern ID3D12Device* g_device12;
 extern int g_frame_index;
@@ -116,47 +117,12 @@ void DX12HelloTriangleScene::InitPipelineAndCommandList() {
   CE(command_list->Close());
 
   {
-    std::string shader_source;
-
-    HMODULE hmodule = GetModuleHandleW(nullptr);
-    if (!hmodule) {
-      printf("Oh! cannot open module.\n");
-      assert(0);
-    }
-    LPCWSTR rsrcname = MAKEINTRESOURCEW(IDR_HLSL1);
-    HRSRC hres = FindResourceW(hmodule, rsrcname, L"HLSL");
-    if (!hres) {
-      printf("Oh! cannot open rsrc.\n");
-      assert(0);
-    }
-
-    HGLOBAL hresdata = LoadResource(hmodule, hres);
-    if (!hresdata) {
-      std::cerr << "Failed to load resource!" << std::endl;
-      assert(0);
-    }
-
-    // Lock the resource to get a pointer to its data
-    LPVOID pData = LockResource(hresdata);
-    DWORD dataSize = SizeofResource(hmodule, hres);
-
-    if (pData && dataSize > 0) {
-      // Print the contents of the resource
-      printf("Loaded shader source from resource.\n");
-      shader_source = std::string(static_cast<char*>(pData));
-    }
-    else {
-      std::cerr << "Failed to lock resource!" << std::endl;
-      assert(0);
-    }
-    UnlockResource(hresdata);
+    std::string shader_source = LoadShaderSourceFromResource(IDR_HLSL1);
 
     ID3DBlob* error = nullptr;
     unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 
     // Build VS
-    ID3DBlob* tempShaderBlob = nullptr;
-    ID3DBlob* errorBlob = nullptr;
     if (FAILED(D3DCompile(
       shader_source.data(),
       shader_source.size(),
@@ -169,8 +135,8 @@ void DX12HelloTriangleScene::InitPipelineAndCommandList() {
       0,
       &VS,
       &error))) {
-      if (errorBlob != nullptr) {
-        printf("Error compiling VS: %s\n", static_cast<const char*>(errorBlob->GetBufferPointer()));
+      if (error != nullptr) {
+        printf("Error compiling VS: %s\n", static_cast<const char*>(error->GetBufferPointer()));
         assert(0);
       }
     }
@@ -188,8 +154,8 @@ void DX12HelloTriangleScene::InitPipelineAndCommandList() {
       0,
       &PS,
       &error))) {
-      if (errorBlob != nullptr) {
-        printf("Error compiling PS: %s\n", static_cast<const char*>(errorBlob->GetBufferPointer()));
+      if (error != nullptr) {
+        printf("Error compiling PS: %s\n", static_cast<const char*>(error->GetBufferPointer()));
         assert(0);
       }
     }

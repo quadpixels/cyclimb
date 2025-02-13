@@ -9,6 +9,8 @@
 #include <wrl/client.h>
 #include <d3dcompiler.h>
 
+#include "resource.h"
+
 extern ID3D12Device* g_device12;
 using Microsoft::WRL::ComPtr;
 
@@ -20,6 +22,7 @@ extern unsigned g_rtv_descriptor_size;
 extern ID3D12CommandQueue* g_command_queue;
 extern IDXGISwapChain3* g_swapchain;
 extern void GlmMat4ToDirectXMatrix(DirectX::XMMATRIX* out, const glm::mat4& m);
+extern std::string LoadShaderSourceFromResource(int res_id);
 
 void WaitForPreviousFrame();
 // Dummy
@@ -31,7 +34,8 @@ DX12TextScene::DX12TextScene() {
   InitFreetype();
   AddText(L"Hello world", glm::vec2(WIN_W / 2.0f, WIN_H / 2.0f));
   text_pass = new TextPass(g_device12, g_command_queue, command_list, command_allocator);
-  text_pass->InitD3D12();
+  std::string shader_source = LoadShaderSourceFromResource(IDR_HLSL3);
+  text_pass->InitD3D12(shader_source.c_str());
   text_pass->InitFreetype();
   text_pass->AllocateConstantBuffers(1024);
 }
@@ -59,13 +63,14 @@ void DX12TextScene::InitResources() {
    
   // 1. Shader
   {
+    std::string shader_source = LoadShaderSourceFromResource(IDR_HLSL3);
     ID3DBlob* error = nullptr;
     unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-    D3DCompileFromFile(L"shaders/textrender.hlsl", nullptr, nullptr,
+    D3DCompile(shader_source.c_str(), shader_source.size(), nullptr, nullptr, nullptr,
       "VSMain", "vs_5_0", compile_flags, 0, &VS, &error);
     if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
 
-    D3DCompileFromFile(L"shaders/textrender.hlsl", nullptr, nullptr,
+    D3DCompile(shader_source.c_str(), shader_source.size(), nullptr, nullptr, nullptr,
       "PSMain", "ps_5_0", compile_flags, 0, &PS, &error);
     if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
   }

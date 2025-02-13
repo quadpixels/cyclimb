@@ -90,7 +90,28 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="hlsl1.bin">
+    <None Include="hlsl1.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="clear_screen.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="hlsl3.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="textrender.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="hlsl4.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="drawlight.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="hlsl5.bin">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="lightshaft_combine.hlsl">
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>

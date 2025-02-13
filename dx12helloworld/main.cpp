@@ -49,6 +49,46 @@ ID3D11VertexShader* g_vs_textrender;
 ID3D11PixelShader* g_ps_textrender;
 GLuint g_programs[10];
 
+
+// Read shader from resource embedded into the EXE
+std::string LoadShaderSourceFromResource(int res_id) {
+  std::string shader_source;
+
+  HMODULE hmodule = GetModuleHandleW(nullptr);
+  if (!hmodule) {
+    printf("Oh! cannot open module.\n");
+    assert(0);
+  }
+  LPCWSTR rsrcname = MAKEINTRESOURCEW(res_id);
+  HRSRC hres = FindResourceW(hmodule, rsrcname, L"HLSL");
+  if (!hres) {
+    printf("Oh! cannot open rsrc.\n");
+    assert(0);
+  }
+
+  HGLOBAL hresdata = LoadResource(hmodule, hres);
+  if (!hresdata) {
+    std::cerr << "Failed to load resource!" << std::endl;
+    assert(0);
+  }
+
+  // Lock the resource to get a pointer to its data
+  LPVOID pData = LockResource(hresdata);
+  DWORD dataSize = SizeofResource(hmodule, hres);
+
+  if (pData && dataSize > 0) {
+    // Print the contents of the resource
+    printf("Loaded shader source from resource.\n");
+    shader_source = std::string(static_cast<char*>(pData));
+  }
+  else {
+    std::cerr << "Failed to lock resource!" << std::endl;
+    assert(0);
+  }
+  UnlockResource(hresdata);
+  return shader_source;
+}
+
 // Shared across all scenes
 void InitDeviceAndCommandQ() {
   unsigned dxgi_factory_flags = 0;

@@ -9,6 +9,8 @@
 
 #include "util.hpp"
 
+#include "resource.h"
+
 using Microsoft::WRL::ComPtr;
 
 extern int WIN_W, WIN_H;
@@ -20,6 +22,7 @@ extern IDXGISwapChain3* g_swapchain;
 extern ID3D12DescriptorHeap* g_rtv_heap;
 extern ID3D12Resource* g_rendertargets[];
 extern unsigned g_rtv_descriptor_size;
+extern std::string LoadShaderSourceFromResource(int res_id);
 
 void WaitForPreviousFrame();
 
@@ -32,23 +35,26 @@ DX12LightScatterScene::DX12LightScatterScene() {
 
   ID3DBlob* error = nullptr;
   unsigned compile_flags = 0;
-  D3DCompileFromFile(L"shaders/shaders_drawlight.hlsl", nullptr, nullptr,
+
+  std::string drawlight_source = LoadShaderSourceFromResource(IDR_HLSL4);
+  D3DCompile(drawlight_source.data(), drawlight_source.size(), nullptr, nullptr, nullptr,
     "VSMain", "vs_4_0", compile_flags, 0, &vs_drawlight, &error);
   if (error) {
     printf("Error compiling VS: %s\n", (char*)error->GetBufferPointer());
   }
-  D3DCompileFromFile(L"shaders/shaders_drawlight.hlsl", nullptr, nullptr,
+  D3DCompile(drawlight_source.data(), drawlight_source.size(), nullptr, nullptr, nullptr,
     "PSMain", "ps_4_0", compile_flags, 0, &ps_drawlight, &error);
   if (error) {
     printf("Error compiling PS: %s\n", (char*)error->GetBufferPointer());
   }
 
-  D3DCompileFromFile(L"shaders/shaders_combine.hlsl", nullptr, nullptr,
+  std::string combine_source = LoadShaderSourceFromResource(IDR_HLSL5);
+  D3DCompile(combine_source.data(), combine_source.size(), nullptr, nullptr, nullptr,
     "VSMain", "vs_4_0", compile_flags, 0, &vs_combine, &error);
   if (error) {
     printf("Error compiling VS: %s\n", (char*)error->GetBufferPointer());
   }
-  D3DCompileFromFile(L"shaders/shaders_combine.hlsl", nullptr, nullptr,
+  D3DCompile(combine_source.data(), combine_source.size(), nullptr, nullptr, nullptr,
     "PSMain", "ps_4_0", compile_flags, 0, &ps_combine, &error);
   if (error) {
     printf("Error compiling PS: %s\n", (char*)error->GetBufferPointer());

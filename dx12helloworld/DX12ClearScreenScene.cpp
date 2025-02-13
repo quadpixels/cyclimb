@@ -11,6 +11,8 @@
 
 #include "util.hpp"
 
+#include "resource.h"
+
 using Microsoft::WRL::ComPtr;
 
 extern HWND g_hwnd;
@@ -28,6 +30,7 @@ extern ID3D12Resource* g_rendertargets[];
 extern unsigned g_rtv_descriptor_size;
 extern int g_frame_index;
 
+extern std::string LoadShaderSourceFromResource(int res_id);
 void InitDeviceAndCommandQ();
 void InitSwapChain();
 void WaitForPreviousFrame();
@@ -44,15 +47,47 @@ void DX12ClearScreenScene::InitPipelineAndCommandList() {
   CE(command_list->Close());
 
   {
-    ID3DBlob* error = nullptr;
+    ID3DBlob* error;
+    std::string shader_source = LoadShaderSourceFromResource(IDR_HLSL2);
     unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-    D3DCompileFromFile(L"shaders/clear_screen.hlsl", nullptr, nullptr,
-      "VSMain", "vs_5_0", compile_flags, 0, &VS, &error);
-    if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
 
-    D3DCompileFromFile(L"shaders/clear_screen.hlsl", nullptr, nullptr,
-      "PSMain", "ps_5_0", compile_flags, 0, &PS, &error);
-    if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
+    // Build VS
+    if (FAILED(D3DCompile(
+      shader_source.data(),
+      shader_source.size(),
+      nullptr,
+      nullptr,
+      nullptr,
+      "VSMain",
+      "vs_5_0",
+      compile_flags,
+      0,
+      &VS,
+      &error))) {
+      if (error != nullptr) {
+        printf("Error compiling VS: %s\n", static_cast<const char*>(error->GetBufferPointer()));
+        assert(0);
+      }
+    }
+
+    // Build PS
+    if (FAILED(D3DCompile(
+      shader_source.data(),
+      shader_source.size(),
+      nullptr,
+      nullptr,
+      nullptr,
+      "PSMain",
+      "ps_5_0",
+      compile_flags,
+      0,
+      &PS,
+      &error))) {
+      if (error != nullptr) {
+        printf("Error compiling PS: %s\n", static_cast<const char*>(error->GetBufferPointer()));
+        assert(0);
+      }
+    }
   }
 
   {

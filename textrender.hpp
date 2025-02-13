@@ -61,7 +61,7 @@ public:
     characters_to_display.clear();
   }
   void InitFreetype();
-  void InitD3D12();
+  void InitD3D12(const char* shader_source);
   Character_D3D12* CreateOrGetChar(wchar_t ch);
   void AddText(std::wstring text, float x, float y, float scale, glm::vec3 color, glm::mat4 transform);
   void RenderText(ID3D12GraphicsCommandList* command_list);

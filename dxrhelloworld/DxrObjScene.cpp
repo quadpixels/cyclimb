@@ -326,7 +326,7 @@ void ObjScene::InitDX12Stuff() {
   // Text pass
   text_pass = new TextPass(g_device12, g_command_queue, command_list1, command_allocator1);
   text_pass->AllocateConstantBuffers(1024);
-  text_pass->InitD3D12();
+  text_pass->InitD3D12(nullptr);
   text_pass->InitFreetype();
 
   // Query Heap

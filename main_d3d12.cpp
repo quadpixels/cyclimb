@@ -484,7 +484,7 @@ void MyInit_D3D12() {
   chunk_pass_normal->InitD3D12DefaultPalette();
   text_pass = new TextPass(g_device12, g_command_queue, g_command_list, g_command_allocator);
   text_pass->AllocateConstantBuffers(NUM_CHARS);
-  text_pass->InitD3D12();
+  text_pass->InitD3D12(nullptr);
   text_pass->InitFreetype();
 
   g_projection_d3d11 = DirectX::XMMatrixPerspectiveFovLH(60.0f * 3.14159f / 180.0f, WIN_W * 1.0f / WIN_H, 0.01f, 499.0f);

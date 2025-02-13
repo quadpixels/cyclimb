@@ -346,12 +346,14 @@ void TextPass::AllocateConstantBuffers(int n) {
     IID_PPV_ARGS(&vertex_buffers)));
 }
 
-void TextPass::InitD3D12() {
+void TextPass::InitD3D12(const char* shader_source) {
   // 1. Shader
-  ID3DBlob* VS, * PS;
+  ID3DBlob* VS{}, * PS{};
+  unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+
+  if (!shader_source)
   {
     ID3DBlob* error = nullptr;
-    unsigned compile_flags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
     const wchar_t* filenames[] = {
       L"shaders_hlsl/textrender.hlsl",
       L"../shaders_hlsl/textrender.hlsl",
@@ -359,6 +361,7 @@ void TextPass::InitD3D12() {
     for (size_t i = 0; i < 2; i++) {
       HRESULT hr = D3DCompileFromFile(filenames[i], nullptr, nullptr,
         "VSMain", "vs_5_0", compile_flags, 0, &VS, &error);
+
       if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
 
       hr = D3DCompileFromFile(filenames[i], nullptr, nullptr,
@@ -366,6 +369,13 @@ void TextPass::InitD3D12() {
       if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
       if (error == nullptr && hr == 0) break;
     }
+  }
+  else {
+    ID3DBlob* error = nullptr;
+    HRESULT hr = D3DCompile(shader_source, strlen(shader_source), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", compile_flags, 0, &VS, &error);
+    if (error) printf("Error compiling VS: %s\n", (char*)(error->GetBufferPointer()));
+    hr = D3DCompile(shader_source, strlen(shader_source), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", compile_flags, 0, &PS, &error);
+    if (error) printf("Error compiling PS: %s\n", (char*)(error->GetBufferPointer()));
   }
 
   // 2. Root Signature

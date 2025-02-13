@@ -179,7 +179,32 @@
     <ResourceCompile Include="dx12helloworld.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="hlsl1.bin" />
+    <None Include="hlsl1.hlsl">
+      <FileType>Document</FileType>
+    </None>
+    <None Include="hlsl3.bin" />
+    <None Include="hlsl4.bin" />
+    <None Include="hlsl5.bin" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="clear_screen.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="textrender.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="drawlight.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="lightshaft_combine.hlsl">
+      <FileType>Document</FileType>
+    </None>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
