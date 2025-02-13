@@ -54,6 +54,9 @@
     <ClCompile Include="DX12LightScatterScene.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="DX12MeshShaderScene.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="scene.hpp">
@@ -71,9 +74,6 @@
     <ClInclude Include="..\util.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\d3dx12.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="..\camera.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -83,6 +83,12 @@
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="dxcapi.use.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="d3dx12.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="dx12helloworld.rc">
@@ -90,28 +96,22 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="hlsl1.hlsl">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="clear_screen.hlsl">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="hlsl3.bin">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="textrender.hlsl">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="hlsl4.bin">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="drawlight.hlsl">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="hlsl5.bin">
+    <None Include="lightshaft_combine.hlsl">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="lightshaft_combine.hlsl">
+    <None Include="hellotriangle.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="mesh_shader_scene.hlsl">
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>

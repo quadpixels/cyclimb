@@ -210,4 +210,16 @@ public:
   ID3D12Resource* main_canvas;
 };
 
+class DX12MeshShaderScene : public Scene {
+public:
+  DX12MeshShaderScene();
+  void Render() override;
+  void Update(float secs) override;
+
+  ID3D12CommandAllocator* command_allocator;
+  ID3D12GraphicsCommandList6* command_list;
+  ID3D12RootSignature* root_signature;
+  ID3D12PipelineState* pipeline_state{};
+};
+
 #endif

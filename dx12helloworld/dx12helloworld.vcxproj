@@ -78,12 +78,12 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir);$(SolutionDir)\windows_lib\freetype-2.10.0\include;$(SolutionDir)\windows_lib\glm-0.9.9.5;$(SolutionDir)\windows_lib\glew-2.0.0\include;$(SolutionDir)\windows_lib\freeglut\include;$(SolutionDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(SolutionDir)\windows_lib\DirectxTK\Inc</IncludePath>
+    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(ProjectDir);$(SolutionDir);$(SolutionDir)\windows_lib\freetype-2.10.0\include;$(SolutionDir)\windows_lib\glm-0.9.9.5;$(SolutionDir)\windows_lib\glew-2.0.0\include;$(SolutionDir)\windows_lib\freeglut\include;$(SolutionDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(SolutionDir)\windows_lib\DirectxTK\Inc</IncludePath>
     <LibraryPath>$(SolutionDir)\windows_lib\freetype-2.10.0\win64;$(SolutionDir)\windows_lib\freeglut\lib\x64;$(SolutionDir)\windows_lib\glew-2.0.0\lib\Release\x64;$(SolutionDir)\windows_lib\glfw-3.2.1.bin.WIN64\lib-vc2015;$(SolutionDir)\windows_lib\DirectxTK\Bin\x64;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)\windows_lib\freetype-2.10.0\include;$(SolutionDir)\windows_lib\glm-0.9.9.5;$(SolutionDir)\windows_lib\glew-2.0.0\include;$(SolutionDir)\windows_lib\freeglut\include;$(SolutionDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(SolutionDir)\windows_lib\DirectxTK\Inc</IncludePath>
+    <IncludePath>$(ProjectDir);$(VC_IncludePath);$(WindowsSDK_IncludePath);$(SolutionDir)\windows_lib\freetype-2.10.0\include;$(SolutionDir)\windows_lib\glm-0.9.9.5;$(SolutionDir)\windows_lib\glew-2.0.0\include;$(SolutionDir)\windows_lib\freeglut\include;$(SolutionDir)\windows_lib\glfw-3.2.1.bin.WIN64\include;$(SolutionDir)\windows_lib\DirectxTK\Inc</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -127,7 +127,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>opengl32.lib;glfw3.lib;glew32.lib;freetype.lib;d3d11.lib;d3d12.lib;d3dcompiler.lib;dxgi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;glfw3.lib;glew32.lib;freetype.lib;d3d11.lib;d3d12.lib;d3dcompiler.lib;dxgi.lib;dxguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -146,7 +146,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>d3d12.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d12.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -160,6 +160,7 @@
     <ClCompile Include="DX12ClearScreenScene.cpp" />
     <ClCompile Include="DX12HelloTriangleScene.cpp" />
     <ClCompile Include="DX12LightScatterScene.cpp" />
+    <ClCompile Include="DX12MeshShaderScene.cpp" />
     <ClCompile Include="DX12TextScene.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="utils.cpp" />
@@ -168,23 +169,16 @@
     <ClInclude Include="..\camera.hpp" />
     <ClInclude Include="..\chunk.hpp" />
     <ClInclude Include="..\chunkindex.hpp" />
-    <ClInclude Include="..\d3dx12.h" />
     <ClInclude Include="..\sprite.hpp" />
     <ClInclude Include="..\util.hpp" />
+    <ClInclude Include="d3dx12.h" />
+    <ClInclude Include="dxcapi.use.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="scene.hpp" />
     <ClInclude Include="utils.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="dx12helloworld.rc" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="hlsl1.hlsl">
-      <FileType>Document</FileType>
-    </None>
-    <None Include="hlsl3.bin" />
-    <None Include="hlsl4.bin" />
-    <None Include="hlsl5.bin" />
   </ItemGroup>
   <ItemGroup>
     <None Include="clear_screen.hlsl">
@@ -203,6 +197,16 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="lightshaft_combine.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="hellotriangle.hlsl">
+      <FileType>Document</FileType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="mesh_shader_scene.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
