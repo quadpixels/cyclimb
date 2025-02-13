@@ -60,8 +60,9 @@ public:
   ID3D12Resource* vertex_buffer;
   ID3D12Resource* index_buffer;
 
-  // AABB proc geometry
+  // AABB proc geometry * 2
   ID3D12Resource* proc_aabb_buffer;
+  ID3D12Resource* proc_aabb2_buffer;
 
   // Anyhit triangle geometry
   ID3D12Resource* anyhit_vertex_buffer;

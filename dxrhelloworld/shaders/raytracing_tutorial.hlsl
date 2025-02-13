@@ -54,7 +54,7 @@ void MyRaygenShader()
         ray.TMin = 0.001;
         ray.TMax = 10000.0;
         RayPayload payload = { float4(0, 0, 0, 1) };
-        TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 1, 0, ray, payload);
+        TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 0, 0, ray, payload);
 
         // Write the raytraced color to the output texture.
         RenderTarget[DispatchRaysIndex().xy] = payload.color;
@@ -72,12 +72,14 @@ void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
     float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
     int pidx = PrimitiveIndex();
     int gidx = GeometryIndex();
-    payload.color = float4(barycentrics, 1);
-    switch (gidx) {
+
+    payload.color.xy = barycentrics;
+    /*switch (gidx) {
       case 0: {
         switch (pidx) {
           case 0: payload.color = float4(1.0, 0.2, 0.2, 1); break;
           case 1: payload.color = float4(0.2, 1.0, 0.2, 1); break;
+          default: payload.color = float4(0.2, 1.0, 1.0, 1); break;
         }
         break;
       }
@@ -85,10 +87,13 @@ void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
         switch (pidx) {
           case 0: payload.color = float4(1.0, 1.0, 0.2, 1); break;
           case 1: payload.color = float4(0.2, 1.0, 1.0, 1); break;
+          default: payload.color = float4(1.0, 0.2, 1.0, 1); break;
         }
         break;
       }
-    }
+      default:
+        break;
+    }*/
 }
 
 [shader("anyhit")]
@@ -96,6 +101,7 @@ void MyAnyHitShader(inout RayPayload payload, in MyAttributes attr)
 {
   payload.color.r += 0.2f;
   payload.color.g += 0.2f;
+  payload.color.b = RayTCurrent();
   IgnoreHit();  
 }
 
@@ -116,6 +122,8 @@ void MyIntersectionShader()
   attr.barycentrics.x = ray.Origin.x;
   attr.barycentrics.y = ray.Origin.y;
   ReportHit(1.0f, 0, attr);
+  ReportHit(0.9f, 0, attr);
+  ReportHit(0.8f, 0, attr);
 }
 
 #endif // RAYTRACING_HLSL

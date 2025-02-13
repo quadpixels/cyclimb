@@ -144,6 +144,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     subobj_hitgroup1.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
     D3D12_HIT_GROUP_DESC hitgroup_desc1 = {};
     hitgroup_desc1.IntersectionShaderImport = L"MyIntersectionShader";
+    hitgroup_desc1.AnyHitShaderImport = L"MyAnyHitShader";
     hitgroup_desc1.ClosestHitShaderImport = L"MyClosestHitShader";
     hitgroup_desc1.Type = D3D12_HIT_GROUP_TYPE_PROCEDURAL_PRIMITIVE;
     hitgroup_desc1.HitGroupExport = L"MyHitGroup1";
@@ -243,7 +244,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     // AABBs
     const float eps = 1e-4;
-    D3D12_RAYTRACING_AABB aabbs[2] = {};
+    std::vector<D3D12_RAYTRACING_AABB> aabbs(2);
     aabbs[0].MinX = -l * 0.4f + 0.5f;
     aabbs[0].MinY = -l * 0.4f - 0.5f;
     aabbs[0].MinZ = 0.4f - eps;
@@ -255,16 +256,43 @@ MoreTrianglesScene::MoreTrianglesScene() {
     aabbs[1].MinY = -l * 0.4f + 0.5f;
     aabbs[1].MaxY = l * 0.4f + 0.5f;
 
+
+    // AABBs in the center for any-hit
+    std::vector<D3D12_RAYTRACING_AABB> aabbs2;
+    for (int i = -2; i <= 2; i++) {
+      const float l0 = 0.3f;
+      D3D12_RAYTRACING_AABB ab{};
+      const float dx = l0 * 0.8f * i;
+      ab.MinX = dx - l0 * 0.5f;
+      ab.MaxX = dx + l0 * 0.5f;
+      ab.MinY = -l0 * 0.5f;
+      ab.MaxY = -l0 * 0.5f + l0 * 0.1f;
+      ab.MinZ = 0.4f - eps;
+      ab.MaxZ = 0.4f + eps;
+      aabbs2.push_back(ab);
+    }
+
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
       D3D12_HEAP_FLAG_NONE,
-      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(aabbs))),
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(D3D12_RAYTRACING_AABB) * aabbs.size())),
       D3D12_RESOURCE_STATE_GENERIC_READ,
       nullptr,
       IID_PPV_ARGS(&proc_aabb_buffer)));
     proc_aabb_buffer->Map(0, nullptr, &mapped);
-    memcpy(mapped, &(aabbs[0]), sizeof(aabbs));
+    memcpy(mapped, aabbs.data(), sizeof(D3D12_RAYTRACING_AABB) * aabbs.size());
     proc_aabb_buffer->Unmap(0, nullptr);
+
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(D3D12_RAYTRACING_AABB) * aabbs2.size())),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      nullptr,
+      IID_PPV_ARGS(&proc_aabb2_buffer)));
+    proc_aabb2_buffer->Map(0, nullptr, &mapped);
+    memcpy(mapped, aabbs2.data(), sizeof(D3D12_RAYTRACING_AABB) * aabbs2.size());
+    proc_aabb2_buffer->Unmap(0, nullptr);
   }
 
   // Triangles in the center for any-hit
@@ -346,12 +374,18 @@ MoreTrianglesScene::MoreTrianglesScene() {
     geom_desc[1] = geom_desc[0];
     geom_desc[1].Triangles.Transform3x4 = transform_matrices0->GetGPUVirtualAddress() + sizeof(float) * 12;
 
-    D3D12_RAYTRACING_GEOMETRY_DESC proc_desc{};
-    proc_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
-    proc_desc.AABBs.AABBCount = 2;
-    proc_desc.AABBs.AABBs.StartAddress = proc_aabb_buffer->GetGPUVirtualAddress();
-    proc_desc.AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
-    proc_desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+    D3D12_RAYTRACING_GEOMETRY_DESC proc_descs[2]{};
+    proc_descs[0].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
+    proc_descs[0].AABBs.AABBCount = 2;
+    proc_descs[0].AABBs.AABBs.StartAddress = proc_aabb_buffer->GetGPUVirtualAddress();
+    proc_descs[0].AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
+    proc_descs[0].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
+
+    proc_descs[1].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
+    proc_descs[1].AABBs.AABBCount = 5;
+    proc_descs[1].AABBs.AABBs.StartAddress = proc_aabb2_buffer->GetGPUVirtualAddress();
+    proc_descs[1].AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
+    proc_descs[1].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
 
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO tlas_buildinfo{};
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas0_buildinfo{};
@@ -374,9 +408,9 @@ MoreTrianglesScene::MoreTrianglesScene() {
     blas0_inputs.pGeometryDescs = geom_desc;
     
     blas1_inputs = tlas_inputs;
-    blas1_inputs.NumDescs = 1;
+    blas1_inputs.NumDescs = _countof(proc_descs);
     blas1_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
-    blas1_inputs.pGeometryDescs = &proc_desc;
+    blas1_inputs.pGeometryDescs = proc_descs;
 
     D3D12_RAYTRACING_GEOMETRY_DESC geom_desc2;
     geom_desc2.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
@@ -397,7 +431,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas0_inputs, &blas0_buildinfo);
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas1_inputs, &blas1_buildinfo);
-    g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas1_inputs, &blas2_buildinfo);
+    g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas2_inputs, &blas2_buildinfo);
 
     printf("Scratch space: TLAS=%d, BLAS0=%d, BLAS1=%d, BLAS2=%d\n",
       tlas_buildinfo.ScratchDataSizeInBytes,

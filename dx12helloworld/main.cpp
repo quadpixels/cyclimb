@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 #include <d3d12.h>
-#include <dxgi1_4.h>
+#include <dxgi1_6.h>
 #include <windows.h>
 #include <wrl/client.h>
 
@@ -16,6 +16,7 @@ const int FRAME_COUNT = 2;
 HWND g_hwnd;
 
 ID3D12Device* g_device12;
+std::wstring g_device12_name;
 IDXGIFactory4* g_factory;
 ID3D12CommandQueue* g_command_queue;
 ID3D12Fence* g_fence;
@@ -60,23 +61,47 @@ void InitDeviceAndCommandQ() {
     printf("Enabling debug layer\n");
   }
 
+  Microsoft::WRL::ComPtr<IDXGIFactory6> factory6;
   CE(CreateDXGIFactory2(dxgi_factory_flags, IID_PPV_ARGS(&g_factory)));
+  CE(g_factory->QueryInterface(IID_PPV_ARGS(&factory6)));
   if (use_warp_device) {
     IDXGIAdapter* warp_adapter;
-    CE(g_factory->EnumWarpAdapter(IID_PPV_ARGS(&warp_adapter)));
+    CE(factory6->EnumWarpAdapter(IID_PPV_ARGS(&warp_adapter)));
     CE(D3D12CreateDevice(warp_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device12)));
     printf("Created a WARP device=%p\n", g_device12);;
   }
   else {
     IDXGIAdapter1* hw_adapter;
-    for (int idx = 0; g_factory->EnumAdapters1(idx, &hw_adapter) != DXGI_ERROR_NOT_FOUND; idx++) {
+    for (int idx = 0; factory6->EnumAdapters1(idx, &hw_adapter) != DXGI_ERROR_NOT_FOUND; idx++) {
       DXGI_ADAPTER_DESC1 desc;
       hw_adapter->GetDesc1(&desc);
       if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
       else {
-        CE(D3D12CreateDevice(hw_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device12)));
-        printf("Created a hardware device = %p\n", g_device12);
-        break;
+        printf("Checking device %ls ...\n", desc.Description);
+
+        {
+          CE(D3D12CreateDevice(hw_adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device12)));
+          
+          bool ok = false;
+          // Check device capability
+          D3D12_FEATURE_DATA_D3D12_OPTIONS7 features = {};
+          CE(g_device12->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &features, sizeof(features)));
+          if (features.MeshShaderTier == D3D12_MESH_SHADER_TIER_NOT_SUPPORTED) {
+            printf("Oh! Mesh shader not supported.\n");
+            ok = false;
+            g_device12->Release();
+          }
+          else {
+            printf("Mesh shader is supported. tier=%d\n", features.MeshShaderTier);
+            ok = true;
+          }
+
+          if (ok) {
+            g_device12_name = desc.Description;
+            printf("Using hardware device = %p\n", g_device12);
+            break;
+          }
+        }
       }
     }
   }
@@ -239,7 +264,10 @@ void CreateCyclimbWindow() {
   //when creating the window as well
   windowClass.style = CS_HREDRAW | CS_VREDRAW;
 
-  LPCSTR window_name = "ChaoyueClimb (D3D12)";
+  char window_name[100];
+  char device_name[100];
+  wcstombs_s(nullptr, device_name, g_device12_name.c_str(), 100);
+  sprintf_s(window_name, 100, "ChaoyueClimb (D3D12) [%s]", device_name);
   LPCSTR class_name = "ChaoyueClimb_class";
   HINSTANCE hinstance = GetModuleHandle(nullptr);
 
@@ -263,10 +291,11 @@ int main() {
   freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
   freopen_s((FILE**)stderr, "CONOUT$", "w", stderr);
   
+  InitDeviceAndCommandQ();
+
   CreateCyclimbWindow();
   ShowWindow(g_hwnd, SW_RESTORE);
 
-  InitDeviceAndCommandQ();
   InitSwapChain();
   g_scenes[0] = new DX12ClearScreenScene();
   g_scenes[1] = new DX12HelloTriangleScene();
