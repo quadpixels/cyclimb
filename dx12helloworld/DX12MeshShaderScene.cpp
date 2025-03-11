@@ -142,7 +142,7 @@ void DX12MeshShaderScene::Render() {
   D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
   command_list->RSSetViewports(1, &viewport);
   command_list->RSSetScissorRects(1, &scissor);
-  command_list->DispatchMesh(1, 1, 1);
+  command_list->DispatchMesh(2, 1, 1);
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
