@@ -7,6 +7,7 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/vec4.hpp>
+#include <glm/vec3.hpp>
 #include <glm/mat4x4.hpp>
 
 #include <stdint.h>
@@ -19,6 +20,12 @@
 #include <string>
 #include <optional>
 #include <vector>
+
+struct Vertex {
+  glm::vec3 pos;
+  glm::vec3 color;
+  
+};
 
 GLFWwindow* window{};
 const uint32_t WIDTH = 800;
@@ -33,7 +40,8 @@ const bool enableValidationLayers = true;
 #endif
 
 std::vector<const char*> deviceExtensions = {
-  VK_KHR_SWAPCHAIN_EXTENSION_NAME
+  VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+  VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
 };
 
 struct QueueFamilyIndices {
@@ -203,6 +211,7 @@ private:
     createCommandPool();
     createCommandBuffer();
     createSyncObjects();
+    createVertexBuffer();
   }
 
   void mainLoop() {
@@ -210,9 +219,12 @@ private:
       glfwPollEvents();
       drawFrame();
     }
+    vkDeviceWaitIdle(device);
   }
 
   void cleanup() {
+    vkDestroyBuffer(device, vertexBuffer, nullptr);
+    vkFreeMemory(device, vertexBufferMemory, nullptr);
     vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
     vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
     vkDestroyFence(device, inFlightFence, nullptr);
@@ -324,6 +336,58 @@ private:
   bool isDeviceSuitable(VkPhysicalDevice device) {
     VkPhysicalDeviceFeatures deviceFeatures;
     vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+
+    // Find memory type index
+    VkPhysicalDeviceMemoryProperties memoryProperties{};
+    vkGetPhysicalDeviceMemoryProperties(device, &memoryProperties);
+    printf("Memory heaps:\n");
+    for (uint32_t int_h = 0; int_h < memoryProperties.memoryHeapCount; int_h++) {
+      printf(" [%u]:", int_h);
+      VkMemoryHeapFlags f = memoryProperties.memoryHeaps[int_h].flags;
+      if (f & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+        printf(" DeviceLocal");
+      }
+      if (f & VK_MEMORY_HEAP_MULTI_INSTANCE_BIT) {
+        printf(" MultiInstance");
+      }
+      printf("\n");
+    }
+    printf("Memory types:\n");
+    for (uint32_t int_ty = 0; int_ty < memoryProperties.memoryTypeCount; int_ty++) {
+      printf(" [%u], heap[%d]:", int_ty, memoryProperties.memoryTypes[int_ty].heapIndex);
+      VkMemoryPropertyFlags f = memoryProperties.memoryTypes[int_ty].propertyFlags;
+      printf(" 0x%x,", f);
+      if (f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+        printf(" DeviceLocal");
+      }
+      if (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+        printf(" HostVisible");
+      }
+      if (f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) {
+        printf(" HostCoherent");
+      }
+      if (f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) {
+        printf(" HostCached");
+      }
+      if (f & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) {
+        printf(" LazilyAllocated");
+      }
+      if (f & VK_MEMORY_PROPERTY_PROTECTED_BIT) {
+        printf(" Protected");
+      }
+      if (f & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD) {
+        printf(" CoherentAMD");
+      }
+      if (f & VK_MEMORY_PROPERTY_DEVICE_UNCACHED_BIT_AMD) {
+        printf(" UncachedAMD");
+      }
+      if (f & VK_MEMORY_PROPERTY_RDMA_CAPABLE_BIT_NV) {
+        printf(" RdmaNV");
+      }
+      printf("\n");
+    }
+
     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
     if (deviceFeatures.geometryShader) {
       QueueFamilyIndices qfi = findQueueFamilies(device);
@@ -362,6 +426,13 @@ private:
     if (physicalDevice == VK_NULL_HANDLE) {
       throw std::runtime_error("Failed to find a suitable GPU\n");
     }
+
+    VkPhysicalDeviceProperties2 prop2{};
+    prop2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtPipelineProps{};
+    rtPipelineProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+    prop2.pNext = &rtPipelineProps;
+    vkGetPhysicalDeviceProperties2(physicalDevice, &prop2);
   }
 
   QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
@@ -637,12 +708,28 @@ private:
     dynamicState.dynamicStateCount = (uint32_t)(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
 
+    // 1 vertex buffer servicing location=0 and location=1
+    VkVertexInputBindingDescription vertexBindingDesc{};
+    vertexBindingDesc.binding = 0;
+    vertexBindingDesc.stride = sizeof(Vertex);
+    vertexBindingDesc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription vertexAttrDesc[2]{};
+    vertexAttrDesc[0].binding = 0;
+    vertexAttrDesc[0].location = 0;
+    vertexAttrDesc[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    vertexAttrDesc[0].offset = 0;
+    vertexAttrDesc[1].binding = 0;
+    vertexAttrDesc[1].location = 1;
+    vertexAttrDesc[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    vertexAttrDesc[1].offset = sizeof(glm::vec3);
+
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.pVertexBindingDescriptions = nullptr;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
-    vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &vertexBindingDesc;
+    vertexInputInfo.vertexAttributeDescriptionCount = _countof(vertexAttrDesc);
+    vertexInputInfo.pVertexAttributeDescriptions = vertexAttrDesc;
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -841,6 +928,9 @@ private:
     scissor.extent = swapChainExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+    VkDeviceSize zero{ 0 };
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &zero);
+
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
     vkCmdEndRenderPass(commandBuffer);
@@ -908,6 +998,57 @@ private:
     }
   }
 
+  void createVertexBuffer() {
+    VkBufferCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    createInfo.size = sizeof(Vertex) * 3;
+    createInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &createInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create vertex buffer");
+    }
+
+    VkMemoryRequirements memReq{};
+    vkGetBufferMemoryRequirements(device, vertexBuffer, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = sizeof(Vertex) * 3;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for vertex buffer");
+    }
+
+    vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+    Vertex vertices[] = {
+      { { 0, -0.5, 0}, { 1, 0, 0 } },
+      { { 0.5, 0.5, 0}, { 0, 1, 0 } },
+      { { -0.5, 0.5, 0}, { 0, 0, 1 } },
+    };
+    void* data;
+    vkMapMemory(device, vertexBufferMemory, 0, createInfo.size, 0, &data);
+    memcpy(data, vertices, sizeof(vertices));
+    vkUnmapMemory(device, vertexBufferMemory);
+  }
+  
+  uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties memProperties{};
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+      if (typeFilter & (1 << i)) {
+        if ((memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+          return i;
+        }
+      }
+    }
+    throw std::runtime_error("Could not find suitable memory type");
+  }
+
 private:
   VkInstance instance;
   VkDebugUtilsMessengerEXT debugMessenger;
@@ -929,6 +1070,8 @@ private:
   VkSemaphore imageAvailableSemaphore;
   VkSemaphore renderFinishedSemaphore;
   VkFence inFlightFence;
+  VkBuffer vertexBuffer;
+  VkDeviceMemory vertexBufferMemory;
 };
 
 int main() {
