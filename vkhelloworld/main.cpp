@@ -27,6 +27,12 @@ struct Vertex {
   
 };
 
+Vertex g_vertices[] = {
+      { { 0, -0.5, 0}, { 1, 0, 0 } },
+      { { 0.5, 0.5, 0}, { 0, 1, 0 } },
+      { { -0.5, 0.5, 0}, { 0, 0, 1 } },
+};
+
 GLFWwindow* window{};
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -41,7 +47,13 @@ const bool enableValidationLayers = true;
 
 std::vector<const char*> deviceExtensions = {
   VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+  VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+  VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+  VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
   VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+  VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+  VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+  VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
 };
 
 struct QueueFamilyIndices {
@@ -58,11 +70,26 @@ struct SwapChainSupportDetails {
   std::vector<VkPresentModeKHR> presentModes;
 };
 
+void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+  if (action == GLFW_PRESS) {
+    switch (key) {
+      case GLFW_KEY_ESCAPE: {
+        glfwTerminate();
+        glfwSetWindowShouldClose(window, true);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
 void initWindow() {
   glfwInit();
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
   window = glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
+  glfwSetKeyCallback(window, KeyCallback);
 }
 
 bool checkValidationLayerSupport() {
@@ -187,6 +214,9 @@ static std::vector<char> readFile(const std::string& filename) {
 
 class HelloTriangleApplication {
 public:
+  ~HelloTriangleApplication() {
+    cleanup();
+  }
   void run() {
     initWindow();
     initVulkan();
@@ -212,6 +242,7 @@ private:
     createCommandBuffer();
     createSyncObjects();
     createVertexBuffer();
+    createAS();
   }
 
   void mainLoop() {
@@ -261,7 +292,7 @@ private:
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.apiVersion = VK_API_VERSION_1_2;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -510,12 +541,11 @@ private:
       queueCreateInfos.push_back(queueCreateInfo);
     }
 
-    VkPhysicalDeviceFeatures deviceFeatures{};
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.queueCreateInfoCount = uint32_t(queueCreateInfos.size());
-    createInfo.pEnabledFeatures = &deviceFeatures;
+    createInfo.pEnabledFeatures = nullptr;
     if (enableValidationLayers) {
       createInfo.enabledLayerCount = uint32_t(validationLayers.size());
       createInfo.ppEnabledLayerNames = validationLayers.data();
@@ -525,6 +555,32 @@ private:
     }
     createInfo.enabledExtensionCount = uint32_t(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+
+    // Feature train/chain
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{};
+    accelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+
+    VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures{};
+    descriptorIndexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+    descriptorIndexingFeatures.pNext = &accelerationStructureFeatures;
+
+    VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures{};
+    bufferDeviceAddressFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    bufferDeviceAddressFeatures.pNext = &descriptorIndexingFeatures;
+
+    VkPhysicalDeviceFeatures2 deviceFeatures2{};
+    deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    deviceFeatures2.pNext = &bufferDeviceAddressFeatures;
+
+    vkGetPhysicalDeviceFeatures2(physicalDevice, &deviceFeatures2);
+
+    assert(bufferDeviceAddressFeatures.bufferDeviceAddress);
+    //assert(accelerationStructureFeatures.accelerationStructureHostCommands);  // Does not support AS build on the host?
+    assert(accelerationStructureFeatures.accelerationStructure);
+    
+    // RT and buffer device address
+    createInfo.pNext = &deviceFeatures2;
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create logical device");
@@ -1004,7 +1060,10 @@ private:
     createInfo.size = sizeof(Vertex) * 3;
     createInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+      | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
     createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if (vkCreateBuffer(device, &createInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not create vertex buffer");
@@ -1017,7 +1076,13 @@ private:
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = sizeof(Vertex) * 3;
     allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    allocInfo.pNext = &allocFlagsInfo;
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
       throw std::runtime_error("Failed to allocate memory for vertex buffer");
@@ -1025,15 +1090,337 @@ private:
 
     vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
 
-    Vertex vertices[] = {
-      { { 0, -0.5, 0}, { 1, 0, 0 } },
-      { { 0.5, 0.5, 0}, { 0, 1, 0 } },
-      { { -0.5, 0.5, 0}, { 0, 0, 1 } },
-    };
     void* data;
     vkMapMemory(device, vertexBufferMemory, 0, createInfo.size, 0, &data);
-    memcpy(data, vertices, sizeof(vertices));
+    memcpy(data, g_vertices, sizeof(g_vertices));
     vkUnmapMemory(device, vertexBufferMemory);
+  }
+
+  void createAS() {
+    VkBufferDeviceAddressInfo addrInfo{};
+    addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addrInfo.buffer = vertexBuffer;
+    addrInfo.pNext = nullptr;
+
+    VkDeviceAddress vbDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
+
+    VkAccelerationStructureGeometryTrianglesDataKHR triASData{};
+    triASData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    triASData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    triASData.vertexData.deviceAddress = vbDeviceAddr;
+    triASData.vertexStride = sizeof(Vertex);
+    triASData.indexType = VK_INDEX_TYPE_NONE_KHR;
+    triASData.maxVertex = 0;
+
+    VkAccelerationStructureGeometryKHR geomData{};
+    geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geomData.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geomData.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geomData.geometry.triangles = triASData;
+
+    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.primitiveCount = 1;
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.transformOffset = 0;
+
+    VkAccelerationStructureBuildGeometryInfoKHR buildGeomInfo{};
+    buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    buildGeomInfo.flags = 0;
+    buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    buildGeomInfo.srcAccelerationStructure = VK_NULL_HANDLE;
+    buildGeomInfo.dstAccelerationStructure = VK_NULL_HANDLE;
+    buildGeomInfo.geometryCount = 1;
+    buildGeomInfo.pGeometries = &geomData;
+    buildGeomInfo.ppGeometries = nullptr;
+    buildGeomInfo.scratchData.deviceAddress = 0;
+
+    uint32_t primCount = 1;
+    VkAccelerationStructureBuildSizesInfoKHR asBuildSizeInfo{};
+    asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    PFN_vkGetAccelerationStructureBuildSizesKHR func = 
+      (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetInstanceProcAddr(
+        instance, "vkGetAccelerationStructureBuildSizesKHR");
+    assert(func);
+    func(device,
+      VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+      &buildGeomInfo,
+      &primCount,
+      &asBuildSizeInfo);
+    printf("BLAS build size: scratch=%u, AS=%u\n",
+      asBuildSizeInfo.buildScratchSize,
+      asBuildSizeInfo.accelerationStructureSize);
+
+    // BLAS Scratch
+    VkBuffer blasScratchBuffer{};
+    VkBufferCreateInfo blasScratchBufferCreateInfo{};
+    blasScratchBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    blasScratchBufferCreateInfo.size = asBuildSizeInfo.buildScratchSize;
+    blasScratchBufferCreateInfo.usage =
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
+    blasScratchBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &blasScratchBufferCreateInfo, nullptr, &blasScratchBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create BLAS scratch buffer");
+    }
+
+    VkDeviceMemory blasScratchMemory{};
+    VkMemoryRequirements memReq{};
+    vkGetBufferMemoryRequirements(device, blasScratchBuffer, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = blasScratchBufferCreateInfo.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    allocInfo.pNext = &allocFlagsInfo;
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &blasScratchMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for BLAS scratch");
+    }
+
+    vkBindBufferMemory(device, blasScratchBuffer, blasScratchMemory, 0);
+
+    // BLAS Result
+    VkBuffer blasResultBuffer{};
+    VkBufferCreateInfo blasResultBufferCreateInfo = blasScratchBufferCreateInfo;
+    blasResultBufferCreateInfo.size = asBuildSizeInfo.accelerationStructureSize;
+    if (vkCreateBuffer(device, &blasResultBufferCreateInfo, nullptr, &blasResultBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create BLAS result buffer");
+    }
+    VkDeviceMemory blasResultMemory{};
+    vkGetBufferMemoryRequirements(device, blasResultBuffer, &memReq);
+    allocInfo.allocationSize = blasResultBufferCreateInfo.size;
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &blasResultMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for BLAS result");
+    }
+    vkBindBufferMemory(device, blasResultBuffer, blasResultMemory, 0);
+    addrInfo.buffer = blasResultBuffer;
+    VkDeviceAddress blasResultDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
+
+    VkAccelerationStructureCreateInfoKHR blasCreateInfo{};
+    blasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    blasCreateInfo.size = asBuildSizeInfo.accelerationStructureSize;
+    blasCreateInfo.buffer = blasResultBuffer;
+    blasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    PFN_vkCreateAccelerationStructureKHR funcCreateAccelerationStructure =
+      (PFN_vkCreateAccelerationStructureKHR)vkGetInstanceProcAddr(
+      instance, "vkCreateAccelerationStructureKHR");
+    if (funcCreateAccelerationStructure(device, &blasCreateInfo, nullptr, &blas) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create BLAS");
+    }
+
+    addrInfo.buffer = blasScratchBuffer;
+    VkDeviceAddress blasScratchAddress = vkGetBufferDeviceAddress(device, &addrInfo);
+    buildGeomInfo.scratchData.deviceAddress = blasScratchAddress;
+    buildGeomInfo.dstAccelerationStructure = blas;
+
+    // Prepare Cmd List
+    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &inFlightFence);
+    vkResetCommandBuffer(commandBuffer, 0);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0;
+    beginInfo.pInheritanceInfo = nullptr;
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to begin command buffer");
+    }
+
+    // Build on host is not available :(
+    VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
+    PFN_vkCmdBuildAccelerationStructuresKHR funcCmdBuildAccelerationStructuresKHR =
+      (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetInstanceProcAddr(
+        instance, "vkCmdBuildAccelerationStructuresKHR");
+    funcCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildGeomInfo, buildRangeInfos);
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      0, 1, &barrier,
+      0, nullptr,
+      0, nullptr);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 0;
+    submitInfo.pWaitSemaphores = nullptr;
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR };
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    submitInfo.signalSemaphoreCount = 0;
+    submitInfo.pSignalSemaphores = nullptr;
+
+    vkEndCommandBuffer(commandBuffer);
+
+    // Submit CMD List
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to submit BLAS build cmd to Q");
+    }
+
+    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+
+    vkFreeMemory(device, blasScratchMemory, nullptr);
+    vkFreeMemory(device, blasResultMemory, nullptr);
+    vkDestroyBuffer(device, blasScratchBuffer, nullptr);
+    vkDestroyBuffer(device, blasResultBuffer, nullptr);
+
+    // TLAS
+    VkBuffer tlasInstancesBuffer{};
+    VkBufferCreateInfo tlasInstBufferCreateInfo{};
+    tlasInstBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    tlasInstBufferCreateInfo.usage =
+      VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    tlasInstBufferCreateInfo.size = sizeof(VkAccelerationStructureInstanceKHR) * 1;
+
+    if (vkCreateBuffer(device, &tlasInstBufferCreateInfo, nullptr, &tlasInstancesBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create TLAS instances buffer");
+    }
+
+    vkGetBufferMemoryRequirements(device, tlasInstancesBuffer, &memReq);
+    VkDeviceMemory tlasInstancesMemory{};
+    allocInfo.allocationSize = tlasInstBufferCreateInfo.size;
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasInstancesMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for TLAS instances");
+    }
+
+    vkBindBufferMemory(device, tlasInstancesBuffer, tlasInstancesMemory, 0);
+
+    addrInfo.buffer = tlasInstancesBuffer;
+    VkDeviceAddress tlasInstancesDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
+
+    void* data;
+    VkAccelerationStructureInstanceKHR instance0{};
+    instance0.accelerationStructureReference = blasResultDeviceAddr;
+    instance0.transform.matrix[0][0] = 1.0f;
+    instance0.transform.matrix[1][1] = 1.0f;
+    instance0.transform.matrix[2][2] = 1.0f;
+    instance0.instanceCustomIndex = 0;
+    instance0.flags = 0;
+    instance0.mask = 0xFF;
+    instance0.instanceShaderBindingTableRecordOffset = 0;
+
+    vkMapMemory(device, tlasInstancesMemory, 0, tlasInstBufferCreateInfo.size, 0, &data);
+    memcpy(data, &instance0, sizeof(instance0));
+    vkUnmapMemory(device, tlasInstancesMemory);
+
+    // TLAS inst info
+    VkAccelerationStructureBuildGeometryInfoKHR buildInstInfo{};
+    buildInstInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildInstInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    buildInstInfo.flags = 0;
+    buildInstInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    buildInstInfo.srcAccelerationStructure = VK_NULL_HANDLE;
+    buildInstInfo.dstAccelerationStructure = VK_NULL_HANDLE;
+    buildInstInfo.geometryCount = 1;
+    buildInstInfo.pGeometries = &geomData;
+    buildInstInfo.ppGeometries = nullptr;
+    buildInstInfo.scratchData.deviceAddress = 0;
+
+    uint32_t instCount = 1;
+    VkAccelerationStructureBuildSizesInfoKHR tlasBuildSizeInfo{};
+    tlasBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    func(device,
+      VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+      &buildInstInfo,
+      &instCount,
+      &tlasBuildSizeInfo);
+    printf("TLAS build size: scratch=%u, AS=%u\n",
+      tlasBuildSizeInfo.buildScratchSize,
+      tlasBuildSizeInfo.accelerationStructureSize);
+
+    // TLAS scratch
+    VkBuffer tlasScratchBuffer;
+    VkBufferCreateInfo tlasScratchBufferCreateInfo = tlasInstBufferCreateInfo;
+    tlasScratchBufferCreateInfo.size = tlasBuildSizeInfo.buildScratchSize;
+    tlasScratchBufferCreateInfo.usage =
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
+    if (vkCreateBuffer(device, &tlasScratchBufferCreateInfo, nullptr, &tlasScratchBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create TLAS scratch buffer");
+    }
+    VkDeviceMemory tlasScratchMemory;
+    vkGetBufferMemoryRequirements(device, tlasScratchBuffer, &memReq);
+    allocInfo.allocationSize = tlasScratchBufferCreateInfo.size;
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasScratchMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for TLAS scratch");
+    }
+    vkBindBufferMemory(device, tlasScratchBuffer, tlasScratchMemory, 0);
+    addrInfo.buffer = tlasScratchBuffer;
+    VkDeviceAddress tlasScratchDeviceAddress = vkGetBufferDeviceAddress(device, &addrInfo);
+
+    // TLAS result
+    VkBuffer tlasResultBuffer;
+    VkBufferCreateInfo tlasResultBufferCreateInfo = tlasScratchBufferCreateInfo;
+    tlasResultBufferCreateInfo.size = tlasBuildSizeInfo.accelerationStructureSize;
+    if (vkCreateBuffer(device, &tlasResultBufferCreateInfo, nullptr, &tlasResultBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create TLAS result buffer");
+    }
+    VkDeviceMemory tlasResultMemory;
+    allocInfo.allocationSize = tlasResultBufferCreateInfo.size;
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasResultMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for TLAS result");
+    }
+    vkBindBufferMemory(device, tlasResultBuffer, tlasResultMemory, 0);
+
+    VkAccelerationStructureCreateInfoKHR tlasCreateInfo{};
+    tlasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    tlasCreateInfo.size = tlasBuildSizeInfo.accelerationStructureSize;
+    tlasCreateInfo.buffer = tlasResultBuffer;
+    tlasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    if (funcCreateAccelerationStructure(device, &tlasCreateInfo, nullptr, &tlas) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create TLAS");
+    }
+
+    // Prepare cmd list
+    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &inFlightFence);
+    vkResetCommandBuffer(commandBuffer, 0);
+
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to begin command buffer");
+    }
+
+    buildRangeInfo.primitiveCount = 1;
+    buildInstInfo.scratchData.deviceAddress = tlasScratchDeviceAddress;
+    buildInstInfo.dstAccelerationStructure = tlas;
+    funcCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildInstInfo, buildRangeInfos);
+
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      0, 1, &barrier,
+      0, nullptr,
+      0, nullptr);
+
+    vkEndCommandBuffer(commandBuffer);
+
+    // Submit CMD List
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to submit TLAS build cmd to Q");
+    }
+
+    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+
+    vkFreeMemory(device, tlasInstancesMemory, nullptr);
+    vkFreeMemory(device, tlasScratchMemory, nullptr);
+    vkDestroyBuffer(device, tlasInstancesBuffer, nullptr);
+    vkDestroyBuffer(device, tlasScratchBuffer, nullptr);
   }
   
   uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -1072,6 +1459,8 @@ private:
   VkFence inFlightFence;
   VkBuffer vertexBuffer;
   VkDeviceMemory vertexBufferMemory;
+  VkAccelerationStructureKHR blas;
+  VkAccelerationStructureKHR tlas;
 };
 
 int main() {
