@@ -44,6 +44,10 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
+bool g_is_rt = false;
+const uint32_t MAX_FRAMES_IN_FLIGHT = 3;
+class HelloTriangleApplication;
+HelloTriangleApplication* g_app;
 
 std::vector<const char*> deviceExtensions = {
   VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -70,19 +74,16 @@ struct SwapChainSupportDetails {
   std::vector<VkPresentModeKHR> presentModes;
 };
 
-void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-  if (action == GLFW_PRESS) {
-    switch (key) {
-      case GLFW_KEY_ESCAPE: {
-        glfwTerminate();
-        glfwSetWindowShouldClose(window, true);
-        break;
-      }
-      default:
-        break;
-    }
+void SetWindowTitle() {
+  if (!g_is_rt) {
+    glfwSetWindowTitle(window, "Vulkan triangle (rast)");
+  }
+  else {
+    glfwSetWindowTitle(window, "Vulkan triangle (RT)");
   }
 }
+
+void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 
 void initWindow() {
   glfwInit();
@@ -90,6 +91,7 @@ void initWindow() {
   glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
   window = glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
   glfwSetKeyCallback(window, KeyCallback);
+  SetWindowTitle();
 }
 
 bool checkValidationLayerSupport() {
@@ -214,15 +216,14 @@ static std::vector<char> readFile(const std::string& filename) {
 
 class HelloTriangleApplication {
 public:
-  ~HelloTriangleApplication() {
-    cleanup();
-  }
   void run() {
     initWindow();
     initVulkan();
     mainLoop();
     cleanup();
   }
+
+  bool should_exit{ false };
 
 private:
   void initVulkan() {
@@ -243,10 +244,16 @@ private:
     createSyncObjects();
     createVertexBuffer();
     createAS();
+    createRtOutputImage();
+    createRtDescriptorSetLayout();
+    createRtDescriptorPool();
+    createRtDescriptorSets();
+    createRtPipeline();
+    createRtSBT();
   }
 
   void mainLoop() {
-    while (!glfwWindowShouldClose(window)) {
+    while (!glfwWindowShouldClose(window) && !should_exit) {
       glfwPollEvents();
       drawFrame();
     }
@@ -254,6 +261,28 @@ private:
   }
 
   void cleanup() {
+    vkFreeMemory(device, sbtMemory, nullptr);
+    vkDestroyBuffer(device, sbtBuffer, nullptr);
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      vkDestroyImage(device, rtOutputImages[i], nullptr);
+      vkFreeMemory(device, rtOutputImageMemories[i], nullptr);
+      vkDestroyImageView(device, rtOutputImageViews[i], nullptr);
+    }
+    PFN_vkDestroyAccelerationStructureKHR funcDestroyAccelerationStructureKHR =
+      (PFN_vkDestroyAccelerationStructureKHR)vkGetInstanceProcAddr(
+        instance, "vkDestroyAccelerationStructureKHR");
+    assert(funcDestroyAccelerationStructureKHR);
+    funcDestroyAccelerationStructureKHR(device, blas, nullptr);
+    funcDestroyAccelerationStructureKHR(device, tlas, nullptr);
+    vkFreeDescriptorSets(device, rtDescriptorPool, _countof(rtDescriptorSets), rtDescriptorSets);
+    vkDestroyDescriptorPool(device, rtDescriptorPool, nullptr);
+    vkDestroyPipeline(device, rtPipeline, nullptr);
+    vkDestroyPipelineLayout(device, rtPipelineLayout, nullptr);
+    vkFreeMemory(device, blasResultMemory, nullptr);
+    vkFreeMemory(device, tlasResultMemory, nullptr);
+    vkDestroyBuffer(device, blasResultBuffer, nullptr);
+    vkDestroyBuffer(device, tlasResultBuffer, nullptr);
+    vkDestroyDescriptorSetLayout(device, rtDescriptorSetLayout, nullptr);
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
     vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
@@ -557,9 +586,12 @@ private:
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
     // Feature train/chain
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{};
+    rayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{};
     accelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    accelerationStructureFeatures.pNext = &rayTracingPipelineFeatures;
 
     VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures{};
     descriptorIndexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
@@ -636,7 +668,9 @@ private:
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    createInfo.imageUsage =
+      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+      | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
     uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
@@ -995,6 +1029,89 @@ private:
     }
   }
 
+  void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0;
+    beginInfo.pInheritanceInfo = nullptr;
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to begin command buffer");
+    }
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipelineLayout, 0,
+      1, &(rtDescriptorSets[imageIndex]), 0, nullptr);
+    PFN_vkCmdTraceRaysKHR funcCmdTraceRaysKHR = 
+      (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(
+        instance, "vkCmdTraceRaysKHR");
+    funcCmdTraceRaysKHR(commandBuffer, &rtRgenRegion, &rtMissRegion, &rtHitRegion, &rtCallRegion, WIDTH, HEIGHT, 1);
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.image = rtOutputImages[imageIndex];
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.image = swapChainImages[imageIndex];
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    VkImageBlit blit{};
+    blit.srcOffsets[1] = { WIDTH, HEIGHT, 1 };
+    blit.dstOffsets[1] = { WIDTH, HEIGHT, 1 };
+    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.srcSubresource.layerCount = 1;
+    blit.dstSubresource.layerCount = 1;
+
+    vkCmdBlitImage(commandBuffer,
+      rtOutputImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      1, &blit, VK_FILTER_LINEAR);
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = 0;
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+      0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = 0;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.image = rtOutputImages[imageIndex];
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+      0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not end RT command buffer");
+    }
+  }
+
   void drawFrame() {
     vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(device, 1, &inFlightFence);
@@ -1002,7 +1119,14 @@ private:
     uint32_t imageIndex;
     vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
     vkResetCommandBuffer(commandBuffer, 0);
-    recordCommandBuffer(commandBuffer, imageIndex);
+
+    if (!g_is_rt) {
+      recordCommandBuffer(commandBuffer, imageIndex);
+    }
+    else {
+      recordRtCommandBuffer(commandBuffer, imageIndex);
+    }
+
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.waitSemaphoreCount = 1;
@@ -1139,11 +1263,11 @@ private:
     uint32_t primCount = 1;
     VkAccelerationStructureBuildSizesInfoKHR asBuildSizeInfo{};
     asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-    PFN_vkGetAccelerationStructureBuildSizesKHR func = 
+    PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
       (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetInstanceProcAddr(
         instance, "vkGetAccelerationStructureBuildSizesKHR");
-    assert(func);
-    func(device,
+    assert(funcGetAccelerationStructureBuildSizes);
+    funcGetAccelerationStructureBuildSizes(device,
       VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
       &buildGeomInfo,
       &primCount,
@@ -1189,13 +1313,11 @@ private:
     vkBindBufferMemory(device, blasScratchBuffer, blasScratchMemory, 0);
 
     // BLAS Result
-    VkBuffer blasResultBuffer{};
     VkBufferCreateInfo blasResultBufferCreateInfo = blasScratchBufferCreateInfo;
     blasResultBufferCreateInfo.size = asBuildSizeInfo.accelerationStructureSize;
     if (vkCreateBuffer(device, &blasResultBufferCreateInfo, nullptr, &blasResultBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not create BLAS result buffer");
     }
-    VkDeviceMemory blasResultMemory{};
     vkGetBufferMemoryRequirements(device, blasResultBuffer, &memReq);
     allocInfo.allocationSize = blasResultBufferCreateInfo.size;
     if (vkAllocateMemory(device, &allocInfo, nullptr, &blasResultMemory) != VK_SUCCESS) {
@@ -1273,9 +1395,7 @@ private:
     vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
 
     vkFreeMemory(device, blasScratchMemory, nullptr);
-    vkFreeMemory(device, blasResultMemory, nullptr);
     vkDestroyBuffer(device, blasScratchBuffer, nullptr);
-    vkDestroyBuffer(device, blasResultBuffer, nullptr);
 
     // TLAS
     VkBuffer tlasInstancesBuffer{};
@@ -1318,28 +1438,35 @@ private:
     memcpy(data, &instance0, sizeof(instance0));
     vkUnmapMemory(device, tlasInstancesMemory);
 
+    VkAccelerationStructureGeometryKHR instData{};
+    instData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    instData.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    instData.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    instData.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    instData.geometry.instances.data.deviceAddress = tlasInstancesDeviceAddr;
+
     // TLAS inst info
     VkAccelerationStructureBuildGeometryInfoKHR buildInstInfo{};
     buildInstInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-    buildInstInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    buildInstInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
     buildInstInfo.flags = 0;
     buildInstInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInstInfo.srcAccelerationStructure = VK_NULL_HANDLE;
     buildInstInfo.dstAccelerationStructure = VK_NULL_HANDLE;
     buildInstInfo.geometryCount = 1;
-    buildInstInfo.pGeometries = &geomData;
+    buildInstInfo.pGeometries = &instData;
     buildInstInfo.ppGeometries = nullptr;
     buildInstInfo.scratchData.deviceAddress = 0;
 
     uint32_t instCount = 1;
     VkAccelerationStructureBuildSizesInfoKHR tlasBuildSizeInfo{};
     tlasBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-    func(device,
+    funcGetAccelerationStructureBuildSizes(device,
       VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
       &buildInstInfo,
       &instCount,
       &tlasBuildSizeInfo);
-    printf("TLAS build size: scratch=%u, AS=%u\n",
+    printf("TLAS build size: scratch=%llu, AS=%llu\n",
       tlasBuildSizeInfo.buildScratchSize,
       tlasBuildSizeInfo.accelerationStructureSize);
 
@@ -1365,13 +1492,11 @@ private:
     VkDeviceAddress tlasScratchDeviceAddress = vkGetBufferDeviceAddress(device, &addrInfo);
 
     // TLAS result
-    VkBuffer tlasResultBuffer;
     VkBufferCreateInfo tlasResultBufferCreateInfo = tlasScratchBufferCreateInfo;
     tlasResultBufferCreateInfo.size = tlasBuildSizeInfo.accelerationStructureSize;
     if (vkCreateBuffer(device, &tlasResultBufferCreateInfo, nullptr, &tlasResultBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not create TLAS result buffer");
     }
-    VkDeviceMemory tlasResultMemory;
     allocInfo.allocationSize = tlasResultBufferCreateInfo.size;
     if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasResultMemory) != VK_SUCCESS) {
       throw std::runtime_error("Failed to allocate memory for TLAS result");
@@ -1382,7 +1507,7 @@ private:
     tlasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
     tlasCreateInfo.size = tlasBuildSizeInfo.accelerationStructureSize;
     tlasCreateInfo.buffer = tlasResultBuffer;
-    tlasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    tlasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
     if (funcCreateAccelerationStructure(device, &tlasCreateInfo, nullptr, &tlas) != VK_SUCCESS) {
       throw std::runtime_error("Could not create TLAS");
     }
@@ -1436,6 +1561,337 @@ private:
     throw std::runtime_error("Could not find suitable memory type");
   }
 
+  void createRtOutputImage() {
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    imageInfo.extent.width = WIDTH;
+    imageInfo.extent.height = HEIGHT;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage =
+      VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+      VK_IMAGE_USAGE_STORAGE_BIT;
+    QueueFamilyIndices qfi = findQueueFamilies(physicalDevice);
+    imageInfo.queueFamilyIndexCount = 0;
+    imageInfo.pQueueFamilyIndices = nullptr;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      if (vkCreateImage(device, &imageInfo, nullptr, &(rtOutputImages[i])) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create RT output image");
+      }
+    }
+
+    VkMemoryRequirements memReq{};
+    vkGetImageMemoryRequirements(device, rtOutputImages[0], &memReq);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    allocInfo.pNext = &allocFlagsInfo;
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      if (vkAllocateMemory(device, &allocInfo, nullptr, &(rtOutputImageMemories[i])) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to allocate memory for RT output image");
+      }
+      vkBindImageMemory(device, rtOutputImages[i], rtOutputImageMemories[i], 0);
+    }
+
+    VkImageViewCreateInfo imageViewInfo{};
+    imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    imageViewInfo.format = imageInfo.format;
+    imageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    imageViewInfo.subresourceRange.baseMipLevel = 0;
+    imageViewInfo.subresourceRange.levelCount = 1;
+    imageViewInfo.subresourceRange.baseArrayLayer = 0;
+    imageViewInfo.subresourceRange.layerCount = 1;
+    imageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    imageViewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    imageViewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    imageViewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    imageViewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      imageViewInfo.image = rtOutputImages[i];
+      if (vkCreateImageView(device, &imageViewInfo, nullptr, &(rtOutputImageViews[i])) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create output image view");
+      }
+    }
+
+    // Format change Cmd List
+    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &inFlightFence);
+    vkResetCommandBuffer(commandBuffer, 0);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0;
+    beginInfo.pInheritanceInfo = nullptr;
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to begin command buffer");
+    }
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      VkImageSubresourceRange subresourceRange{};
+      subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      subresourceRange.levelCount = 1;
+      subresourceRange.layerCount = 1;
+      subresourceRange.baseMipLevel = 0;
+      subresourceRange.baseArrayLayer = 0;
+
+      VkImageMemoryBarrier imageMemoryBarrier{};
+      imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+      imageMemoryBarrier.image = rtOutputImages[i];
+      imageMemoryBarrier.srcAccessMask = 0;
+      imageMemoryBarrier.dstAccessMask = 0;
+      imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      imageMemoryBarrier.subresourceRange = subresourceRange;
+
+      VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+      vkCmdPipelineBarrier(commandBuffer, srcStageMask, dstStageMask, 0, 0, nullptr, 0, nullptr, 1, &imageMemoryBarrier);
+    }
+
+    vkEndCommandBuffer(commandBuffer);
+
+    // Submit CMD List
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 0;
+    submitInfo.pWaitSemaphores = nullptr;
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR };
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    submitInfo.signalSemaphoreCount = 0;
+    submitInfo.pSignalSemaphores = nullptr;
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to submit image barriers to Q");
+    }
+
+    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+  }
+
+  void createRtDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[2]{};
+    descriptorSetLayoutBindings[0].binding = 0;
+    descriptorSetLayoutBindings[0].descriptorCount = 1;
+    descriptorSetLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    descriptorSetLayoutBindings[0].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[0].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+    descriptorSetLayoutBindings[1].binding = 1;
+    descriptorSetLayoutBindings[1].descriptorCount = 1;
+    descriptorSetLayoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    descriptorSetLayoutBindings[1].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[1].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+    VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
+    descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptorSetLayoutInfo.bindingCount = _countof(descriptorSetLayoutBindings);
+    descriptorSetLayoutInfo.pBindings = descriptorSetLayoutBindings;
+    if (vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &rtDescriptorSetLayout) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create RT descriptor set layout");
+    }
+  }
+
+  void createRtDescriptorPool() {
+    VkDescriptorPoolSize poolSizes[2]{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &rtDescriptorPool) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create RT descriptor pool");
+    }
+  }
+
+  void createRtDescriptorSets() {
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = rtDescriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, rtDescriptorSetLayout);
+    allocInfo.pSetLayouts = layouts.data();
+    if (vkAllocateDescriptorSets(device, &allocInfo, rtDescriptorSets) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate RT descriptor sets");
+    }
+    
+    // Update TLAS to descriptor set
+    VkWriteDescriptorSetAccelerationStructureKHR writeDescAS{};
+    writeDescAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+    writeDescAS.accelerationStructureCount = 1;
+    writeDescAS.pAccelerationStructures = &tlas;
+
+    VkWriteDescriptorSet writeDesc[2*MAX_FRAMES_IN_FLIGHT]{};
+    writeDesc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writeDesc[0].dstSet = rtDescriptorSets[0];
+    writeDesc[0].dstBinding = 0;
+    writeDesc[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    writeDesc[0].descriptorCount = 1;
+    writeDesc[0].pNext = &writeDescAS;
+    for (uint32_t i = 1; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      writeDesc[i] = writeDesc[0];
+      writeDesc[i].dstSet = rtDescriptorSets[i];
+    }
+
+    // Update image view to descriptor set
+    VkDescriptorImageInfo imageInfo[MAX_FRAMES_IN_FLIGHT]{};
+    imageInfo[0].imageView = rtOutputImageViews[0];
+    imageInfo[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imageInfo[1].imageView = rtOutputImageViews[1];
+    imageInfo[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imageInfo[2].imageView = rtOutputImageViews[2];
+    imageInfo[2].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+      uint32_t idx = i + MAX_FRAMES_IN_FLIGHT;
+      writeDesc[idx].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writeDesc[idx].dstSet = rtDescriptorSets[i];
+      writeDesc[idx].dstBinding = 1;
+      writeDesc[idx].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+      writeDesc[idx].descriptorCount = 1;
+      writeDesc[idx].pImageInfo = &(imageInfo[i]);
+    }
+
+    vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
+  }
+
+  void createRtPipeline() {
+    // Layout
+    VkPipelineLayoutCreateInfo rtPipelineLayoutInfo{};
+    rtPipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    rtPipelineLayoutInfo.setLayoutCount = 1;
+    rtPipelineLayoutInfo.pSetLayouts = &rtDescriptorSetLayout;
+    rtPipelineLayoutInfo.pushConstantRangeCount = 0;
+    rtPipelineLayoutInfo.pPushConstantRanges = nullptr;
+    if (vkCreatePipelineLayout(device, &rtPipelineLayoutInfo, nullptr, &rtPipelineLayout) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create rt pipeline layout");
+    }
+
+    VkPipelineShaderStageCreateInfo stages[1]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].pName = "main";
+
+    // RayGen
+    std::vector<char> raygenShaderCode = readFile("shaders/rgen.spv");
+    VkShaderModule raygenShaderModule = createShaderModule(raygenShaderCode);
+    stages[0].module = raygenShaderModule;
+    stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+    // Shader Group / HitGroup?
+    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[1]{};
+    shaderGroupInfos[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shaderGroupInfos[0].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[0].closestHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[0].generalShader = 0;
+    shaderGroupInfos[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    VkRayTracingPipelineCreateInfoKHR rtPipelineCreateInfo{};
+    rtPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+    rtPipelineCreateInfo.flags = 0;
+    rtPipelineCreateInfo.stageCount = _countof(stages);
+    rtPipelineCreateInfo.pStages = stages;
+    rtPipelineCreateInfo.groupCount = _countof(shaderGroupInfos);
+    rtPipelineCreateInfo.pGroups = shaderGroupInfos;
+    rtPipelineCreateInfo.maxPipelineRayRecursionDepth = 1;
+    rtPipelineCreateInfo.pLibraryInfo = nullptr;
+    rtPipelineCreateInfo.pLibraryInterface = nullptr;
+    rtPipelineCreateInfo.pDynamicState = nullptr;
+    rtPipelineCreateInfo.layout = rtPipelineLayout;
+
+    PFN_vkCreateRayTracingPipelinesKHR funcCreateRayTracingPipelines =
+      (PFN_vkCreateRayTracingPipelinesKHR)vkGetInstanceProcAddr(
+        instance, "vkCreateRayTracingPipelinesKHR");
+    assert(funcCreateRayTracingPipelines);
+    if (funcCreateRayTracingPipelines(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtPipelineCreateInfo, nullptr, &rtPipeline) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create RT pipeline");
+    }
+
+    vkDestroyShaderModule(device, raygenShaderModule, nullptr);
+  }
+
+  void createRtSBT() {
+    const size_t sbtSize = 64;  // arbitrarily chosen
+
+    VkBufferCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    createInfo.size = 64;
+    createInfo.usage =
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
+      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (vkCreateBuffer(device, &createInfo, nullptr, &sbtBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create SBT buffer");
+    }
+    
+    VkMemoryRequirements memReq{};
+    vkGetBufferMemoryRequirements(device, sbtBuffer, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = sbtSize;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    allocInfo.pNext = &allocFlagsInfo;
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &sbtMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for SBT");
+    }
+    vkBindBufferMemory(device, sbtBuffer, sbtMemory, 0);
+
+    VkBufferDeviceAddressInfo sbtDevAddrInfo{};
+    sbtDevAddrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    sbtDevAddrInfo.buffer = sbtBuffer;
+    VkDeviceAddress sbtDeviceAddress = vkGetBufferDeviceAddress(device, &sbtDevAddrInfo);
+
+    char shaderGroupHandle[sbtSize]{};
+    PFN_vkGetRayTracingShaderGroupHandlesKHR funcGetRayTracingShaderGroupHandlesKHR =
+      (PFN_vkGetRayTracingShaderGroupHandlesKHR)vkGetInstanceProcAddr(
+        instance, "vkGetRayTracingShaderGroupHandlesKHR");
+    if (funcGetRayTracingShaderGroupHandlesKHR(device, rtPipeline, 0, 1, sbtSize, shaderGroupHandle) != VK_SUCCESS) {
+      throw std::runtime_error("Could not get RT shader group handles");
+    }
+    printf("Group handles:\n");
+    for (uint32_t i = 0; i < sbtSize; i++) {
+      printf("%02x ", 0xFF & shaderGroupHandle[i]);
+      if (i % 16 == 15) printf("\n");
+    }
+    printf("\n");
+
+    void* mapped;
+    vkMapMemory(device, sbtMemory, 0, sbtSize, 0, &mapped);
+    memcpy(mapped, shaderGroupHandle, sbtSize);
+    vkUnmapMemory(device, sbtMemory);
+
+    // Stolen from ChatGPT
+    rtRgenRegion.deviceAddress = sbtDeviceAddress;
+    rtRgenRegion.size = sbtSize;
+    rtRgenRegion.stride = sbtSize;
+  }
+
 private:
   VkInstance instance;
   VkDebugUtilsMessengerEXT debugMessenger;
@@ -1459,20 +1915,54 @@ private:
   VkFence inFlightFence;
   VkBuffer vertexBuffer;
   VkDeviceMemory vertexBufferMemory;
+  VkImage rtOutputImages[MAX_FRAMES_IN_FLIGHT];
+  VkDeviceMemory rtOutputImageMemories[MAX_FRAMES_IN_FLIGHT];
+  VkImageView rtOutputImageViews[MAX_FRAMES_IN_FLIGHT];
   VkAccelerationStructureKHR blas;
+  VkBuffer blasResultBuffer;
+  VkDeviceMemory blasResultMemory;
   VkAccelerationStructureKHR tlas;
+  VkBuffer tlasResultBuffer;
+  VkDeviceMemory tlasResultMemory;
+  VkDescriptorSetLayout rtDescriptorSetLayout;
+  VkPipelineLayout rtPipelineLayout;
+  VkPipeline rtPipeline;
+  VkDescriptorPool rtDescriptorPool;
+  VkDescriptorSet rtDescriptorSets[MAX_FRAMES_IN_FLIGHT]{};
+  VkBuffer sbtBuffer;
+  VkDeviceMemory sbtMemory;
+  VkStridedDeviceAddressRegionKHR rtRgenRegion{}, rtMissRegion{}, rtHitRegion{}, rtCallRegion{};
 };
 
+void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+  if (action == GLFW_PRESS) {
+    switch (key) {
+    case GLFW_KEY_ESCAPE: {
+      g_app->should_exit = true;
+      break;
+    }
+    case GLFW_KEY_SPACE: {
+      g_is_rt = !g_is_rt;
+      SetWindowTitle();
+      break;
+    }
+    default:
+      break;
+    }
+  }
+}
+
+
 int main() {
-  HelloTriangleApplication app;
+  g_app = new HelloTriangleApplication();
 
   try {
-    app.run();
+    g_app->run();
   }
   catch (const std::exception& e) {
     std::cerr << e.what() << std::endl;
     return EXIT_FAILURE;
   }
-
+  delete g_app;
   return EXIT_SUCCESS;
 }
