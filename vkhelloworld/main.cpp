@@ -532,7 +532,7 @@ private:
         if (qp.queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR) {
           printf(" VideoDecode");
         }
-        if (qp.queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) {
+        if (qp.queueFlags & 0x40 /* VK_QUEUE_VIDEO_ENCODE_BIT_KHR */) {
           printf(" VideoEncode");
         }
         if (qp.queueFlags & VK_QUEUE_OPTICAL_FLOW_BIT_NV) {
@@ -1198,7 +1198,7 @@ private:
 
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = sizeof(Vertex) * 3;
+    allocInfo.allocationSize = memReq.size;
     allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
       | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -1296,7 +1296,7 @@ private:
 
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = blasScratchBufferCreateInfo.size;
+    allocInfo.allocationSize = std::max(blasScratchBufferCreateInfo.size, memReq.size);
     allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
       | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -1319,7 +1319,7 @@ private:
       throw std::runtime_error("Could not create BLAS result buffer");
     }
     vkGetBufferMemoryRequirements(device, blasResultBuffer, &memReq);
-    allocInfo.allocationSize = blasResultBufferCreateInfo.size;
+    allocInfo.allocationSize = std::max(blasResultBufferCreateInfo.size, memReq.size);
     if (vkAllocateMemory(device, &allocInfo, nullptr, &blasResultMemory) != VK_SUCCESS) {
       throw std::runtime_error("Failed to allocate memory for BLAS result");
     }
@@ -1413,7 +1413,7 @@ private:
 
     vkGetBufferMemoryRequirements(device, tlasInstancesBuffer, &memReq);
     VkDeviceMemory tlasInstancesMemory{};
-    allocInfo.allocationSize = tlasInstBufferCreateInfo.size;
+    allocInfo.allocationSize = std::max(memReq.size, tlasInstBufferCreateInfo.size);
     if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasInstancesMemory) != VK_SUCCESS) {
       throw std::runtime_error("Failed to allocate memory for TLAS instances");
     }
@@ -1483,7 +1483,7 @@ private:
     }
     VkDeviceMemory tlasScratchMemory;
     vkGetBufferMemoryRequirements(device, tlasScratchBuffer, &memReq);
-    allocInfo.allocationSize = tlasScratchBufferCreateInfo.size;
+    allocInfo.allocationSize = std::max(tlasScratchBufferCreateInfo.size, memReq.size);
     if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasScratchMemory) != VK_SUCCESS) {
       throw std::runtime_error("Failed to allocate memory for TLAS scratch");
     }
@@ -1497,7 +1497,7 @@ private:
     if (vkCreateBuffer(device, &tlasResultBufferCreateInfo, nullptr, &tlasResultBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not create TLAS result buffer");
     }
-    allocInfo.allocationSize = tlasResultBufferCreateInfo.size;
+    allocInfo.allocationSize = std::max(tlasResultBufferCreateInfo.size, memReq.size);
     if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasResultMemory) != VK_SUCCESS) {
       throw std::runtime_error("Failed to allocate memory for TLAS result");
     }
@@ -1580,6 +1580,7 @@ private:
     imageInfo.queueFamilyIndexCount = 0;
     imageInfo.pQueueFamilyIndices = nullptr;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
       if (vkCreateImage(device, &imageInfo, nullptr, &(rtOutputImages[i])) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create RT output image");
@@ -1592,8 +1593,7 @@ private:
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memReq.size;
     allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkMemoryAllocateFlagsInfo allocFlagsInfo{};
     allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
     allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
@@ -1847,7 +1847,7 @@ private:
 
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = sbtSize;
+    allocInfo.allocationSize = std::max(memReq.size, sbtSize);
     allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
       | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
