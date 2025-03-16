@@ -42,7 +42,7 @@ std::vector<const char*> validationLayers = {
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
 #else
-const bool enableValidationLayers = true;
+const bool enableValidationLayers = false;
 #endif
 bool g_is_rt = false;
 const uint32_t MAX_FRAMES_IN_FLIGHT = 3;
@@ -1234,7 +1234,7 @@ private:
     triASData.vertexData.deviceAddress = vbDeviceAddr;
     triASData.vertexStride = sizeof(Vertex);
     triASData.indexType = VK_INDEX_TYPE_NONE_KHR;
-    triASData.maxVertex = 0;
+    triASData.maxVertex = 2;
 
     VkAccelerationStructureGeometryKHR geomData{};
     geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -1423,14 +1423,25 @@ private:
     addrInfo.buffer = tlasInstancesBuffer;
     VkDeviceAddress tlasInstancesDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
 
+    VkDeviceAddress blasASAddress{};
+    VkAccelerationStructureDeviceAddressInfoKHR blasAddrInfo{};
+    blasAddrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    blasAddrInfo.accelerationStructure = blas;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR funcGetAccelerationStructureDeviceAddressKHR =
+      (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetInstanceProcAddr(
+        instance, "vkGetAccelerationStructureDeviceAddressKHR");
+    blasASAddress = funcGetAccelerationStructureDeviceAddressKHR(device, &blasAddrInfo);
+
+    printf("blasASAddress=%p blasResultDeviceAddr=%p\n", (void*)blasASAddress, (void*)blasResultDeviceAddr);
+
     void* data;
     VkAccelerationStructureInstanceKHR instance0{};
-    instance0.accelerationStructureReference = blasResultDeviceAddr;
+    instance0.accelerationStructureReference = blasASAddress;
     instance0.transform.matrix[0][0] = 1.0f;
     instance0.transform.matrix[1][1] = 1.0f;
     instance0.transform.matrix[2][2] = 1.0f;
     instance0.instanceCustomIndex = 0;
-    instance0.flags = 0;
+    instance0.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
     instance0.mask = 0xFF;
     instance0.instanceShaderBindingTableRecordOffset = 0;
 
@@ -1785,23 +1796,44 @@ private:
       throw std::runtime_error("Could not create rt pipeline layout");
     }
 
-    VkPipelineShaderStageCreateInfo stages[1]{};
+    VkPipelineShaderStageCreateInfo stages[3]{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].pName = "main";
-
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].pName = "main";
+    stages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[2].pName = "main";
+    
     // RayGen
     std::vector<char> raygenShaderCode = readFile("shaders/rgen.spv");
     VkShaderModule raygenShaderModule = createShaderModule(raygenShaderCode);
     stages[0].module = raygenShaderModule;
     stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    std::vector<char> rchitShaderCode = readFile("shaders/rchit.spv");
+    VkShaderModule rchitShaderModule = createShaderModule(rchitShaderCode);
+    stages[1].module = rchitShaderModule;
+    stages[1].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    std::vector<char> rmissShaderCode = readFile("shaders/rmiss.spv");
+    VkShaderModule rmissShaderModule = createShaderModule(rmissShaderCode);
+    stages[2].module = rmissShaderModule;
+    stages[2].stage = VK_SHADER_STAGE_MISS_BIT_KHR;
 
     // Shader Group / HitGroup?
-    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[1]{};
+    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[3]{};
     shaderGroupInfos[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shaderGroupInfos[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
     shaderGroupInfos[0].anyHitShader = VK_SHADER_UNUSED_KHR;
     shaderGroupInfos[0].closestHitShader = VK_SHADER_UNUSED_KHR;
-    shaderGroupInfos[0].generalShader = 0;
+    shaderGroupInfos[0].generalShader = 0;  // Raygen
     shaderGroupInfos[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    shaderGroupInfos[1] = shaderGroupInfos[0];
+    shaderGroupInfos[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+    shaderGroupInfos[1].generalShader = 1;  // Hit
+
+    shaderGroupInfos[2] = shaderGroupInfos[1];
+    shaderGroupInfos[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    shaderGroupInfos[2].generalShader = 2;  // Miss
 
     VkRayTracingPipelineCreateInfoKHR rtPipelineCreateInfo{};
     rtPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
@@ -1825,14 +1857,17 @@ private:
     }
 
     vkDestroyShaderModule(device, raygenShaderModule, nullptr);
+    vkDestroyShaderModule(device, rmissShaderModule, nullptr);
+    vkDestroyShaderModule(device, rchitShaderModule, nullptr);
   }
 
   void createRtSBT() {
     const size_t sbtSize = 64;  // arbitrarily chosen
+    const size_t numSBTs = 3;   // Rgen, closest-hit, miss
 
     VkBufferCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    createInfo.size = 64;
+    createInfo.size = sbtSize * numSBTs;
     createInfo.usage =
       VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
       | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
@@ -1867,29 +1902,31 @@ private:
     sbtDevAddrInfo.buffer = sbtBuffer;
     VkDeviceAddress sbtDeviceAddress = vkGetBufferDeviceAddress(device, &sbtDevAddrInfo);
 
-    char shaderGroupHandle[sbtSize]{};
+    char shaderGroupHandle[sbtSize * numSBTs]{};
     PFN_vkGetRayTracingShaderGroupHandlesKHR funcGetRayTracingShaderGroupHandlesKHR =
       (PFN_vkGetRayTracingShaderGroupHandlesKHR)vkGetInstanceProcAddr(
         instance, "vkGetRayTracingShaderGroupHandlesKHR");
-    if (funcGetRayTracingShaderGroupHandlesKHR(device, rtPipeline, 0, 1, sbtSize, shaderGroupHandle) != VK_SUCCESS) {
+    if (funcGetRayTracingShaderGroupHandlesKHR(device, rtPipeline, 0, numSBTs, sbtSize * numSBTs, shaderGroupHandle) != VK_SUCCESS) {
       throw std::runtime_error("Could not get RT shader group handles");
     }
-    printf("Group handles:\n");
-    for (uint32_t i = 0; i < sbtSize; i++) {
-      printf("%02x ", 0xFF & shaderGroupHandle[i]);
-      if (i % 16 == 15) printf("\n");
-    }
-    printf("\n");
 
     void* mapped;
-    vkMapMemory(device, sbtMemory, 0, sbtSize, 0, &mapped);
-    memcpy(mapped, shaderGroupHandle, sbtSize);
+    vkMapMemory(device, sbtMemory, 0, sbtSize * numSBTs, 0, &mapped);
+    memcpy(mapped, shaderGroupHandle, sbtSize * numSBTs);
     vkUnmapMemory(device, sbtMemory);
 
     // Stolen from ChatGPT
     rtRgenRegion.deviceAddress = sbtDeviceAddress;
     rtRgenRegion.size = sbtSize;
     rtRgenRegion.stride = sbtSize;
+
+    rtHitRegion.deviceAddress = sbtDeviceAddress + sbtSize;
+    rtHitRegion.size = sbtSize;
+    rtHitRegion.stride = sbtSize;
+
+    rtMissRegion.deviceAddress = sbtDeviceAddress + sbtSize * 2;
+    rtMissRegion.size = sbtSize;
+    rtMissRegion.stride = sbtSize;
   }
 
 private:
