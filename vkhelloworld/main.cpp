@@ -1829,7 +1829,8 @@ private:
 
     shaderGroupInfos[1] = shaderGroupInfos[0];
     shaderGroupInfos[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-    shaderGroupInfos[1].generalShader = 1;  // Hit
+    shaderGroupInfos[1].generalShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[1].closestHitShader = 1;
 
     shaderGroupInfos[2] = shaderGroupInfos[1];
     shaderGroupInfos[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
@@ -1862,12 +1863,13 @@ private:
   }
 
   void createRtSBT() {
-    const size_t sbtSize = 64;  // arbitrarily chosen
+    const size_t sbtSize = 32;  // arbitrarily chosen
+    const size_t sbtAlignment = 64;
     const size_t numSBTs = 3;   // Rgen, closest-hit, miss
 
     VkBufferCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    createInfo.size = sbtSize * numSBTs;
+    createInfo.size = sbtAlignment * numSBTs;
     createInfo.usage =
       VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
       | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
@@ -1910,9 +1912,11 @@ private:
       throw std::runtime_error("Could not get RT shader group handles");
     }
 
-    void* mapped;
-    vkMapMemory(device, sbtMemory, 0, sbtSize * numSBTs, 0, &mapped);
-    memcpy(mapped, shaderGroupHandle, sbtSize * numSBTs);
+    uint8_t* mapped{};
+    vkMapMemory(device, sbtMemory, 0, sbtSize * numSBTs, 0, (void**)&mapped);
+    memcpy(mapped, shaderGroupHandle, sbtSize);  // rgen
+    memcpy(mapped + sbtAlignment, shaderGroupHandle + sbtSize, sbtSize);  // hit
+    memcpy(mapped + sbtAlignment * 2, shaderGroupHandle + sbtSize * 2, sbtSize);  // miss
     vkUnmapMemory(device, sbtMemory);
 
     // Stolen from ChatGPT
@@ -1920,11 +1924,11 @@ private:
     rtRgenRegion.size = sbtSize;
     rtRgenRegion.stride = sbtSize;
 
-    rtHitRegion.deviceAddress = sbtDeviceAddress + sbtSize;
+    rtHitRegion.deviceAddress = sbtDeviceAddress + sbtAlignment;
     rtHitRegion.size = sbtSize;
     rtHitRegion.stride = sbtSize;
 
-    rtMissRegion.deviceAddress = sbtDeviceAddress + sbtSize * 2;
+    rtMissRegion.deviceAddress = sbtDeviceAddress + sbtAlignment * 2;
     rtMissRegion.size = sbtSize;
     rtMissRegion.stride = sbtSize;
   }
