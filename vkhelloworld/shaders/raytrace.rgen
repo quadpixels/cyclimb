@@ -15,7 +15,7 @@ void main() {
   origin.xy = vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
   origin.z  = -1;
   vec3 dir = vec3(0, 0, 1);
-  uint rayFlags = gl_RayFlagsOpaqueEXT;
+  uint rayFlags = gl_RayFlagsNoneEXT;
   float tMin = 0.01f;
   float tMax = 10000.0f;
 
