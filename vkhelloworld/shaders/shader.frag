@@ -8,7 +8,7 @@ layout(location=0) out vec4 outColor;
 layout(binding=0) uniform sampler2D texSampler;
 layout(binding=1) uniform sampler2D texSampler1;
 
-struct Vertex {
+layout(std430) struct Vertex {
 	vec3 pos;
 	vec3 color;
 	vec2 uv;

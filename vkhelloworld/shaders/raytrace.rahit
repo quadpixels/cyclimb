@@ -7,7 +7,6 @@
 layout(location=0) rayPayloadInEXT hitPayload prd;
 hitAttributeEXT vec2 attribs;
 
-layout(binding=2) uniform sampler2D texSampler;
 layout(binding=3) uniform sampler2D texSampler1;
 
 struct Vertex {
@@ -15,7 +14,7 @@ struct Vertex {
 	vec3 color;
 	vec2 uv;
 };
-layout(binding=4) readonly buffer VertexBuf {
+layout(std430, binding=4) readonly buffer VertexBuf {
 	Vertex vertices[];
 };
 
@@ -27,8 +26,10 @@ void main() {
   
   const vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
   const vec2 uv = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z;
-  vec3 t = texture(texSampler1, uv).xyz;
+  prd.hitValue = vec3(uv, 0);
+  vec3 t = texture(texSampler1, attribs).xyz;
   if (t.x < 0.5) {
-	ignoreIntersectionEXT;
+	//ignoreIntersectionEXT;
+  } else {
   }
 }

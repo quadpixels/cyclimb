@@ -15,7 +15,7 @@ struct Vertex {
 	vec3 color;
 	vec2 uv;
 };
-layout(binding=4) readonly buffer VertexBuf {
+layout(std430, binding=4) readonly buffer VertexBuf {
 	Vertex vertices[];
 };
 
@@ -28,6 +28,7 @@ void main() {
   
   const vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
   const vec2 uv = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z;
-  //prd.hitValue = bary;
-  prd.hitValue = texture(texSampler, uv).xyz;
+
+  //prd.hitValue = texture(texSampler, uv).xyz;
+  //prd.hitValue = texture(texSampler, attribs).xyz;
 }
