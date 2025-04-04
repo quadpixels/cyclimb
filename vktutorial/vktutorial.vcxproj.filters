@@ -20,11 +20,16 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="shaders\09_shader_base.frag">
+    <CustomBuild Include="shaders\26_shader_textures.frag">
       <Filter>Resource Files</Filter>
     </CustomBuild>
-    <CustomBuild Include="shaders\09_shader_base.vert">
+    <CustomBuild Include="shaders\26_shader_textures.vert">
       <Filter>Resource Files</Filter>
     </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="stb_image.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
