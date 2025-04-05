@@ -77,13 +77,12 @@ std::vector<const char*> deviceExtensions = {
   VK_KHR_SPIRV_1_4_EXTENSION_NAME,
   VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
   VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-  VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME,
   VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-  VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
 };
 
 std::vector<const char*> ommExtensions = {
   VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME,
+  VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
 };
 
 struct QueueFamilyIndices {
@@ -647,7 +646,8 @@ private:
 
     VkPhysicalDeviceOpacityMicromapFeaturesEXT ommFeatures{};
     ommFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
-    ommFeatures.pNext = &rtValidationFeatures;
+    if (g_use_omm)
+      ommFeatures.pNext = &rtValidationFeatures;
 
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{};
     rayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
@@ -674,7 +674,8 @@ private:
     assert(bufferDeviceAddressFeatures.bufferDeviceAddress);
     //assert(accelerationStructureFeatures.accelerationStructureHostCommands);  // Does not support AS build on the host?
     assert(accelerationStructureFeatures.accelerationStructure);
-    assert(rtValidationFeatures.rayTracingValidation);
+    if (g_use_omm)
+      assert(rtValidationFeatures.rayTracingValidation);
     
     // RT and buffer device address
     createInfo.pNext = &deviceFeatures2;
@@ -1611,7 +1612,7 @@ private:
     buildGeomInfo.ppGeometries = nullptr;
     buildGeomInfo.scratchData.deviceAddress = 0;
 
-    uint32_t primCount = 1;
+    uint32_t primCount = 2;
     VkAccelerationStructureBuildSizesInfoKHR asBuildSizeInfo{};
     asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
     PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
