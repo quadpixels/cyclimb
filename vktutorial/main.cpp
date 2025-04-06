@@ -1894,8 +1894,7 @@ private:
   }
 
   void createRtDescriptorSets() {
-    const uint32_t N = 3;
-    assert(N == swapChainImages.size());
+    const uint32_t N = MAX_FRAMES_IN_FLIGHT;
     rtDescriptorSets.resize(N);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1916,7 +1915,7 @@ private:
 
     VkDescriptorImageInfo outImageInfo[N]{};
     for (uint32_t f = 0; f < N; f++) {
-      outImageInfo[f].imageView = rtOutputImageViews[0];
+      outImageInfo[f].imageView = rtOutputImageViews[f];
       outImageInfo[f].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
 
