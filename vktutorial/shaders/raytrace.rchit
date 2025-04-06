@@ -19,12 +19,18 @@ layout(std430, binding=4) readonly buffer VertexBuf {
 	Vertex vertices[];
 };
 
+layout(std430, binding=5) readonly buffer IndexBuf {
+    uint indices[];
+};
+
 void main() {
   // read UV
-  uint idx = gl_PrimitiveID * 3;
-  vec2 uv0 = vertices[idx  ].uv;
-  vec2 uv1 = vertices[idx+1].uv;
-  vec2 uv2 = vertices[idx+2].uv;
+  uint idx0 = indices[gl_PrimitiveID * 3];
+  uint idx1 = indices[gl_PrimitiveID * 3 + 1];
+  uint idx2 = indices[gl_PrimitiveID * 3 + 2];
+  vec2 uv0 = vertices[idx0].uv;
+  vec2 uv1 = vertices[idx1].uv;
+  vec2 uv2 = vertices[idx2].uv;
   
   const vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
   const vec2 uv = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z;

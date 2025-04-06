@@ -132,7 +132,7 @@ const std::vector<Vertex> vertices = {
     {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
-const std::vector<uint16_t> indices = {
+const std::vector<uint32_t> indices = {
     0, 1, 2, 2, 3, 0
 };
 
@@ -1376,7 +1376,7 @@ private:
     VkDeviceSize offsets[] = { 0 };
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
-    vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
@@ -1593,7 +1593,7 @@ private:
     triASData.vertexFormat = VK_FORMAT_R32G32_SFLOAT;
     triASData.vertexData.deviceAddress = getBufferDeviceAddress(vertexBuffer);
     triASData.vertexStride = sizeof(Vertex);
-    triASData.indexType = VK_INDEX_TYPE_UINT16;
+    triASData.indexType = VK_INDEX_TYPE_UINT32;
     triASData.indexData.deviceAddress = getBufferDeviceAddress(indexBuffer);
     triASData.maxVertex = indices.size() - 1;
     triASData.transformData.hostAddress = nullptr;
@@ -1826,7 +1826,7 @@ private:
   }
 
   void createRtDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[5]{};
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[6]{};
     descriptorSetLayoutBindings[0].binding = 0;
     descriptorSetLayoutBindings[0].descriptorCount = 1;
     descriptorSetLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -1860,6 +1860,13 @@ private:
     descriptorSetLayoutBindings[4].stageFlags =
       VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
+    descriptorSetLayoutBindings[5].binding = 5;
+    descriptorSetLayoutBindings[5].descriptorCount = 1;
+    descriptorSetLayoutBindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorSetLayoutBindings[5].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[5].stageFlags =
+      VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
     descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     descriptorSetLayoutInfo.bindingCount = _countof(descriptorSetLayoutBindings);
@@ -1871,7 +1878,7 @@ private:
 
   void createRtDescriptorPool() {
     const unsigned N = swapChainImages.size();
-    VkDescriptorPoolSize poolSizes[5]{};
+    VkDescriptorPoolSize poolSizes[6]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     poolSizes[0].descriptorCount = N;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1882,6 +1889,8 @@ private:
     poolSizes[3].descriptorCount = N;
     poolSizes[4].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[4].descriptorCount = N;
+    poolSizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[5].descriptorCount = N;
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = _countof(poolSizes);
@@ -1906,7 +1915,7 @@ private:
       throw std::runtime_error("Failed to allocate RT descriptor sets");
     }
 
-    VkWriteDescriptorSet writeDesc[5 * N]{};
+    VkWriteDescriptorSet writeDesc[6 * N]{};
     VkWriteDescriptorSetAccelerationStructureKHR writeDescAS{};
     // Update TLAS to descriptor set
     writeDescAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
@@ -1932,10 +1941,15 @@ private:
     VkDescriptorBufferInfo bi{};
     bi.buffer = vertexBuffer;
     bi.offset = 0;
-    bi.range = sizeof(vertices);
+    bi.range = sizeof(Vertex) * vertices.size();
+
+    VkDescriptorBufferInfo ibi{};
+    ibi.buffer = indexBuffer;
+    ibi.offset = 0;
+    ibi.range = sizeof(indices[0]) * indices.size();
 
     for (uint32_t f = 0; f < N; f++) {
-      uint32_t idx = f * 5;
+      uint32_t idx = f * 6;
       // TLAS
       writeDesc[idx].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writeDesc[idx].dstSet = rtDescriptorSets[f];
@@ -1976,6 +1990,14 @@ private:
       writeDesc[idx].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       writeDesc[idx].descriptorCount = 1;
       writeDesc[idx].pBufferInfo = &bi;
+
+      idx++;
+      writeDesc[idx].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writeDesc[idx].dstSet = rtDescriptorSets[f];
+      writeDesc[idx].dstBinding = 5;
+      writeDesc[idx].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      writeDesc[idx].descriptorCount = 1;
+      writeDesc[idx].pBufferInfo = &ibi;
     }
 
     vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
