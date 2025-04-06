@@ -26,10 +26,27 @@
     <CustomBuild Include="shaders\26_shader_textures.vert">
       <Filter>Resource Files</Filter>
     </CustomBuild>
+    <CustomBuild Include="shaders\raytrace.rahit">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="shaders\raytrace.rchit">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="shaders\raytrace.rgen">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="shaders\raytrace.rmiss">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stb_image.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\raycommon.glsli">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
