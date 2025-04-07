@@ -77,12 +77,13 @@ std::vector<const char*> deviceExtensions = {
   VK_KHR_SPIRV_1_4_EXTENSION_NAME,
   VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
   VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+  VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME,
   VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+  VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
 };
 
 std::vector<const char*> ommExtensions = {
   VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME,
-  VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
 };
 
 struct QueueFamilyIndices {
@@ -371,7 +372,7 @@ private:
     createInfo.enabledExtensionCount = uint32_t(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
     VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
-    
+
     if (enableValidationLayers) {
       createInfo.enabledLayerCount = uint32_t(validationLayers.size());
       createInfo.ppEnabledLayerNames = validationLayers.data();
@@ -646,8 +647,7 @@ private:
 
     VkPhysicalDeviceOpacityMicromapFeaturesEXT ommFeatures{};
     ommFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
-    if (g_use_omm)
-      ommFeatures.pNext = &rtValidationFeatures;
+    ommFeatures.pNext = &rtValidationFeatures;
 
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{};
     rayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
@@ -674,16 +674,15 @@ private:
     assert(bufferDeviceAddressFeatures.bufferDeviceAddress);
     //assert(accelerationStructureFeatures.accelerationStructureHostCommands);  // Does not support AS build on the host?
     assert(accelerationStructureFeatures.accelerationStructure);
-    if (g_use_omm)
-      assert(rtValidationFeatures.rayTracingValidation);
-    
+    assert(rtValidationFeatures.rayTracingValidation);
+
     // RT and buffer device address
     createInfo.pNext = &deviceFeatures2;
 
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create logical device");
     }
-    
+
     vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
   }
@@ -813,7 +812,7 @@ private:
     subpass.pColorAttachments = &colorAttachmentRef;
 
     VkRenderPassCreateInfo renderPassInfo{};
-    
+
     VkSubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
@@ -854,7 +853,7 @@ private:
     fragShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-    
+
     std::vector<VkDynamicState> dynamicStates = {
       VK_DYNAMIC_STATE_VIEWPORT,
       VK_DYNAMIC_STATE_SCISSOR
@@ -1139,13 +1138,13 @@ private:
       barrier.dstAccessMask = 0;
 
       sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-      destinationStage= VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+      destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
     }
     else {
       throw std::invalid_argument("unsupported layout transition!");
     }
 
-    vkCmdPipelineBarrier(commandBuffer, 
+    vkCmdPipelineBarrier(commandBuffer,
       sourceStage, destinationStage,
       0, 0, nullptr, 0, nullptr, 1, &barrier);
     endSingleTimeCommands(commandBuffer);
@@ -1164,7 +1163,7 @@ private:
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipeline);
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipelineLayout, 0,
       1, &(rtDescriptorSets[imageIndex]), 0, nullptr);
-    PFN_vkCmdTraceRaysKHR funcCmdTraceRaysKHR = 
+    PFN_vkCmdTraceRaysKHR funcCmdTraceRaysKHR =
       (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(
         instance, "vkCmdTraceRaysKHR");
     funcCmdTraceRaysKHR(commandBuffer, &rtRgenRegion, &rtMissRegion, &rtHitRegion, &rtCallRegion, WIDTH, HEIGHT, 1);
@@ -1497,7 +1496,7 @@ private:
       ommCreateInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
       ommCreateInfo.deviceAddress = 0;
       auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(
-          instance, "vkCreateMicromapEXT");
+        instance, "vkCreateMicromapEXT");
       if (func_vkCreateMicromap(device, &ommCreateInfo, nullptr, &omm) != VK_SUCCESS) {
         printf("Failed to create VkMicromap\n");
       }
@@ -1612,7 +1611,7 @@ private:
     buildGeomInfo.ppGeometries = nullptr;
     buildGeomInfo.scratchData.deviceAddress = 0;
 
-    uint32_t primCount = 2;
+    uint32_t primCount = 1;
     VkAccelerationStructureBuildSizesInfoKHR asBuildSizeInfo{};
     asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
     PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
@@ -1686,7 +1685,7 @@ private:
     blasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     PFN_vkCreateAccelerationStructureKHR funcCreateAccelerationStructure =
       (PFN_vkCreateAccelerationStructureKHR)vkGetInstanceProcAddr(
-      instance, "vkCreateAccelerationStructureKHR");
+        instance, "vkCreateAccelerationStructureKHR");
     if (funcCreateAccelerationStructure(device, &blasCreateInfo, nullptr, &blas) != VK_SUCCESS) {
       throw std::runtime_error("Could not create BLAS");
     }
@@ -1910,7 +1909,7 @@ private:
     vkDestroyBuffer(device, tlasInstancesBuffer, nullptr);
     vkDestroyBuffer(device, tlasScratchBuffer, nullptr);
   }
-  
+
   uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
     VkPhysicalDeviceMemoryProperties memProperties{};
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
@@ -2104,14 +2103,14 @@ private:
     if (vkAllocateDescriptorSets(device, &allocInfo, rtDescriptorSets) != VK_SUCCESS) {
       throw std::runtime_error("Failed to allocate RT descriptor sets");
     }
-    
+
     // Update TLAS to descriptor set
     VkWriteDescriptorSetAccelerationStructureKHR writeDescAS{};
     writeDescAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
     writeDescAS.accelerationStructureCount = 1;
     writeDescAS.pAccelerationStructures = &tlas;
 
-    VkWriteDescriptorSet writeDesc[5*MAX_FRAMES_IN_FLIGHT]{};
+    VkWriteDescriptorSet writeDesc[5 * MAX_FRAMES_IN_FLIGHT]{};
     writeDesc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writeDesc[0].dstSet = rtDescriptorSets[0];
     writeDesc[0].dstBinding = 0;
@@ -2206,7 +2205,7 @@ private:
     stages[2].pName = "main";
     stages[3].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[3].pName = "main";
-    
+
     // RayGen
     std::vector<char> raygenShaderCode = readFile("shaders/rgen.spv");
     VkShaderModule raygenShaderModule = createShaderModule(raygenShaderCode);
@@ -2289,7 +2288,7 @@ private:
     if (vkCreateBuffer(device, &createInfo, nullptr, &sbtBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create SBT buffer");
     }
-    
+
     VkMemoryRequirements memReq{};
     vkGetBufferMemoryRequirements(device, sbtBuffer, &memReq);
 
@@ -2645,7 +2644,7 @@ private:
 private:
   VkInstance instance;
   VkDebugUtilsMessengerEXT debugMessenger;
-  VkPhysicalDevice physicalDevice{VK_NULL_HANDLE};
+  VkPhysicalDevice physicalDevice{ VK_NULL_HANDLE };
   VkDevice device;
   VkQueue graphicsQueue, presentQueue;
   VkSurfaceKHR surface;
@@ -2684,7 +2683,7 @@ private:
   VkBuffer sbtBuffer;
   VkDeviceMemory sbtMemory;
   VkStridedDeviceAddressRegionKHR rtRgenRegion{}, rtMissRegion{}, rtHitRegion{}, rtCallRegion{};
-  
+
   VkImage textureImage[2];
   VkDeviceMemory textureImageMemory[2];
   VkImageView textureImageView[2];

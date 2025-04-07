@@ -2,21 +2,22 @@
 #include <stdio.h>
 
 #include <filesystem>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <omm.hpp>
 
 #include "stb_image.h"
 
-extern const char* g_tex_files[2];
-
 struct Vertex {
-  alignas(16) glm::vec3 pos;
+  alignas(16) glm::vec2 pos;
   alignas(16) glm::vec3 color;
-  alignas(16) glm::vec2 uv;
+  alignas(16) glm::vec2 texCoord;
 };
-const int NUM_VERTS = 6;
-extern Vertex g_vertices[NUM_VERTS];
+
+extern const char* tex_fns[2];
+extern std::vector<Vertex> vertices;
+extern std::vector<uint32_t> indices;
 
 static void Log(omm::MessageSeverity severity, const char* message, void* userArg)
 {
@@ -42,7 +43,7 @@ static void Log(omm::MessageSeverity severity, const char* message, void* userAr
 
 const omm::Cpu::BakeResultDesc* bakeOmmForMask() {
   printf("[bakeOmmForMask]\n");
-  std::filesystem::path mask_path(g_tex_files[1]);
+  std::filesystem::path mask_path(tex_fns[1]);
 
   omm::BakerCreationDesc desc{};
   desc.type = omm::BakerType::CPU;
@@ -79,11 +80,13 @@ const omm::Cpu::BakeResultDesc* bakeOmmForMask() {
   res = omm::Cpu::CreateTexture(baker, texture_desc, &texture);
   assert(res == omm::Result::SUCCESS);
 
-  std::vector<int> index_buffer;
+  std::vector<uint32_t> index_buffer;
   std::vector<glm::vec2> texcoords;
-  for (int i = 0; i < NUM_VERTS; i++) {
-    index_buffer.push_back(i);
-    texcoords.push_back(g_vertices[i].uv);
+  for (int i = 0; i < vertices.size(); i++) {
+    texcoords.push_back(vertices[i].texCoord);
+  }
+  for (int i = 0; i < indices.size(); i++) {
+    index_buffer.push_back(indices[i]);
   }
 
   omm::Cpu::BakeInputDesc input_desc{};
@@ -96,13 +99,13 @@ const omm::Cpu::BakeResultDesc* bakeOmmForMask() {
   input_desc.bakeFlags = (omm::Cpu::BakeFlags)((int)omm::Cpu::BakeFlags::EnableInternalThreads | (int)omm::Cpu::BakeFlags::Force32BitIndices);
   //input_desc.degenTriState = omm::SpecialIndex::FullyUnknownOpaque;  // Deprecated
   input_desc.dynamicSubdivisionScale = 1.0f;
-  input_desc.format = omm::Format::OC1_2_State;
+  input_desc.format = omm::Format::OC1_4_State;
   input_desc.formats = nullptr;
   input_desc.indexBuffer = index_buffer.data();
-  input_desc.indexCount = NUM_VERTS;
+  input_desc.indexCount = index_buffer.size();
   input_desc.indexFormat = omm::IndexFormat::UINT_32;
   input_desc.maxArrayDataSize = (uint32_t)(-1);
-  input_desc.maxSubdivisionLevel = 2;
+  input_desc.maxSubdivisionLevel = 6;
   input_desc.maxWorkloadSize = (uint64_t)(-1);
   input_desc.nearDuplicateDeduplicationFactor = 0.15;
   input_desc.rejectionThreshold = 0;

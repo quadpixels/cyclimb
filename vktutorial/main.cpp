@@ -22,13 +22,23 @@
 #include <optional>
 #include <set>
 
+#include <omm.hpp>
+
 bool g_is_nv = false;
 bool g_is_rt = false;
+bool g_use_omm = true;
+
+const omm::Cpu::BakeResultDesc* bakeOmmForMask();
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
+
+const char* tex_fns[] = {
+      "textures/Paris_ivy_leaf_a_diff.png",
+      "textures/Paris_ivy_leaf_a_mask.png"
+};
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -43,6 +53,13 @@ std::vector<const char*> deviceExtensions = {
     VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
     VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+    VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME,
+    VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
+};
+
+std::vector<const char*> ommExtensions = {
+  VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME,
+  VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
 };
 
 #ifdef NDEBUG
@@ -125,14 +142,14 @@ struct UniformBufferObject {
   alignas(16) glm::mat4 proj;
 };
 
-const std::vector<Vertex> vertices = {
+std::vector<Vertex> vertices = {
     {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
     {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
     {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
     {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
-const std::vector<uint32_t> indices = {
+std::vector<uint32_t> indices = {
     0, 1, 2, 2, 3, 0
 };
 
@@ -236,6 +253,14 @@ private:
   VkBuffer rtSbtBuffer;
   VkDeviceMemory rtSbtMemory;
   VkStridedDeviceAddressRegionKHR rtRgenRegion{}, rtMissRegion{}, rtHitRegion{}, rtCallRegion{};
+  VkBuffer ommTriangleIndicesBuffer;
+  VkDeviceMemory ommTriangleIndicesMemory;
+  VkBuffer ommArrayDataBuffer;
+  VkDeviceMemory ommArrayDataMemory;
+  VkBuffer ommDescArrayBuffer;
+  VkDeviceMemory ommDescArrayMemory;
+  VkBuffer ommBuffer;
+  VkDeviceMemory ommMemory;
 
   bool framebufferResized = false;
 
@@ -531,8 +556,14 @@ private:
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
 
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-    createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+    std::vector<const char*> extensionNames = deviceExtensions;
+    if (g_use_omm) {
+      for (const char* x : ommExtensions) {
+        extensionNames.push_back(x);
+      }
+    }
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(extensionNames.size());
+    createInfo.ppEnabledExtensionNames = extensionNames.data();
 
     if (enableValidationLayers) {
       createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
@@ -542,8 +573,14 @@ private:
       createInfo.enabledLayerCount = 0;
     }
 
+    VkPhysicalDeviceOpacityMicromapFeaturesEXT ommFeatures{};
+    ommFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
+
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures{};
     rtPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    if (g_use_omm) {
+      rtPipelineFeatures.pNext = &ommFeatures;
+    }
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{};
     accelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
@@ -895,10 +932,6 @@ private:
   }
 
   void createRtTextureImage() {
-    const char* tex_fns[] = {
-      "textures/Paris_ivy_leaf_a_diff.png",
-      "textures/Paris_ivy_leaf_a_mask.png"
-    };
     for (uint32_t j = 0; j < 2; j++) {
       int texWidth, texHeight, texChannels;
       stbi_uc* pixels = stbi_load(tex_fns[j], &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -1145,7 +1178,11 @@ private:
     vkUnmapMemory(device, stagingBufferMemory);
 
     createBuffer(bufferSize,
-      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+      VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+      VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
 
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
@@ -1587,8 +1624,12 @@ private:
   }
 
   void createAS() {
-    //createBuffer(size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer & buffer, VkDeviceMemory & bufferMemory) {
-    VkAccelerationStructureGeometryTrianglesDataKHR triASData{};
+    VkAccelerationStructureGeometryKHR geomData{};
+    geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geomData.flags = 0;
+    geomData.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+
+    VkAccelerationStructureGeometryTrianglesDataKHR& triASData = geomData.geometry.triangles;
     triASData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     triASData.vertexFormat = VK_FORMAT_R32G32_SFLOAT;
     triASData.vertexData.deviceAddress = getBufferDeviceAddress(vertexBuffer);
@@ -1597,12 +1638,6 @@ private:
     triASData.indexData.deviceAddress = getBufferDeviceAddress(indexBuffer);
     triASData.maxVertex = indices.size() - 1;
     triASData.transformData.hostAddress = nullptr;
-
-    VkAccelerationStructureGeometryKHR geomData{};
-    geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geomData.flags = 0;
-    geomData.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    geomData.geometry.triangles = triASData;
 
     VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
     buildRangeInfo.primitiveCount = indices.size() / 3;
@@ -1616,6 +1651,144 @@ private:
     buildGeomInfo.dstAccelerationStructure = NULL;
     buildGeomInfo.geometryCount = 1;
     buildGeomInfo.pGeometries = &geomData;
+
+    VkMicromapEXT omm{};
+    VkAccelerationStructureTrianglesOpacityMicromapEXT ommBlasDesc{};
+    VkMicromapUsageEXT ommUsage{};
+    const omm::Cpu::BakeResultDesc* res_desc{};
+
+    // OMM
+    if (g_use_omm) {
+      res_desc = bakeOmmForMask();
+
+      // OMM Buffers
+      // 1. Triangle indices buffer
+      size_t size = res_desc->indexCount * sizeof(uint32_t);
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommTriangleIndicesBuffer,
+        ommTriangleIndicesMemory);
+      void* data;
+      vkMapMemory(device, ommTriangleIndicesMemory, 0, size, 0, &data);
+      memcpy(data, res_desc->indexBuffer, size);
+      vkUnmapMemory(device, ommTriangleIndicesMemory);
+      printf("Triangle indices size: %u, addr=%p\n", size, (void*)getBufferDeviceAddress(ommTriangleIndicesBuffer));
+
+      // 2. OMM array buffer
+      size = res_desc->arrayDataSize;
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommArrayDataBuffer,
+        ommArrayDataMemory);
+      vkMapMemory(device, ommArrayDataMemory, 0, size, 0, &data);
+      memcpy(data, res_desc->arrayData, size);
+      vkUnmapMemory(device, ommArrayDataMemory);
+      printf("OMM array size: %u, addr=%p\n", size, (void*)getBufferDeviceAddress(ommArrayDataBuffer));
+
+      // 3. OMM descriptor array buffer
+      size = res_desc->descArrayCount * sizeof(VkMicromapTriangleEXT);
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommDescArrayBuffer,
+        ommDescArrayMemory);
+      vkMapMemory(device, ommDescArrayMemory, 0, size, 0, &data);
+      memcpy(data, res_desc->descArray, size);
+      vkUnmapMemory(device, ommDescArrayMemory);
+      printf("OMM descriptor array size: %u, addr=%p\n", size, (void*)getBufferDeviceAddress(ommDescArrayBuffer));
+
+      // 4. OMM build info
+      VkMicromapBuildInfoEXT ommBuildInfo{};
+      ommBuildInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
+      ommBuildInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      ommBuildInfo.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+      ommBuildInfo.dstMicromap = NULL;
+      ommBuildInfo.usageCountsCount = res_desc->indexHistogramCount;
+      ommBuildInfo.pUsageCounts = (VkMicromapUsageEXT*)(res_desc->indexHistogram);
+      ommBuildInfo.data.deviceAddress = getBufferDeviceAddress(ommArrayDataBuffer);
+      ommBuildInfo.scratchData.deviceAddress = NULL;
+      ommBuildInfo.triangleArray.deviceAddress = getBufferDeviceAddress(ommDescArrayBuffer);
+      ommBuildInfo.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
+      PFN_vkGetMicromapBuildSizesEXT funcGetMicromapBuildSizes =
+        (PFN_vkGetMicromapBuildSizesEXT)vkGetInstanceProcAddr(
+          instance, "vkGetMicromapBuildSizesEXT");
+      VkMicromapBuildSizesInfoEXT ommBuildSizes{};
+      ommBuildSizes.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT;
+      funcGetMicromapBuildSizes(device,
+        VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &ommBuildInfo, &ommBuildSizes);
+
+      printf("OMM scratch size: %u, micromap size: %u\n",
+        ommBuildSizes.buildScratchSize, ommBuildSizes.micromapSize);
+
+      VkBuffer ommScratchBuffer{};
+      VkDeviceMemory ommScratchMemory{};
+
+      // 5. OMM buffer and scratch buffer
+      createBuffer(ommBuildSizes.buildScratchSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommScratchBuffer,
+        ommScratchMemory);
+      createBuffer(ommBuildSizes.micromapSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommBuffer,
+        ommMemory);
+
+      VkMicromapCreateInfoEXT ommCreateInfo{};
+      ommCreateInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT;
+      ommCreateInfo.createFlags = 0;
+      ommCreateInfo.buffer = ommBuffer;
+      ommCreateInfo.offset = 0;
+      ommCreateInfo.size = ommBuildSizes.micromapSize;
+      ommCreateInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      ommCreateInfo.deviceAddress = 0;
+      auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(instance, "vkCreateMicromapEXT");
+      if (func_vkCreateMicromap(device, &ommCreateInfo, nullptr, &omm) != VK_SUCCESS) {
+        printf("Failed to create VkMicromap\n");
+      }
+
+      ommBuildInfo.dstMicromap = omm;
+      ommBuildInfo.data.deviceAddress = getBufferDeviceAddress(ommArrayDataBuffer);
+      ommBuildInfo.scratchData.deviceAddress = getBufferDeviceAddress(ommScratchBuffer);
+      ommBuildInfo.triangleArray.deviceAddress = getBufferDeviceAddress(ommDescArrayBuffer);
+
+      VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+      PFN_vkCmdBuildMicromapsEXT funcCmdBuildMicromaps =
+        (PFN_vkCmdBuildMicromapsEXT)vkGetInstanceProcAddr(
+          instance, "vkCmdBuildMicromapsEXT");
+      funcCmdBuildMicromaps(commandBuffer, 1, &ommBuildInfo);
+
+      VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+      barrier.srcQueueFamilyIndex = (~0U);
+      barrier.dstQueueFamilyIndex = (~0U);
+      barrier.buffer = ommScratchBuffer;
+      barrier.offset = 0;
+      barrier.size = ommBuildSizes.buildScratchSize;
+      vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        0, 0, nullptr, 1, &barrier, 0, nullptr);
+      endSingleTimeCommands(commandBuffer);
+
+
+      // 6. AS Triangles OMM
+      ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
+      ommBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
+      ommBlasDesc.indexBuffer.deviceAddress = getBufferDeviceAddress(ommTriangleIndicesBuffer);
+      ommBlasDesc.indexStride = sizeof(uint32_t);
+      ommBlasDesc.baseTriangle = 0;
+      ommBlasDesc.usageCountsCount = res_desc->indexHistogramCount;
+      ommBlasDesc.pUsageCounts = (VkMicromapUsageEXT*)(res_desc->indexHistogram);
+      ommBlasDesc.micromap = omm;
+      
+      triASData.pNext = &ommBlasDesc;
+
+      vkDestroyBuffer(device, ommScratchBuffer, nullptr);
+      vkFreeMemory(device, ommScratchMemory, nullptr);
+    }
 
     VkAccelerationStructureBuildSizesInfoKHR buildSizeInfo{};
     buildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
@@ -2238,6 +2411,7 @@ private:
     QueueFamilyIndices indices = findQueueFamilies(device);
 
     bool extensionsSupported = checkDeviceExtensionSupport(device);
+    bool omm = checkOmmExtensionSupport(device);
 
     bool swapChainAdequate = false;
     if (extensionsSupported) {
@@ -2248,23 +2422,34 @@ private:
     VkPhysicalDeviceFeatures supportedFeatures;
     vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
 
+    if (omm) {
+      g_use_omm = true;
+      printf("Device supports OMM.\n");
+    }
+
     return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;
   }
 
-  bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+  bool do_checkDeviceExtensionSupport(VkPhysicalDevice device, std::vector<const char*> devExts) {
     uint32_t extensionCount;
     vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
-
-    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
-
-    std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
-
-    for (const auto& extension : availableExtensions) {
-      requiredExtensions.erase(extension.extensionName);
+    std::vector<VkExtensionProperties> extensions(extensionCount);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensions.data());
+    std::set<std::string> requiredExtensions(devExts.begin(), devExts.end());
+    for (const VkExtensionProperties& ep : extensions) {
+      if (requiredExtensions.count(ep.extensionName)) {
+        requiredExtensions.erase(ep.extensionName);
+      }
     }
-
     return requiredExtensions.empty();
+  }
+
+  bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+    return do_checkDeviceExtensionSupport(device, deviceExtensions);
+  }
+
+  bool checkOmmExtensionSupport(VkPhysicalDevice device) {
+    return do_checkDeviceExtensionSupport(device, ommExtensions);
   }
 
   QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
