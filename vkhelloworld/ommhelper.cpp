@@ -40,8 +40,8 @@ static void Log(omm::MessageSeverity severity, const char* message, void* userAr
   printf("[omm-sdk] [%s] %s\n", sev, message);
 }
 
-const omm::Cpu::BakeResultDesc* bakeOmmForMask() {
-  printf("[bakeOmmForMask]\n");
+const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t primIdx, uint32_t level) {
+  printf("[bakeOmmForMask primitive %u]\n", primIdx);
   std::filesystem::path mask_path(g_tex_files[1]);
 
   omm::BakerCreationDesc desc{};
@@ -82,8 +82,10 @@ const omm::Cpu::BakeResultDesc* bakeOmmForMask() {
   std::vector<int> index_buffer;
   std::vector<glm::vec2> texcoords;
   for (int i = 0; i < NUM_VERTS; i++) {
-    index_buffer.push_back(i);
     texcoords.push_back(g_vertices[i].uv);
+  }
+  for (int i = primIdx * 3; i < primIdx * 3 + 3; i++) {
+    index_buffer.push_back(i);
   }
 
   omm::Cpu::BakeInputDesc input_desc{};
@@ -96,13 +98,13 @@ const omm::Cpu::BakeResultDesc* bakeOmmForMask() {
   input_desc.bakeFlags = (omm::Cpu::BakeFlags)((int)omm::Cpu::BakeFlags::EnableInternalThreads | (int)omm::Cpu::BakeFlags::Force32BitIndices);
   //input_desc.degenTriState = omm::SpecialIndex::FullyUnknownOpaque;  // Deprecated
   input_desc.dynamicSubdivisionScale = 1.0f;
-  input_desc.format = omm::Format::OC1_2_State;
+  input_desc.format = omm::Format::OC1_4_State;
   input_desc.formats = nullptr;
   input_desc.indexBuffer = index_buffer.data();
-  input_desc.indexCount = NUM_VERTS;
+  input_desc.indexCount = 3;
   input_desc.indexFormat = omm::IndexFormat::UINT_32;
   input_desc.maxArrayDataSize = (uint32_t)(-1);
-  input_desc.maxSubdivisionLevel = 2;
+  input_desc.maxSubdivisionLevel = level;
   input_desc.maxWorkloadSize = (uint64_t)(-1);
   input_desc.nearDuplicateDeduplicationFactor = 0.15;
   input_desc.rejectionThreshold = 0;
@@ -139,12 +141,17 @@ const omm::Cpu::BakeResultDesc* bakeOmmForMask() {
 
   omm::Debug::SaveImagesDesc save_images_desc{};
   save_images_desc.oneFile = true;
-  std::string save_img_path = "mask_omm";
-  save_images_desc.path = save_img_path.c_str();
-  save_images_desc.detailedCutout = false;
-  save_images_desc.filePostfix = "image";
-  printf(">> save images\n");
-  omm::Debug::SaveAsImages(baker, input_desc, res_desc, save_images_desc);
+  std::string save_img_path = "mask_omm_" + std::to_string(primIdx);
+  if (std::filesystem::exists(save_img_path)) {
+    printf("Output directory exists, skipppng\n");
+  }
+  else {
+    save_images_desc.path = save_img_path.c_str();
+    save_images_desc.detailedCutout = false;
+    save_images_desc.filePostfix = "image";
+    printf(">> save images\n");
+    omm::Debug::SaveAsImages(baker, input_desc, res_desc, save_images_desc);
+  }
 
   printf("Result desc:\n");
   printf("  Array data size: %u\n", res_desc->arrayDataSize);

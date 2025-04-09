@@ -27,7 +27,7 @@
 
 // OMM handling
 bool g_use_omm{ false };
-const omm::Cpu::BakeResultDesc* bakeOmmForMask();
+const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t prim_idx);
 
 const char* g_tex_files[2] = {
       "textures/Paris_ivy_leaf_a_diff.png",
@@ -61,7 +61,7 @@ std::vector<const char*> validationLayers = {
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
 #else
-const bool enableValidationLayers = false;
+const bool enableValidationLayers = true;
 #endif
 bool g_is_rt = false;
 const uint32_t MAX_FRAMES_IN_FLIGHT = 3;
@@ -1364,15 +1364,10 @@ private:
     vkUnmapMemory(device, indexBufferMemory);
   }
 
-  void createAS() {
-    VkBufferDeviceAddressInfo addrInfo{};
-    addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-    addrInfo.buffer = vertexBuffer;
-    addrInfo.pNext = nullptr;
-
-    VkDeviceAddress vbDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
-    addrInfo.buffer = indexBuffer;
-    VkDeviceAddress ibDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
+  // Quick test: 1 idx per BLAS
+  VkAccelerationStructureKHR buildBLAS(uint32_t prim_idx, VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory) {
+    VkDeviceAddress vbDeviceAddr = getBufferDeviceAddress(vertexBuffer);
+    VkDeviceAddress ibDeviceAddr = getBufferDeviceAddress(indexBuffer);
 
     VkAccelerationStructureGeometryTrianglesDataKHR triASData{};
     triASData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
@@ -1380,196 +1375,126 @@ private:
     triASData.vertexData.deviceAddress = vbDeviceAddr;
     triASData.vertexStride = sizeof(Vertex);
     triASData.indexType = VK_INDEX_TYPE_UINT32;
-    triASData.indexData.deviceAddress = ibDeviceAddr;
-    triASData.maxVertex = _countof(g_vertices) - 1;
+    triASData.indexData.deviceAddress = ibDeviceAddr + prim_idx * sizeof(uint32_t) * 3;
+    triASData.maxVertex = 1;
 
+    // OMM-related functionalities go here
     VkAccelerationStructureTrianglesOpacityMicromapEXT ommBlasDesc{};
+    VkMicromapEXT ommArray{};
     if (g_use_omm) {
-      const omm::Cpu::BakeResultDesc* res_desc = bakeOmmForMask();
+      // 1. Baked OMM result
+      const omm::Cpu::BakeResultDesc* res_desc = bakeOmmForMask(prim_idx);
 
-      // OMM Buffers
-      // 1. Triangle indices buffer
-      VkBufferCreateInfo createInfo{};
-      createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-      createInfo.size = res_desc->indexCount * sizeof(uint32_t);
-      createInfo.usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-      createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-      if (vkCreateBuffer(device, &createInfo, nullptr, &ommTriangleIndicesBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Could not create OMM triangle indices buffer");
-      }
+      // 2. OMM itself
+      // FillMicromapBuildInfo
+      VkMicromapBuildInfoEXT buildDesc = { VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT };
+      buildDesc.pNext = nullptr;
+      buildDesc.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      buildDesc.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+      buildDesc.dstMicromap = NULL;
+      buildDesc.usageCountsCount = res_desc->descArrayHistogramCount;
+      assert(res_desc->descArrayHistogramCount == 1);
+      VkMicromapUsageEXT usage{};
+      auto usage0 = res_desc->descArrayHistogram[0];
+      usage.count = usage0.count;
+      usage.format = usage0.format;
+      usage.subdivisionLevel = usage0.subdivisionLevel;
+      buildDesc.pUsageCounts = &usage;
+      buildDesc.data.deviceAddress = NULL;
+      buildDesc.scratchData.deviceAddress = NULL;
+      buildDesc.triangleArray.deviceAddress = NULL;
+      buildDesc.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
 
-      VkMemoryRequirements memReq{};
-      vkGetBufferMemoryRequirements(device, ommTriangleIndicesBuffer, &memReq);
-
-      VkMemoryAllocateInfo allocInfo{};
-      allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-      allocInfo.allocationSize = std::max(memReq.size, createInfo.size);
-      allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-      VkMemoryAllocateFlagsInfo allocFlagsInfo{};
-      allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-      allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-      allocInfo.pNext = &allocFlagsInfo;
-      if (vkAllocateMemory(device, &allocInfo, nullptr, &ommTriangleIndicesMemory) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to allocate memory for OMM triangle indices");
-      }
-
-      vkBindBufferMemory(device, ommTriangleIndicesBuffer, ommTriangleIndicesMemory, 0);
-      void* data;
-      vkMapMemory(device, ommTriangleIndicesMemory, 0, createInfo.size, 0, &data);
-      memcpy(data, res_desc->indexBuffer, createInfo.size);
-      vkUnmapMemory(device, ommTriangleIndicesMemory);
-
-      // 2. Array buffer
-      createInfo.size = res_desc->arrayDataSize;
-      createInfo.usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-      if (vkCreateBuffer(device, &createInfo, nullptr, &ommArrayDataBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Could not create OMM array data buffer");
-      }
-      vkGetBufferMemoryRequirements(device, ommArrayDataBuffer, &memReq);
-      allocInfo.allocationSize = std::max(memReq.size, createInfo.size);
-      if (vkAllocateMemory(device, &allocInfo, nullptr, &ommArrayDataMemory) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to allocate memory for OMM array data");
-      }
-      vkBindBufferMemory(device, ommArrayDataBuffer, ommArrayDataMemory, 0);
-      vkMapMemory(device, ommArrayDataMemory, 0, createInfo.size, 0, &data);
-      memcpy(data, res_desc->arrayData, res_desc->arrayDataSize);
-      vkUnmapMemory(device, ommArrayDataMemory);
-
-      // 3. Desc Array Buffer
-      static_assert(sizeof(omm::Cpu::OpacityMicromapDesc) == sizeof(VkMicromapTriangleEXT));
-      createInfo.size = res_desc->descArrayCount * sizeof(VkMicromapTriangleEXT);
-      if (vkCreateBuffer(device, &createInfo, nullptr, &ommDescriptorBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Could not create OMM descriptor buffer");
-      }
-      vkGetBufferMemoryRequirements(device, ommDescriptorBuffer, &memReq);
-      allocInfo.allocationSize = std::max(memReq.size, createInfo.size);
-      if (vkAllocateMemory(device, &allocInfo, nullptr, &ommDescriptorMemory) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to allocate memory for OMM descriptor");
-      }
-      vkBindBufferMemory(device, ommDescriptorBuffer, ommDescriptorMemory, 0);
-      vkMapMemory(device, ommDescriptorMemory, 0, createInfo.size, 0, &data);
-      memcpy(data, res_desc->descArray, res_desc->descArrayCount * sizeof(VkMicromapTriangleEXT));
-      vkUnmapMemory(device, ommDescriptorMemory);
-
-      // 4. OMM itself
-      createInfo.size = 1024;
-      if (vkCreateBuffer(device, &createInfo, nullptr, &ommBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Could not create OMM buffer");
-      }
-      vkGetBufferMemoryRequirements(device, ommBuffer, &memReq);
-      allocInfo.allocationSize = std::max(memReq.size, createInfo.size);
-      if (vkAllocateMemory(device, &allocInfo, nullptr, &ommMemory) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to allocate memory for OMM object");
-      }
-      vkBindBufferMemory(device, ommBuffer, ommMemory, 0);
-
-      VkBufferDeviceAddressInfo addrInfo{};
-      addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-      addrInfo.buffer = ommTriangleIndicesBuffer;
-      addrInfo.pNext = nullptr;
-      VkDeviceAddress ommTriangleIndicesDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
-
-      ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
-      ommBlasDesc.pNext = nullptr;
-      ommBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
-      ommBlasDesc.indexBuffer.deviceAddress = ommTriangleIndicesDeviceAddr;
-      ommBlasDesc.indexStride = sizeof(uint32_t);
-      ommBlasDesc.baseTriangle = 0;
-      ommBlasDesc.usageCountsCount = res_desc->indexHistogramCount;
-      assert(res_desc->indexHistogramCount == 1);
-      const omm::Cpu::OpacityMicromapUsageCount omuc0 = res_desc->indexHistogram[0];
-      VkMicromapUsageEXT ommUsage{};
-      ommUsage.count = omuc0.count;
-      ommUsage.format = omuc0.format;
-      ommUsage.subdivisionLevel = omuc0.subdivisionLevel;
-      ommBlasDesc.pUsageCounts = &ommUsage;
-
-      VkMicromapEXT omm{};
-      VkMicromapCreateInfoEXT ommCreateInfo{};
-      ommCreateInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT;
-      ommCreateInfo.createFlags = 0;
-      ommCreateInfo.buffer = ommBuffer;
-      ommCreateInfo.offset = 0;
-      ommCreateInfo.size = res_desc->arrayDataSize;
-      ommCreateInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
-      ommCreateInfo.deviceAddress = 0;
-      auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(
-        instance, "vkCreateMicromapEXT");
-      if (func_vkCreateMicromap(device, &ommCreateInfo, nullptr, &omm) != VK_SUCCESS) {
-        printf("Failed to create VkMicromap\n");
-      }
-
-      addrInfo.buffer = ommArrayDataBuffer;
-      addrInfo.pNext = nullptr;
-      VkDeviceAddress ommArrayDataAddr = vkGetBufferDeviceAddress(device, &addrInfo);
-
-      addrInfo.buffer = ommDescriptorBuffer;
-      VkDeviceAddress ommDescriptorAddr = vkGetBufferDeviceAddress(device, &addrInfo);
-
-      VkMicromapBuildInfoEXT ommBuildInfo{};
-      ommBuildInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
-      ommBuildInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
-      ommBuildInfo.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
-      ommBuildInfo.dstMicromap = omm;
-      ommBuildInfo.usageCountsCount = res_desc->indexHistogramCount;
-      ommBuildInfo.pUsageCounts = &ommUsage;
-
+      VkMicromapBuildSizesInfoEXT preBuildInfo = { VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT };
       PFN_vkGetMicromapBuildSizesEXT funcGetMicromapBuildSizes =
         (PFN_vkGetMicromapBuildSizesEXT)vkGetInstanceProcAddr(
           instance, "vkGetMicromapBuildSizesEXT");
-      VkMicromapBuildSizesInfoEXT ommBuildSizes{};
-      ommBuildSizes.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT;
-      funcGetMicromapBuildSizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &ommBuildInfo, &ommBuildSizes);
+      funcGetMicromapBuildSizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildDesc, &preBuildInfo);
+      printf("OMM build size: scratch=%u, as=%u\n", preBuildInfo.buildScratchSize, preBuildInfo.micromapSize);
 
-      printf("OMM scratch size: %u, micromap size: %u\n",
-        ommBuildSizes.buildScratchSize, ommBuildSizes.micromapSize);
-
-      // OMM scratch
-      VkBuffer ommScratchBuffer{};
-      VkBufferCreateInfo ommScratchBufferCreateInfo{};
-      ommScratchBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-      ommScratchBufferCreateInfo.size = ommBuildSizes.buildScratchSize;
-      ommScratchBufferCreateInfo.usage =
+      // BindOmmToMemoryVK
+      VkBuffer ommBuffer{};
+      VkDeviceMemory ommMemory{};
+      createBuffer(preBuildInfo.micromapSize,
         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-      ommScratchBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-      if (vkCreateBuffer(device, &ommScratchBufferCreateInfo, nullptr, &ommScratchBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Could not create OMM scratch buffer");
-      }
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+        | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+        0,
+        ommBuffer, ommMemory);
 
+      VkBuffer ommScratchBuffer{};
       VkDeviceMemory ommScratchMemory{};
-      vkGetBufferMemoryRequirements(device, ommScratchBuffer, &memReq);
+      createBuffer(preBuildInfo.buildScratchSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+        | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+        0,
+        ommScratchBuffer, ommScratchMemory);
 
-      allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-      allocInfo.allocationSize = std::max(ommScratchBufferCreateInfo.size, memReq.size);
-      allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-      allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-      allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-      allocInfo.pNext = &allocFlagsInfo;
-
-      if (vkAllocateMemory(device, &allocInfo, nullptr, &ommScratchMemory) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to allocate memory for BLAS scratch");
+      VkMicromapCreateInfoEXT ommDesc = { VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT };
+      ommDesc.pNext = nullptr;
+      ommDesc.createFlags = 0;
+      ommDesc.buffer = ommBuffer;
+      ommDesc.offset = 0;
+      ommDesc.size = preBuildInfo.micromapSize;
+      ommDesc.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      ommDesc.deviceAddress = 0;
+      auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(
+        instance, "vkCreateMicromapEXT");
+      if (func_vkCreateMicromap(device, &ommDesc, nullptr, &ommArray) != VK_SUCCESS) {
+        printf("Failed to create VkMicromap\n");
       }
 
-      vkBindBufferMemory(device, ommScratchBuffer, ommScratchMemory, 0);
-      addrInfo.buffer = ommScratchBuffer;
-      VkDeviceAddress ommScratchAddr = vkGetBufferDeviceAddress(device, &addrInfo);
+      // OMM Array Data
+      VkBuffer ommArrayBuffer{};
+      VkDeviceMemory ommArrayMemory{};
+      createBuffer(res_desc->arrayDataSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+        | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+        ommArrayBuffer, ommArrayMemory);
+      void* data{};
+      vkMapMemory(device, ommArrayMemory, 0, res_desc->arrayDataSize, 0, &data);
+      memcpy(data, res_desc->arrayData, res_desc->arrayDataSize);
+      vkUnmapMemory(device, ommArrayMemory);
 
-      ommBuildInfo.data.deviceAddress = ommArrayDataAddr;
-      ommBuildInfo.scratchData.deviceAddress = ommScratchAddr;
-      ommBuildInfo.triangleArray.deviceAddress = ommDescriptorAddr;
-      ommBuildInfo.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
+      // OMM descriptor array
+      VkBuffer ommDescArrayBuffer{};
+      VkDeviceMemory ommDescArrayMemory{};
+      static_assert(sizeof(VkMicromapTriangleEXT) == sizeof(omm::Cpu::OpacityMicromapDesc));
+      size_t size = res_desc->descArrayCount * sizeof(VkMicromapTriangleEXT);
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+        | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+        ommDescArrayBuffer, ommDescArrayMemory);
+      vkMapMemory(device, ommDescArrayMemory, 0, size, 0, &data);
+      memcpy(data, res_desc->descArray, size);
+      vkUnmapMemory(device, ommDescArrayMemory);
+
+      // FillMicromapBuildInfo for real
+      buildDesc.pNext = nullptr;
+      buildDesc.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      buildDesc.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+      buildDesc.dstMicromap = ommArray;
+      buildDesc.usageCountsCount = res_desc->descArrayHistogramCount;
+      buildDesc.pUsageCounts = &usage;
+      buildDesc.data.deviceAddress = getBufferDeviceAddress(ommArrayBuffer);
+      buildDesc.scratchData.deviceAddress = getBufferDeviceAddress(ommScratchBuffer);
+      buildDesc.triangleArray.deviceAddress = getBufferDeviceAddress(ommDescArrayBuffer);
+      buildDesc.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
 
       VkCommandBuffer commandBuffer = beginSingleTimeCommands();
       PFN_vkCmdBuildMicromapsEXT funcCmdBuildMicromaps =
         (PFN_vkCmdBuildMicromapsEXT)vkGetInstanceProcAddr(
           instance, "vkCmdBuildMicromapsEXT");
-      funcCmdBuildMicromaps(commandBuffer, 1, &ommBuildInfo);
+      funcCmdBuildMicromaps(commandBuffer, 1, &buildDesc);
       VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
       barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
       barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
@@ -1577,12 +1502,42 @@ private:
       barrier.dstQueueFamilyIndex = (~0U);
       barrier.buffer = ommScratchBuffer;
       barrier.offset = 0;
-      barrier.size = 1024;
+      barrier.size = preBuildInfo.buildScratchSize;
       vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
         0, 0, nullptr, 1, &barrier, 0, nullptr);
       endSingleTimeCommands(commandBuffer);
 
-      ommBlasDesc.micromap = omm;
+      // 3. OMM BLAS Info for BLAS build
+      VkBuffer ommIndexBuffer{};
+      VkDeviceMemory ommIndexMemory{};
+      assert(res_desc->indexFormat == omm::IndexFormat::UINT_32);
+      size = sizeof(uint32_t) * res_desc->indexCount;
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+        | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+        ommIndexBuffer, ommIndexMemory);
+      vkMapMemory(device, ommIndexMemory, 0, size, 0, &data);
+      memcpy(data, res_desc->indexBuffer, size);
+      vkUnmapMemory(device, ommIndexMemory);
+
+      // FillOmmTrianglesDesc
+      ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
+      ommBlasDesc.pNext = nullptr;
+      ommBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
+      ommBlasDesc.indexBuffer.deviceAddress = getBufferDeviceAddress(ommIndexBuffer);
+      ommBlasDesc.indexStride = sizeof(uint32_t);
+      ommBlasDesc.baseTriangle = 0;
+      ommBlasDesc.usageCountsCount = res_desc->indexHistogramCount;
+      VkMicromapUsageEXT ih0{};  // ih = index histogram
+      assert(res_desc->indexHistogramCount == 1);
+      auto u0 = res_desc->indexHistogram[0];
+      ih0.count = u0.count;
+      ih0.format = u0.format;
+      ommBlasDesc.pUsageCounts = &ih0;
+      ommBlasDesc.micromap = ommArray;
 
       triASData.pNext = &ommBlasDesc;
     }
@@ -1593,9 +1548,10 @@ private:
     geomData.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
     geomData.geometry.triangles = triASData;
 
+
     VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
     buildRangeInfo.firstVertex = 0;
-    buildRangeInfo.primitiveCount = _countof(g_vertices) / 3;
+    buildRangeInfo.primitiveCount = 1;
     buildRangeInfo.primitiveOffset = 0;
     buildRangeInfo.transformOffset = 0;
 
@@ -1627,59 +1583,32 @@ private:
       asBuildSizeInfo.buildScratchSize,
       asBuildSizeInfo.accelerationStructureSize);
 
-    // BLAS Scratch
     VkBuffer blasScratchBuffer{};
-    VkBufferCreateInfo blasScratchBufferCreateInfo{};
-    blasScratchBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    blasScratchBufferCreateInfo.size = asBuildSizeInfo.buildScratchSize;
-    blasScratchBufferCreateInfo.usage =
+    VkDeviceMemory blasScratchMemory{};
+    createBuffer(asBuildSizeInfo.buildScratchSize,
       VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
       | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
-    blasScratchBufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &blasScratchBufferCreateInfo, nullptr, &blasScratchBuffer) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create BLAS scratch buffer");
-    }
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+      0,
+      blasScratchBuffer,
+      blasScratchMemory);
 
-    VkDeviceMemory blasScratchMemory{};
-    VkMemoryRequirements memReq{};
-    vkGetBufferMemoryRequirements(device, blasScratchBuffer, &memReq);
+    VkBuffer blasResultBuffer{};
+    VkDeviceMemory blasResultMemory{};
+    createBuffer(asBuildSizeInfo.accelerationStructureSize,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+      0,
+      blasResultBuffer,
+      blasResultMemory);
 
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = std::max(blasScratchBufferCreateInfo.size, memReq.size);
-    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    buildGeomInfo.scratchData.deviceAddress = getBufferDeviceAddress(blasScratchBuffer);
 
-    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
-    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-    allocInfo.pNext = &allocFlagsInfo;
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &blasScratchMemory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for BLAS scratch");
-    }
-
-    vkBindBufferMemory(device, blasScratchBuffer, blasScratchMemory, 0);
-
-    // BLAS Result
-    VkBufferCreateInfo blasResultBufferCreateInfo = blasScratchBufferCreateInfo;
-    blasResultBufferCreateInfo.size = asBuildSizeInfo.accelerationStructureSize;
-    if (vkCreateBuffer(device, &blasResultBufferCreateInfo, nullptr, &blasResultBuffer) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create BLAS result buffer");
-    }
-    vkGetBufferMemoryRequirements(device, blasResultBuffer, &memReq);
-    allocInfo.allocationSize = std::max(blasResultBufferCreateInfo.size, memReq.size);
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &blasResultMemory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for BLAS result");
-    }
-    vkBindBufferMemory(device, blasResultBuffer, blasResultMemory, 0);
-    addrInfo.buffer = blasResultBuffer;
-    VkDeviceAddress blasResultDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
-
+    VkAccelerationStructureKHR blas{};
     VkAccelerationStructureCreateInfoKHR blasCreateInfo{};
     blasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    blasCreateInfo.createFlags = 0;
     blasCreateInfo.size = asBuildSizeInfo.accelerationStructureSize;
     blasCreateInfo.buffer = blasResultBuffer;
     blasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
@@ -1689,26 +1618,9 @@ private:
     if (funcCreateAccelerationStructure(device, &blasCreateInfo, nullptr, &blas) != VK_SUCCESS) {
       throw std::runtime_error("Could not create BLAS");
     }
-
-    addrInfo.buffer = blasScratchBuffer;
-    VkDeviceAddress blasScratchAddress = vkGetBufferDeviceAddress(device, &addrInfo);
-    buildGeomInfo.scratchData.deviceAddress = blasScratchAddress;
     buildGeomInfo.dstAccelerationStructure = blas;
 
-    // Prepare Cmd List
-    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-    vkResetFences(device, 1, &inFlightFence);
-    vkResetCommandBuffer(commandBuffer, 0);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = 0;
-    beginInfo.pInheritanceInfo = nullptr;
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to begin command buffer");
-    }
-
-    // Build on host is not available :(
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
     VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
     PFN_vkCmdBuildAccelerationStructuresKHR funcCmdBuildAccelerationStructuresKHR =
       (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetInstanceProcAddr(
@@ -1724,88 +1636,83 @@ private:
       0, 1, &barrier,
       0, nullptr,
       0, nullptr);
+    endSingleTimeCommands(commandBuffer);
 
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 0;
-    submitInfo.pWaitSemaphores = nullptr;
-    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR };
-    submitInfo.pWaitDstStageMask = waitStages;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-    submitInfo.signalSemaphoreCount = 0;
-    submitInfo.pSignalSemaphores = nullptr;
+    outBlasResultBuffer = blasResultBuffer;
+    outBlasResultMemory = blasResultMemory;
 
-    vkEndCommandBuffer(commandBuffer);
-
-    // Submit CMD List
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to submit BLAS build cmd to Q");
-    }
-
-    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-
-    vkFreeMemory(device, blasScratchMemory, nullptr);
     vkDestroyBuffer(device, blasScratchBuffer, nullptr);
+    vkFreeMemory(device, blasScratchMemory, nullptr);
+    return blas;
+  }
+
+  void createAS() {
+    blas0 = buildBLAS(0, blasResultBuffer0, blasResultMemory0);
+    blas1 = buildBLAS(1, blasResultBuffer1, blasResultMemory1);
+
+    VkBufferDeviceAddressInfo addrInfo{};
+    addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addrInfo.pNext = nullptr;
 
     // TLAS
     VkBuffer tlasInstancesBuffer{};
-    VkBufferCreateInfo tlasInstBufferCreateInfo{};
-    tlasInstBufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    tlasInstBufferCreateInfo.usage =
+    VkDeviceMemory tlasInstancesMemory{};
+
+    size_t size = sizeof(VkAccelerationStructureInstanceKHR) * 2;
+    createBuffer(size,
       VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    tlasInstBufferCreateInfo.size = sizeof(VkAccelerationStructureInstanceKHR) * 1;
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+      tlasInstancesBuffer, tlasInstancesMemory);
 
-    if (vkCreateBuffer(device, &tlasInstBufferCreateInfo, nullptr, &tlasInstancesBuffer) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create TLAS instances buffer");
-    }
+    VkDeviceAddress blas0ResultDeviceAddr = getBufferDeviceAddress(blasResultBuffer0);
 
-    vkGetBufferMemoryRequirements(device, tlasInstancesBuffer, &memReq);
-    VkDeviceMemory tlasInstancesMemory{};
-    allocInfo.allocationSize = std::max(memReq.size, tlasInstBufferCreateInfo.size);
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasInstancesMemory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for TLAS instances");
-    }
-
-    vkBindBufferMemory(device, tlasInstancesBuffer, tlasInstancesMemory, 0);
-
-    addrInfo.buffer = tlasInstancesBuffer;
-    VkDeviceAddress tlasInstancesDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
-
-    VkDeviceAddress blasASAddress{};
+    VkDeviceAddress blas0ASAddress{}, blas1ASAddress;
     VkAccelerationStructureDeviceAddressInfoKHR blasAddrInfo{};
     blasAddrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-    blasAddrInfo.accelerationStructure = blas;
+    blasAddrInfo.accelerationStructure = blas0;
     PFN_vkGetAccelerationStructureDeviceAddressKHR funcGetAccelerationStructureDeviceAddressKHR =
       (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetInstanceProcAddr(
         instance, "vkGetAccelerationStructureDeviceAddressKHR");
-    blasASAddress = funcGetAccelerationStructureDeviceAddressKHR(device, &blasAddrInfo);
-
-    printf("blasASAddress=%p blasResultDeviceAddr=%p\n", (void*)blasASAddress, (void*)blasResultDeviceAddr);
+    blas0ASAddress = funcGetAccelerationStructureDeviceAddressKHR(device, &blasAddrInfo);
+    blasAddrInfo.accelerationStructure = blas1;
+    blas1ASAddress = funcGetAccelerationStructureDeviceAddressKHR(device, &blasAddrInfo);
 
     void* data;
-    VkAccelerationStructureInstanceKHR instance0{};
-    instance0.accelerationStructureReference = blasASAddress;
-    instance0.transform.matrix[0][0] = 1.0f;
-    instance0.transform.matrix[1][1] = 1.0f;
-    instance0.transform.matrix[2][2] = 1.0f;
-    instance0.instanceCustomIndex = 0;
-    instance0.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-    instance0.mask = 0xFF;
-    instance0.instanceShaderBindingTableRecordOffset = 0;
+    VkAccelerationStructureInstanceKHR instances[2]{};
+    instances[0].accelerationStructureReference = blas0ASAddress;
+    instances[0].transform.matrix[0][0] = 1.0f;
+    instances[0].transform.matrix[1][1] = 1.0f;
+    instances[0].transform.matrix[2][2] = 1.0f;
+    instances[0].instanceCustomIndex = 0;
+    instances[0].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    instances[0].mask = 0xFF;
+    instances[0].instanceShaderBindingTableRecordOffset = 0;
+    instances[1].accelerationStructureReference = blas1ASAddress;
+    instances[1].transform.matrix[0][0] = 1.0f;
+    instances[1].transform.matrix[1][1] = 1.0f;
+    instances[1].transform.matrix[2][2] = 1.0f;
+    instances[1].instanceCustomIndex = 0;
+    instances[1].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    instances[1].mask = 0xFF;
+    instances[1].instanceShaderBindingTableRecordOffset = 0;
 
-    vkMapMemory(device, tlasInstancesMemory, 0, tlasInstBufferCreateInfo.size, 0, &data);
-    memcpy(data, &instance0, sizeof(instance0));
+    vkMapMemory(device, tlasInstancesMemory, 0, size, 0, &data);
+    memcpy(data, &instances[0], size);
     vkUnmapMemory(device, tlasInstancesMemory);
 
-    VkAccelerationStructureGeometryKHR instData{};
-    instData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    instData.flags = 0;// VK_GEOMETRY_OPAQUE_BIT_KHR;
-    instData.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    instData.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    instData.geometry.instances.data.deviceAddress = tlasInstancesDeviceAddr;
+    VkAccelerationStructureGeometryKHR instData[2]{};
+    instData[0].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    instData[0].flags = 0;// VK_GEOMETRY_OPAQUE_BIT_KHR;
+    instData[0].geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    instData[0].geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    instData[0].geometry.instances.data.deviceAddress = getBufferDeviceAddress(tlasInstancesBuffer);
+    instData[1].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    instData[1].flags = 0;// VK_GEOMETRY_OPAQUE_BIT_KHR;
+    instData[1].geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    instData[1].geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    instData[1].geometry.instances.data.deviceAddress = getBufferDeviceAddress(tlasInstancesBuffer) + sizeof(VkAccelerationStructureInstanceKHR);
 
     // TLAS inst info
     VkAccelerationStructureBuildGeometryInfoKHR buildInstInfo{};
@@ -1816,13 +1723,16 @@ private:
     buildInstInfo.srcAccelerationStructure = VK_NULL_HANDLE;
     buildInstInfo.dstAccelerationStructure = VK_NULL_HANDLE;
     buildInstInfo.geometryCount = 1;
-    buildInstInfo.pGeometries = &instData;
+    buildInstInfo.pGeometries = instData;
     buildInstInfo.ppGeometries = nullptr;
     buildInstInfo.scratchData.deviceAddress = 0;
 
     uint32_t instCount = 1;
     VkAccelerationStructureBuildSizesInfoKHR tlasBuildSizeInfo{};
     tlasBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
+      (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetInstanceProcAddr(
+        instance, "vkGetAccelerationStructureBuildSizesKHR");
     funcGetAccelerationStructureBuildSizes(device,
       VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
       &buildInstInfo,
@@ -1834,75 +1744,63 @@ private:
 
     // TLAS scratch
     VkBuffer tlasScratchBuffer;
-    VkBufferCreateInfo tlasScratchBufferCreateInfo = tlasInstBufferCreateInfo;
-    tlasScratchBufferCreateInfo.size = tlasBuildSizeInfo.buildScratchSize;
-    tlasScratchBufferCreateInfo.usage =
+    VkDeviceMemory tlasScratchMemory;
+    createBuffer(tlasBuildSizeInfo.buildScratchSize,
       VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
       | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
-    if (vkCreateBuffer(device, &tlasScratchBufferCreateInfo, nullptr, &tlasScratchBuffer) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create TLAS scratch buffer");
-    }
-    VkDeviceMemory tlasScratchMemory;
-    vkGetBufferMemoryRequirements(device, tlasScratchBuffer, &memReq);
-    allocInfo.allocationSize = std::max(tlasScratchBufferCreateInfo.size, memReq.size);
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasScratchMemory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for TLAS scratch");
-    }
-    vkBindBufferMemory(device, tlasScratchBuffer, tlasScratchMemory, 0);
-    addrInfo.buffer = tlasScratchBuffer;
-    VkDeviceAddress tlasScratchDeviceAddress = vkGetBufferDeviceAddress(device, &addrInfo);
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+      0,
+      tlasScratchBuffer, tlasScratchMemory);
 
     // TLAS result
-    VkBufferCreateInfo tlasResultBufferCreateInfo = tlasScratchBufferCreateInfo;
-    tlasResultBufferCreateInfo.size = tlasBuildSizeInfo.accelerationStructureSize;
-    if (vkCreateBuffer(device, &tlasResultBufferCreateInfo, nullptr, &tlasResultBuffer) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create TLAS result buffer");
-    }
-    allocInfo.allocationSize = std::max(tlasResultBufferCreateInfo.size, memReq.size);
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &tlasResultMemory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for TLAS result");
-    }
-    vkBindBufferMemory(device, tlasResultBuffer, tlasResultMemory, 0);
+    createBuffer(tlasBuildSizeInfo.accelerationStructureSize,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+      0,
+      tlasResultBuffer, tlasResultMemory);
 
     VkAccelerationStructureCreateInfoKHR tlasCreateInfo{};
     tlasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
     tlasCreateInfo.size = tlasBuildSizeInfo.accelerationStructureSize;
     tlasCreateInfo.buffer = tlasResultBuffer;
     tlasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    PFN_vkCreateAccelerationStructureKHR funcCreateAccelerationStructure =
+      (PFN_vkCreateAccelerationStructureKHR)vkGetInstanceProcAddr(
+        instance, "vkCreateAccelerationStructureKHR");
     if (funcCreateAccelerationStructure(device, &tlasCreateInfo, nullptr, &tlas) != VK_SUCCESS) {
       throw std::runtime_error("Could not create TLAS");
     }
 
     // Prepare cmd list
-    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-    vkResetFences(device, 1, &inFlightFence);
-    vkResetCommandBuffer(commandBuffer, 0);
+    
 
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to begin command buffer");
-    }
-
-    buildRangeInfo.primitiveCount = 1;
-    buildInstInfo.scratchData.deviceAddress = tlasScratchDeviceAddress;
+    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.primitiveCount = 2;
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.transformOffset = 0;
+    buildInstInfo.scratchData.deviceAddress = getBufferDeviceAddress(tlasScratchBuffer);
     buildInstInfo.dstAccelerationStructure = tlas;
+    VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
+
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+    PFN_vkCmdBuildAccelerationStructuresKHR funcCmdBuildAccelerationStructuresKHR =
+      (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetInstanceProcAddr(
+        instance, "vkCmdBuildAccelerationStructuresKHR");
     funcCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildInstInfo, buildRangeInfos);
 
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
     vkCmdPipelineBarrier(commandBuffer,
       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
       0, 1, &barrier,
       0, nullptr,
       0, nullptr);
-
-    vkEndCommandBuffer(commandBuffer);
-
-    // Submit CMD List
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to submit TLAS build cmd to Q");
-    }
-
-    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+    endSingleTimeCommands(commandBuffer);
 
     vkFreeMemory(device, tlasInstancesMemory, nullptr);
     vkFreeMemory(device, tlasScratchMemory, nullptr);
@@ -2182,6 +2080,47 @@ private:
     }
 
     vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
+  }
+
+  void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+      throw std::runtime_error("failed to create buffer!");
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
+      allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+      allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+      allocInfo.pNext = &allocFlagsInfo;
+    }
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+      throw std::runtime_error("failed to allocate buffer memory!");
+    }
+
+    vkBindBufferMemory(device, buffer, bufferMemory, 0);
+  }
+
+  VkDeviceAddress getBufferDeviceAddress(VkBuffer& buf) {
+    VkBufferDeviceAddressInfo addrInfo{};
+    addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addrInfo.buffer = buf;
+    addrInfo.pNext = nullptr;
+    return vkGetBufferDeviceAddress(device, &addrInfo);
   }
 
   void createRtPipeline() {
@@ -2672,6 +2611,11 @@ private:
   VkAccelerationStructureKHR blas;
   VkBuffer blasResultBuffer;
   VkDeviceMemory blasResultMemory;
+
+  VkAccelerationStructureKHR blas0, blas1;
+  VkBuffer blasResultBuffer0, blasResultBuffer1;
+  VkDeviceMemory blasResultMemory0, blasResultMemory1;
+
   VkAccelerationStructureKHR tlas;
   VkBuffer tlasResultBuffer;
   VkDeviceMemory tlasResultMemory;
@@ -2698,8 +2642,8 @@ private:
   VkDeviceMemory ommTriangleIndicesMemory{};
   VkBuffer ommArrayDataBuffer{};
   VkDeviceMemory ommArrayDataMemory{};
-  VkBuffer ommDescriptorBuffer{};
-  VkDeviceMemory ommDescriptorMemory{};
+  VkBuffer ommDescArrayBuffer{};
+  VkDeviceMemory ommDescArrayMemory{};
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
