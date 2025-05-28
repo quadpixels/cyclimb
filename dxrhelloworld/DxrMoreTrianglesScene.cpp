@@ -103,7 +103,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     // 1. DXIL library
     D3D12_DXIL_LIBRARY_DESC dxil_lib_desc = {};
     IDxcBlob* dxil_library = CompileShaderLibrary(L"shaders/raytracing_tutorial.hlsl");
-    D3D12_EXPORT_DESC dxil_lib_exports[5];
+    D3D12_EXPORT_DESC dxil_lib_exports[6];
     dxil_lib_exports[0].Flags = D3D12_EXPORT_FLAG_NONE;
     dxil_lib_exports[0].ExportToRename = nullptr;
     dxil_lib_exports[0].Name = L"MyRaygenShader";
@@ -119,9 +119,12 @@ MoreTrianglesScene::MoreTrianglesScene() {
     dxil_lib_exports[4].Flags = D3D12_EXPORT_FLAG_NONE;
     dxil_lib_exports[4].ExportToRename = nullptr;
     dxil_lib_exports[4].Name = L"MyAnyHitShader";
+    dxil_lib_exports[5].Flags = D3D12_EXPORT_FLAG_NONE;
+    dxil_lib_exports[5].ExportToRename = nullptr;
+    dxil_lib_exports[5].Name = L"MyCallableShader";
     dxil_lib_desc.DXILLibrary.pShaderBytecode = dxil_library->GetBufferPointer();
     dxil_lib_desc.DXILLibrary.BytecodeLength = dxil_library->GetBufferSize();
-    dxil_lib_desc.NumExports = 5;
+    dxil_lib_desc.NumExports = _countof(dxil_lib_exports);
     dxil_lib_desc.pExports = dxil_lib_exports;
 
     D3D12_STATE_SUBOBJECT subobj_dxil_lib = {};
@@ -625,7 +628,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     void* hit_shader_id1 = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup1");
     void* hit_shader_id2 = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup2");
     shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    sbt_desc.Width = shader_record_size * 3;
+    sbt_desc.Width = shader_record_size * 4;
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
       D3D12_HEAP_FLAG_NONE, &sbt_desc,
@@ -636,6 +639,17 @@ MoreTrianglesScene::MoreTrianglesScene() {
     memcpy(mapped + 32, hit_shader_id1, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
     memcpy(mapped + 64, hit_shader_id2, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
     hit_sbt_storage->Unmap(0, nullptr);
+    
+    void* callable_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyCallableShader");
+    sbt_desc.Width = shader_record_size;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE, &sbt_desc,
+      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+      IID_PPV_ARGS(&callable_sbt_storage)));
+    callable_sbt_storage->Map(0, nullptr, (void**)&mapped);
+    memcpy(mapped, callable_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+    callable_sbt_storage->Unmap(0, nullptr);
   }
 
   // Output resource
@@ -723,6 +737,8 @@ void MoreTrianglesScene::Render() {
   desc.HitGroupTable.StartAddress = hit_sbt_storage->GetGPUVirtualAddress();
   desc.HitGroupTable.SizeInBytes = 64;
   desc.HitGroupTable.StrideInBytes = 32;
+  desc.CallableShaderTable.StartAddress = callable_sbt_storage->GetGPUVirtualAddress();
+  desc.CallableShaderTable.SizeInBytes = 64;
   desc.Width = WIN_W;
   desc.Height = WIN_H;
   desc.Depth = 1;

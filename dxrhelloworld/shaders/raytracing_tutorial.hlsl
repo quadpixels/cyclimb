@@ -126,4 +126,12 @@ void MyIntersectionShader()
   ReportHit(0.8f, 0, attr);
 }
 
+[shader("callable")]
+void MyCallableShader(inout RayPayload payload)
+{
+    payload.color.r = 1.0f;
+    payload.color.g = 0.2f;
+    payload.color.b = 0.2f;
+}
+
 #endif // RAYTRACING_HLSL

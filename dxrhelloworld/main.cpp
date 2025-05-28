@@ -337,7 +337,7 @@ int main(int argc, char** argv) {
   ShowWindow(g_hwnd, SW_RESTORE);
 
   g_scenes[0] = new ObjScene();
-  //g_scenes[1] = new TriangleScene();
+  g_scenes[1] = new TriangleScene();
   g_scenes[2] = new MoreTrianglesScene();
   g_scenes[3] = new ObjScene1();
 
