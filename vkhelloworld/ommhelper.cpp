@@ -16,7 +16,7 @@ struct Vertex {
   alignas(16) glm::vec2 uv;
 };
 const int NUM_VERTS = 6;
-extern Vertex g_vertices[NUM_VERTS];
+extern std::vector<Vertex> g_vertices;
 
 static void Log(omm::MessageSeverity severity, const char* message, void* userArg)
 {
@@ -151,6 +151,8 @@ const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t primIdx, uint32_t level)
     save_images_desc.filePostfix = "image";
     printf(">> save images\n");
     omm::Debug::SaveAsImages(baker, input_desc, res_desc, save_images_desc);
+
+    omm::Debug::SaveBinaryToDisk(baker, *blob_desc, (save_img_path + "/omm.bin").c_str());
   }
 
   printf("Result desc:\n");

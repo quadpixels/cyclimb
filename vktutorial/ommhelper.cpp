@@ -105,7 +105,7 @@ const omm::Cpu::BakeResultDesc* bakeOmmForMask() {
   input_desc.indexCount = index_buffer.size();
   input_desc.indexFormat = omm::IndexFormat::UINT_32;
   input_desc.maxArrayDataSize = (uint32_t)(-1);
-  input_desc.maxSubdivisionLevel = 6;
+  input_desc.maxSubdivisionLevel = 2;
   input_desc.maxWorkloadSize = (uint64_t)(-1);
   input_desc.nearDuplicateDeduplicationFactor = 0.15;
   input_desc.rejectionThreshold = 0;

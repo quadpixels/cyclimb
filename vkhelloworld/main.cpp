@@ -10,10 +10,12 @@
 #include <glm/vec3.hpp>
 #include <glm/mat4x4.hpp>
 
+#include <stdio.h>
 #include <stdint.h>
 #include <omm.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -25,31 +27,38 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+
 // OMM handling
 bool g_use_omm{ false };
-const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t prim_idx);
+const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t prim_idx, uint32_t level);
 
 const char* g_tex_files[2] = {
       "textures/Paris_ivy_leaf_a_diff.png",
       "textures/Paris_ivy_leaf_a_mask.png",
 };
 
+std::vector<std::string> g_diff_maps(128), g_alpha_maps(128);
+
 struct Vertex {
   alignas(16) glm::vec3 pos;
   alignas(16) glm::vec3 color;
-  alignas(16) glm::vec2 uv;
-  float pad2[2];
+  alignas(16) glm::vec2 uv; int mat_idx;
+  int pad;
 };
 
-// Clockwise
-Vertex g_vertices[] = {
-      { { -0.5, -0.5, 0}, { 1, 0, 0 }, { 0, 0 } },
-      { { 0.5, 0.5, 0}, { 0, 1, 0 }, { 1, 1 } },
-      { { -0.5, 0.5, 0}, { 0, 0, 1 }, { 0, 1 } },
+std::string g_obj_name = "paris_ivy_leaf.obj";
 
-      { { -0.5, -0.5, 0}, { 1, 0, 0 }, { 0, 0 } },
-      { { 0.5, -0.5, 0}, { 0, 0, 1 }, { 1, 0 } },
-      { { 0.5, 0.5, 0}, { 0, 1, 0 }, { 1, 1 } },
+// Clockwise
+std::vector<Vertex> g_vertices = {
+      { { -0.5, -0.5, 0}, { 1, 0, 0 }, { 0, 0 }, -1 },
+      { { 0.5, 0.5, 0}, { 0, 1, 0 }, { 1, 1 }, -1 },
+      { { -0.5, 0.5, 0}, { 0, 0, 1 }, { 0, 1 }, -1 },
+
+      { { -0.5, -0.5, 0}, { 1, 0, 0 }, { 0, 0 }, -1 },
+      { { 0.5, -0.5, 0}, { 0, 0, 1 }, { 1, 0 }, -1 },
+      { { 0.5, 0.5, 0}, { 0, 1, 0 }, { 1, 1 }, -1 },
 };
 
 GLFWwindow* window{};
@@ -265,6 +274,7 @@ private:
     createRenderPass();
     createCommandPool();
     createCommandBuffer();
+    readOBJ();
     createTextureImage();
     createTextureImageView();
     createTextureSampler();
@@ -293,6 +303,22 @@ private:
   }
 
   void cleanup() {
+    for (VkBuffer& b : asResultBuffers) {
+      vkDestroyBuffer(device, b, nullptr);
+    }
+    for (VkDeviceMemory& m : asResultMemories) {
+      vkFreeMemory(device, m, nullptr);
+    }
+    for (VkBuffer& b : ommBuffersToDelete) {
+      vkDestroyBuffer(device, b, nullptr);
+    }
+    for (VkDeviceMemory& m : ommMemoriesToFree) {
+      vkFreeMemory(device, m, nullptr);
+    }
+    vkDestroyBuffer(device, vertexBuffer, nullptr);
+    vkDestroyBuffer(device, indexBuffer, nullptr);
+    vkFreeMemory(device, vertexBufferMemory, nullptr);
+    vkFreeMemory(device, indexBufferMemory, nullptr);
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
     vkDestroySampler(device, textureSampler, nullptr);
@@ -300,6 +326,18 @@ private:
       vkFreeMemory(device, textureImageMemory[i], nullptr);
       vkDestroyImageView(device, textureImageView[i], nullptr);
       vkDestroyImage(device, textureImage[i], nullptr);
+    }
+    for (uint32_t i = 0; i < 128; i++) {
+      if (g_diff_maps[i].empty() == false) {
+        vkFreeMemory(device, diffMapImageMemory[i], nullptr);
+        vkDestroyImageView(device, diffMapImageView[i], nullptr);
+        vkDestroyImage(device, diffMapImage[i], nullptr);
+      }
+      if (g_alpha_maps[i].empty() == false) {
+        vkFreeMemory(device, alphaMapImageMemory[i], nullptr);
+        vkDestroyImageView(device, alphaMapImageView[i], nullptr);
+        vkDestroyImage(device, alphaMapImage[i], nullptr);
+      }
     }
     vkFreeMemory(device, sbtMemory, nullptr);
     vkDestroyBuffer(device, sbtBuffer, nullptr);
@@ -314,6 +352,10 @@ private:
     assert(funcDestroyAccelerationStructureKHR);
     funcDestroyAccelerationStructureKHR(device, blas, nullptr);
     funcDestroyAccelerationStructureKHR(device, tlas, nullptr);
+    funcDestroyAccelerationStructureKHR(device, blas0, nullptr);
+    funcDestroyAccelerationStructureKHR(device, blas1, nullptr);
+    vkDestroyBuffer(device, blasResultBuffer0, nullptr);
+    vkDestroyBuffer(device, blasResultBuffer1, nullptr);
     vkFreeDescriptorSets(device, rtDescriptorPool, _countof(rtDescriptorSets), rtDescriptorSets);
     vkDestroyDescriptorPool(device, rtDescriptorPool, nullptr);
     vkDestroyPipeline(device, rtPipeline, nullptr);
@@ -348,6 +390,90 @@ private:
     vkDestroyInstance(instance, nullptr);
     glfwDestroyWindow(window);
     glfwTerminate();
+  }
+
+  void readOBJ() {
+    tinyobj::attrib_t attrib;
+
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+
+    std::string warn;
+    std::string err;
+
+    std::filesystem::path infile_dir(g_obj_name);
+    if (infile_dir.has_parent_path()) {
+      infile_dir = infile_dir.parent_path();
+    }
+    else {
+      infile_dir = ".";
+    }
+    printf("OBJ model's path: %s\n", infile_dir.c_str());
+
+    bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, g_obj_name.c_str(), (infile_dir.string() + "\\").c_str());
+    if (!err.empty()) {
+      printf("Tinyobj error: %s\n", err.c_str());
+    }
+
+    if (!ret) {
+      return;
+    }
+
+    g_vertices.clear();
+    unsigned tot_num_verts = 0;
+    int tot_num_idxes = 0;
+    printf("%s: %zu verts, %zu shapes, %zu materials\n",
+      g_obj_name.c_str(), attrib.vertices.size(),
+      shapes.size(), materials.size());
+    for (unsigned i = 0; i < shapes.size(); i++) {
+      printf("shape[%u] has %zu indices, %zu material ids\n",
+        i, shapes[i].mesh.indices.size(), shapes[i].mesh.material_ids.size());
+      for (uint32_t fidx = 0; fidx < shapes[i].mesh.indices.size() / 3; fidx ++) {
+        int mat_id = shapes[i].mesh.material_ids[fidx];
+        const tinyobj::material_t* mat{};
+        if (mat_id != -1) {
+          mat = &(materials[mat_id]);
+          printf("  Face %u mat %d, diff=%s, alpha=%s\n", fidx, mat_id,
+            mat->diffuse_texname.c_str(), mat->alpha_texname.c_str());
+          std::filesystem::path diff_path = infile_dir / mat->diffuse_texname;
+          std::filesystem::path mask_path = infile_dir / mat->alpha_texname;
+          g_diff_maps.at(mat_id) = diff_path.string();
+          g_alpha_maps.at(mat_id) = mask_path.string();
+        }
+        else {
+          printf("  Face %u no mat\n", fidx);
+        }
+
+        Vertex v0{}, v1{}, v2{};
+        tinyobj::index_t i0 = shapes[i].mesh.indices[fidx * 3];
+        tinyobj::index_t i1 = shapes[i].mesh.indices[fidx * 3 + 1];
+        tinyobj::index_t i2 = shapes[i].mesh.indices[fidx * 3 + 2];
+        v0.pos.x = attrib.vertices[i0.vertex_index * 3];
+        v0.pos.y = attrib.vertices[i0.vertex_index * 3 + 1];
+        v0.pos.z = attrib.vertices[i0.vertex_index * 3 + 2];
+        v0.uv.x = attrib.texcoords[i0.texcoord_index * 2];
+        v0.uv.y = attrib.texcoords[i0.texcoord_index * 2 + 1];
+        v0.mat_idx = mat_id;
+        
+        v1.pos.x = attrib.vertices[i1.vertex_index * 3];
+        v1.pos.y = attrib.vertices[i1.vertex_index * 3 + 1];
+        v1.pos.z = attrib.vertices[i1.vertex_index * 3 + 2];
+        v1.uv.x = attrib.texcoords[i1.texcoord_index * 2];
+        v1.uv.y = attrib.texcoords[i1.texcoord_index * 2 + 1];
+        v1.mat_idx = mat_id;
+
+        v2.pos.x = attrib.vertices[i2.vertex_index * 3];
+        v2.pos.y = attrib.vertices[i2.vertex_index * 3 + 1];
+        v2.pos.z = attrib.vertices[i2.vertex_index * 3 + 2];
+        v2.uv.x = attrib.texcoords[i2.texcoord_index * 2];
+        v2.uv.y = attrib.texcoords[i2.texcoord_index * 2 + 1];
+        v2.mat_idx = mat_id;
+      
+        g_vertices.push_back(v0);
+        g_vertices.push_back(v1);
+        g_vertices.push_back(v2);
+      }
+    }
   }
 
   void createInstance() {
@@ -1161,8 +1287,14 @@ private:
     }
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipeline);
+
+    VkDescriptorSet sets[] = {
+      rtDescriptorSets[imageIndex],
+      rtDescriptorSet1Set
+    };
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipelineLayout, 0,
-      1, &(rtDescriptorSets[imageIndex]), 0, nullptr);
+      2, sets, 0, nullptr);
+    
     PFN_vkCmdTraceRaysKHR funcCmdTraceRaysKHR =
       (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(
         instance, "vkCmdTraceRaysKHR");
@@ -1304,7 +1436,7 @@ private:
   void createVertexBuffer() {
     VkBufferCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    createInfo.size = sizeof(Vertex) * _countof(g_vertices);
+    createInfo.size = sizeof(Vertex) * g_vertices.size();
     createInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
       | VK_BUFFER_USAGE_TRANSFER_DST_BIT
@@ -1341,11 +1473,11 @@ private:
 
     void* data;
     vkMapMemory(device, vertexBufferMemory, 0, createInfo.size, 0, &data);
-    memcpy(data, g_vertices, sizeof(g_vertices));
+    memcpy(data, g_vertices.data(), sizeof(Vertex) * g_vertices.size());
     vkUnmapMemory(device, vertexBufferMemory);
 
     // Index Buffer
-    createInfo.size = sizeof(uint32_t) * _countof(g_vertices);
+    createInfo.size = sizeof(uint32_t) * g_vertices.size();
     if (vkCreateBuffer(device, &createInfo, nullptr, &indexBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not create index buffer");
     }
@@ -1356,7 +1488,7 @@ private:
     }
     vkBindBufferMemory(device, indexBuffer, indexBufferMemory, 0);
     std::vector<uint32_t> indices;
-    for (uint32_t i = 0; i < _countof(g_vertices); i++) {
+    for (uint32_t i = 0; i < g_vertices.size(); i++) {
       indices.push_back(i);
     }
     vkMapMemory(device, indexBufferMemory, 0, createInfo.size, 0, &data);
@@ -1383,7 +1515,7 @@ private:
     VkMicromapEXT ommArray{};
     if (g_use_omm) {
       // 1. Baked OMM result
-      const omm::Cpu::BakeResultDesc* res_desc = bakeOmmForMask(prim_idx);
+      const omm::Cpu::BakeResultDesc* res_desc = bakeOmmForMask(prim_idx, prim_idx == 0 ? 3 : 5);
 
       // 2. OMM itself
       // FillMicromapBuildInfo
@@ -1540,6 +1672,18 @@ private:
       ommBlasDesc.micromap = ommArray;
 
       triASData.pNext = &ommBlasDesc;
+
+      vkDestroyBuffer(device, ommScratchBuffer, nullptr);
+      vkFreeMemory(device, ommScratchMemory, nullptr);
+
+      ommBuffersToDelete.push_back(ommBuffer);
+      ommBuffersToDelete.push_back(ommArrayBuffer);
+      ommBuffersToDelete.push_back(ommDescArrayBuffer);
+      ommBuffersToDelete.push_back(ommIndexBuffer);
+      ommMemoriesToFree.push_back(ommMemory);
+      ommMemoriesToFree.push_back(ommArrayMemory);
+      ommMemoriesToFree.push_back(ommDescArrayMemory);
+      ommMemoriesToFree.push_back(ommIndexMemory);
     }
 
     VkAccelerationStructureGeometryKHR geomData{};
@@ -1643,6 +1787,10 @@ private:
 
     vkDestroyBuffer(device, blasScratchBuffer, nullptr);
     vkFreeMemory(device, blasScratchMemory, nullptr);
+
+    //asResultBuffers.push_back(outBlasResultBuffer);
+    //asResultMemories.push_back(blasResultMemory);
+
     return blas;
   }
 
@@ -1925,6 +2073,7 @@ private:
   }
 
   void createRtDescriptorSetLayout() {
+    // Everything except set2
     VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[5]{};
     descriptorSetLayoutBindings[0].binding = 0;
     descriptorSetLayoutBindings[0].descriptorCount = 1;
@@ -1966,6 +2115,17 @@ private:
     if (vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &rtDescriptorSetLayout) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create RT descriptor set layout");
     }
+
+    VkDescriptorSetLayoutBinding textureBinding{};
+    textureBinding.binding = 0;
+    textureBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    textureBinding.descriptorCount = 128;
+    textureBinding.stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    descriptorSetLayoutInfo.bindingCount = 1;
+    descriptorSetLayoutInfo.pBindings = &textureBinding;
+    if (vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &rtDescriptorSet1Layout) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create RT descriptor layout for Set#2");
+    }
   }
 
   void createRtDescriptorPool() {
@@ -1988,6 +2148,18 @@ private:
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &rtDescriptorPool) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create RT descriptor pool");
+    }
+
+    // Set2
+    VkDescriptorPoolSize poolSizeSet2 = {};
+    poolSizeSet2.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizeSet2.descriptorCount = 128;
+    
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSizeSet2;
+    poolInfo.maxSets = 1;
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &rtDescriptorSet1Pool) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create RT Set1 descriptor pool");
     }
   }
 
@@ -2031,19 +2203,19 @@ private:
 
     // Update material texture
     VkDescriptorImageInfo texImageInfo{};
-    texImageInfo.imageView = textureImageView[0];
+    texImageInfo.imageView = diffMapImageView[0];
     texImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     texImageInfo.sampler = textureSampler;
 
     VkDescriptorImageInfo maskImageInfo{};
-    maskImageInfo.imageView = textureImageView[1];
+    maskImageInfo.imageView = alphaMapImageView[0];
     maskImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     maskImageInfo.sampler = textureSampler;
 
     VkDescriptorBufferInfo bi{};
     bi.buffer = vertexBuffer;
     bi.offset = 0;
-    bi.range = sizeof(g_vertices);
+    bi.range = sizeof(Vertex) * g_vertices.size();
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
       uint32_t idx = i + MAX_FRAMES_IN_FLIGHT;
@@ -2080,6 +2252,37 @@ private:
     }
 
     vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
+
+    // Allocate Set2 descriptor set
+    allocInfo.descriptorPool = rtDescriptorSet1Pool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &rtDescriptorSet1Layout;
+    if (vkAllocateDescriptorSets(device, &allocInfo, &rtDescriptorSet1Set) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate RT descriptor Set1 set");
+    }
+
+    // Update Set2 descriptor set
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = rtDescriptorSet1Set;
+    write.dstBinding = 0;
+    write.descriptorCount = 128;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    VkDescriptorImageInfo imageInfos[128]{};
+    imageInfos[0].imageView = diffMapImageView[0];
+    imageInfos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfos[0].sampler = textureSampler;
+
+    imageInfos[1].imageView = alphaMapImageView[0];
+    imageInfos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfos[1].sampler = textureSampler;
+
+    for (int i = 2; i < 128; i++) {
+      imageInfos[i] = imageInfos[0];
+    }
+    write.pImageInfo = imageInfos;
+
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
   }
 
   void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
@@ -2127,8 +2330,12 @@ private:
     // Layout
     VkPipelineLayoutCreateInfo rtPipelineLayoutInfo{};
     rtPipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    rtPipelineLayoutInfo.setLayoutCount = 1;
-    rtPipelineLayoutInfo.pSetLayouts = &rtDescriptorSetLayout;
+    rtPipelineLayoutInfo.setLayoutCount = 2;
+    const VkDescriptorSetLayout rtDsLayouts[] = {
+      rtDescriptorSetLayout,
+      rtDescriptorSet1Layout
+    };
+    rtPipelineLayoutInfo.pSetLayouts = &(rtDsLayouts[0]);
     rtPipelineLayoutInfo.pushConstantRangeCount = 0;
     rtPipelineLayoutInfo.pPushConstantRanges = nullptr;
     if (vkCreatePipelineLayout(device, &rtPipelineLayoutInfo, nullptr, &rtPipelineLayout) != VK_SUCCESS) {
@@ -2384,58 +2591,73 @@ private:
   }
 
   void createTextureImage() {
-    for (uint32_t i = 0; i < _countof(g_tex_files); i++) {
-      int texHeight, texWidth, texChannels;
-      stbi_uc* pixels = stbi_load(g_tex_files[i], &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-      VkDeviceSize imageSize = texHeight * texWidth * 4;
+    for (uint32_t ty = 0; ty < 2; ty++) {
+      std::vector<std::string>* file_names_list[] = { &g_diff_maps, &g_alpha_maps };
+      std::vector<std::string>* file_names = file_names_list[ty];
+      const char* types[] = { "diffuse", "alpha" };
+      for (uint32_t i = 0; i < file_names->size(); i++) {
+        VkImage* img = (ty == 0) ? &(diffMapImage[i]) : &(alphaMapImage[i]);
+        VkImageView* image_view = (ty == 0) ? &(diffMapImageView[i]) : &(alphaMapImageView[i]);
+        VkDeviceMemory* image_memory = (ty == 0) ? &(diffMapImageMemory[i]) : &(alphaMapImageMemory[i]);
+        std::string fn = file_names->at(i);
+        if (fn.empty()) continue;
 
-      VkBuffer stagingBuffer{};
-      VkDeviceMemory stagingBufferMemory;
+        printf("Creating tex of type %s [%u], file name %s\n",
+          types[ty], i, fn.c_str());
 
-      VkBufferCreateInfo createInfo{};
-      createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-      createInfo.size = imageSize;
-      createInfo.usage =
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-      if (vkCreateBuffer(device, &createInfo, nullptr, &stagingBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create texture staging buffer");
+        int texHeight, texWidth, texChannels;
+        if (fn.empty()) continue;
+        stbi_uc* pixels = stbi_load(fn.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        VkDeviceSize imageSize = texHeight * texWidth * 4;
+
+        VkBuffer stagingBuffer{};
+        VkDeviceMemory stagingBufferMemory;
+
+        VkBufferCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        createInfo.size = imageSize;
+        createInfo.usage =
+          VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        if (vkCreateBuffer(device, &createInfo, nullptr, &stagingBuffer) != VK_SUCCESS) {
+          throw std::runtime_error("Failed to create texture staging buffer");
+        }
+
+        VkMemoryRequirements memReq;
+        vkGetBufferMemoryRequirements(device, stagingBuffer, &memReq);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = std::max(memReq.size, imageSize);
+        allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+          | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingBufferMemory) != VK_SUCCESS) {
+          throw std::runtime_error("Failed to allocate memory for staging buffer");
+        }
+
+        void* mapped{};
+        vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &mapped);
+        memcpy(mapped, pixels, imageSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+        vkBindBufferMemory(device, stagingBuffer, stagingBufferMemory, 0);
+
+        stbi_image_free(pixels);
+
+        createImage(texWidth, texHeight,
+          VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+          *img, *image_memory);
+
+        transitionImageLayout(*img, VK_FORMAT_R8G8B8A8_SRGB,
+          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        copyBufferToImage(stagingBuffer, *img, texWidth, texHeight);
+        transitionImageLayout(*img, VK_FORMAT_R8G8B8A8_SRGB,
+          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
       }
-
-      VkMemoryRequirements memReq;
-      vkGetBufferMemoryRequirements(device, stagingBuffer, &memReq);
-
-      VkMemoryAllocateInfo allocInfo{};
-      allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-      allocInfo.allocationSize = std::max(memReq.size, imageSize);
-      allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-      if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingBufferMemory) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to allocate memory for staging buffer");
-      }
-
-      void* mapped{};
-      vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &mapped);
-      memcpy(mapped, pixels, imageSize);
-      vkUnmapMemory(device, stagingBufferMemory);
-      vkBindBufferMemory(device, stagingBuffer, stagingBufferMemory, 0);
-
-      stbi_image_free(pixels);
-
-      createImage(texWidth, texHeight,
-        VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        textureImage[i], textureImageMemory[i]);
-
-      transitionImageLayout(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB,
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-      copyBufferToImage(stagingBuffer, textureImage[i], texWidth, texHeight);
-      transitionImageLayout(textureImage[i], VK_FORMAT_R8G8B8A8_SRGB,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-      vkDestroyBuffer(device, stagingBuffer, nullptr);
-      vkFreeMemory(device, stagingBufferMemory, nullptr);
     }
   }
 
@@ -2460,8 +2682,14 @@ private:
   }
 
   void createTextureImageView() {
-    textureImageView[0] = createImageView(textureImage[0], VK_FORMAT_R8G8B8A8_SRGB);
-    textureImageView[1] = createImageView(textureImage[1], VK_FORMAT_R8G8B8A8_SRGB);
+    for (uint32_t i = 0; i < 128; i++) {
+      if (g_diff_maps[i].empty() == false) {
+        diffMapImageView[i] = createImageView(diffMapImage[i], VK_FORMAT_R8G8B8A8_SRGB);
+      }
+      if (g_alpha_maps[i].empty() == false) {
+        alphaMapImageView[i] = createImageView(alphaMapImage[i], VK_FORMAT_R8G8B8A8_SRGB);
+      }
+    }
   }
 
   void createTextureSampler() {
@@ -2550,10 +2778,10 @@ private:
     // Update combined image and sampler to descriptor set
     VkDescriptorImageInfo imageInfo[2]{};
     imageInfo[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo[0].imageView = textureImageView[0];
+    imageInfo[0].imageView = diffMapImageView[0];
     imageInfo[0].sampler = textureSampler;
     imageInfo[1] = imageInfo[0];
-    imageInfo[1].imageView = textureImageView[1];
+    imageInfo[1].imageView = alphaMapImageView[0];
 
     VkWriteDescriptorSet writeDesc[3]{};
     writeDesc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2569,7 +2797,7 @@ private:
     VkDescriptorBufferInfo dbi{};
     dbi.buffer = vertexBuffer;
     dbi.offset = 0;
-    dbi.range = sizeof(g_vertices);
+    dbi.range = sizeof(Vertex) * g_vertices.size();
     writeDesc[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writeDesc[2].dstSet = descriptorSets[0];
     writeDesc[2].dstBinding = 2;
@@ -2615,15 +2843,20 @@ private:
   VkAccelerationStructureKHR blas0, blas1;
   VkBuffer blasResultBuffer0, blasResultBuffer1;
   VkDeviceMemory blasResultMemory0, blasResultMemory1;
+  std::vector<VkBuffer> asResultBuffers;
+  std::vector<VkDeviceMemory> asResultMemories;
 
   VkAccelerationStructureKHR tlas;
   VkBuffer tlasResultBuffer;
   VkDeviceMemory tlasResultMemory;
   VkDescriptorSetLayout rtDescriptorSetLayout;
+  VkDescriptorSetLayout rtDescriptorSet1Layout;
   VkPipelineLayout rtPipelineLayout;
   VkPipeline rtPipeline;
   VkDescriptorPool rtDescriptorPool;
+  VkDescriptorPool rtDescriptorSet1Pool;
   VkDescriptorSet rtDescriptorSets[MAX_FRAMES_IN_FLIGHT]{};
+  VkDescriptorSet rtDescriptorSet1Set;
   VkBuffer sbtBuffer;
   VkDeviceMemory sbtMemory;
   VkStridedDeviceAddressRegionKHR rtRgenRegion{}, rtMissRegion{}, rtHitRegion{}, rtCallRegion{};
@@ -2631,19 +2864,21 @@ private:
   VkImage textureImage[2];
   VkDeviceMemory textureImageMemory[2];
   VkImageView textureImageView[2];
+
+  VkImage diffMapImage[128];
+  VkDeviceMemory diffMapImageMemory[128];
+  VkImageView diffMapImageView[128];
+  VkImage alphaMapImage[128];
+  VkDeviceMemory alphaMapImageMemory[128];
+  VkImageView alphaMapImageView[128];
+
   VkSampler textureSampler;
   VkDescriptorSetLayout descriptorSetLayout;
   VkDescriptorPool descriptorPool;
   VkDescriptorSet descriptorSets[1]{};
 
-  VkBuffer ommBuffer{};  // Buffer and memory for the OMM object
-  VkDeviceMemory ommMemory{};
-  VkBuffer ommTriangleIndicesBuffer{};
-  VkDeviceMemory ommTriangleIndicesMemory{};
-  VkBuffer ommArrayDataBuffer{};
-  VkDeviceMemory ommArrayDataMemory{};
-  VkBuffer ommDescArrayBuffer{};
-  VkDeviceMemory ommDescArrayMemory{};
+  std::vector<VkBuffer> ommBuffersToDelete;
+  std::vector<VkDeviceMemory> ommMemoriesToFree;
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -2664,8 +2899,200 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
   }
 }
 
+static void Log(omm::MessageSeverity severity, const char* message, void* userArg)
+{
+  const char* sev = "";
+  switch (severity)
+  {
+  case omm::MessageSeverity::Info:
+    sev = "INFO";
+    break;
+  case omm::MessageSeverity::Warning:
+    sev = "WARNING";
+    break;
+  case omm::MessageSeverity::PerfWarning:
+    sev = "PERF_WARNING";
+    break;
+  case omm::MessageSeverity::Fatal:
+    sev = "FATAL";
+    break;
+  }
 
-int main() {
+  printf("[omm-sdk] [%s] %s\n", sev, message);
+}
+
+void parseOMMBinaryFile(const char* file_name) {
+  {
+    FILE* f;
+    fopen_s(&f, file_name, "rb");
+    fseek(f, 0, SEEK_END);
+    long ofst = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    std::vector<uint8_t> data(ofst);
+    fread(data.data(), 1, ofst, f);
+    fclose(f);
+    omm::Cpu::BlobDesc blobDesc;
+    blobDesc.data = (void*)data.data();
+    blobDesc.size = data.size();
+
+    // Use official binary reader
+    omm::BakerCreationDesc desc{};
+    desc.type = omm::BakerType::CPU;
+    desc.messageInterface.messageCallback = &Log;
+
+    omm::Baker baker;
+    omm::Result res = omm::CreateBaker(desc, &baker);
+    assert(res == omm::Result::SUCCESS);
+    omm::Cpu::DeserializedResult dr;
+    omm::Result err = omm::Cpu::Deserialize(baker, blobDesc, &dr);
+    assert(res == omm::Result::SUCCESS);
+    const omm::Cpu::DeserializedDesc* deserializedDesc = nullptr;
+    res = omm::Cpu::GetDeserializedDesc(dr, &deserializedDesc);
+    assert(res == omm::Result::SUCCESS);
+    printf("%d input descs", deserializedDesc->numInputDescs);
+  }
+
+#define Read(x) assert(1==fread(&x, sizeof(x), 1, f));
+  FILE* f;
+  fopen_s(&f, file_name, "rb");
+  printf("Opening OMM binary file %s\n", file_name);
+  if (!f) {
+    printf("Oh! file %s is not good.\n", file_name);
+    exit(0);
+  }
+  char xxh64_hash[8];
+  assert(1 == fread(xxh64_hash, 8, 1, f));
+  int major{}, minor{}, patch{};
+  assert(1 == fread(&major, 4, 1, f));
+  assert(1 == fread(&minor, 4, 1, f));
+  assert(1 == fread(&patch, 4, 1, f));
+  int input_desc_version{};
+  assert(1 == fread(&input_desc_version, 4, 1, f));
+  printf("OMM ver: %d.%d.%d, input desc ver %d\n", major, minor, patch, input_desc_version);
+
+
+  int flags{};
+  assert(1 == fread(&flags, 4, 1, f));
+  if (flags & int(omm::Cpu::SerializeFlags::Compress)) {
+    printf("Oh! Don't know how to deal with compressed OMM binary.\n");
+    exit(0);
+  }
+
+  if (input_desc_version >= 2) {
+    int decompressed_size{};
+    Read(decompressed_size);
+    printf("decompressed size: %d\n", decompressed_size);
+  }
+
+  int num_input_descs{};
+  Read(num_input_descs);
+  printf("%d input descs\n", num_input_descs);
+  for (int i = 0; i < num_input_descs; i++) {
+    int bakeFlags;
+    Read(bakeFlags);
+
+    // start texture
+    int num_mips = 0;
+    Read(num_mips);
+    printf("%d mips.\n", num_mips);
+
+    for (int i = 0; i < num_mips; i++) {
+      /*
+          int2 size;
+          int2 sizeLog2;
+          float2 sizef;
+          bool sizeIsPow2;
+          float2 rcpSize;
+          int2 sizeMinusOne;
+          uintptr_t dataOffset;
+          size_t numElements;
+          uintptr_t dataOffsetSAT;
+      */
+      int size_x{}, size_y{}; float rcpSize_x{}, rcpSize_y{};
+      uint32_t dataOffset{};
+      size_t numElements{};
+      uint32_t dataOffsetSAT{};
+      Read(size_x); Read(size_y);
+      Read(rcpSize_x); Read(rcpSize_y);
+      Read(dataOffset);
+      Read(numElements);
+      Read(dataOffsetSAT);
+
+      printf("mip[%d]: %dx%d (rcp:%gx%g)\n", i, size_x, size_y, rcpSize_x, rcpSize_y);
+    }
+
+    int tiling_mode{};
+    Read(tiling_mode);
+    printf("Tiling mode: %d\n", tiling_mode);
+
+    int texture_flags{}; float alpha_cutoff{};
+    if (input_desc_version >= 3) {
+      Read(texture_flags);
+      Read(alpha_cutoff);
+    }
+
+    int texture_format{};
+    Read(texture_format);
+
+    size_t data_size{};
+    Read(data_size);
+
+    std::vector<uint8_t> data(data_size);
+    assert(data_size == fread(data.data(), 1, data_size, f));
+
+    size_t data_sat_size{};
+    Read(data_sat_size);
+    if (data_sat_size > 0) {
+      std::vector<uint8_t> data_sat(data_sat_size);
+      assert(data_sat_size == fread(data_sat.data(), 1, data_sat_size, f));
+    }
+    // end texture
+
+    int addressing_mode, filter, alpha_mode;
+    float border_alpha;
+    Read(addressing_mode);
+    Read(filter);
+    Read(border_alpha);
+    Read(alpha_mode);
+    
+    int texcoord_format;
+    Read(texcoord_format);
+
+    size_t texcoord_size{};
+    Read(texcoord_size);
+    if (texcoord_size != 0) {
+      std::vector<uint8_t> texcoords(texcoord_size, 16);
+      assert(texcoord_size == fread(texcoords.data(), 1, texcoord_size, f));
+      printf("texcoords:");
+      for (uint8_t tc : texcoords) {
+        printf(" %d", int(tc));
+      }
+    }
+
+    assert(0 && "unimplemented");
+  }
+ 
+  int num_result_descs{};
+  Read(num_result_descs);
+  printf("%d result descs\n", num_result_descs);
+
+  for (int i = 0; i < num_result_descs; i++) {
+    uint32_t element_count{};
+    Read(element_count);
+    printf("%zu\n", ftell(f));
+    printf("OMM array: %u bytes\n", element_count);
+  }
+
+  fclose(f);
+#undef Read
+}
+
+int main(int argc, char** argv) {
+  if (argc > 1) {
+    printf("Will read OMM dump file.\n");
+    parseOMMBinaryFile(argv[1]);
+    return 0;
+  }
   g_app = new HelloTriangleApplication();
 
   try {

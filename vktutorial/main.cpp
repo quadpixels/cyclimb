@@ -65,7 +65,7 @@ std::vector<const char*> ommExtensions = {
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
 #else
-const bool enableValidationLayers = true;
+const bool enableValidationLayers = false;
 #endif
 
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
@@ -1654,18 +1654,22 @@ private:
 
     VkMicromapEXT omm{};
     VkAccelerationStructureTrianglesOpacityMicromapEXT ommBlasDesc{};
-    VkMicromapUsageEXT ommUsage{};
+    VkMicromapUsageEXT ommDescArrayUsage{};
     const omm::Cpu::BakeResultDesc* res_desc{};
+    VkMicromapUsageEXT ommIndexUsage{};
 
     // OMM
     if (g_use_omm) {
       res_desc = bakeOmmForMask();
 
+#if 1
       // OMM Buffers
       // 1. Triangle indices buffer
-      size_t size = res_desc->indexCount * sizeof(uint32_t);
+      size_t size{};
+      size = res_desc->indexCount * sizeof(uint32_t);
       createBuffer(size,
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         ommTriangleIndicesBuffer,
         ommTriangleIndicesMemory);
@@ -1678,7 +1682,8 @@ private:
       // 2. OMM array buffer
       size = res_desc->arrayDataSize;
       createBuffer(size,
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         ommArrayDataBuffer,
         ommArrayDataMemory);
@@ -1690,7 +1695,8 @@ private:
       // 3. OMM descriptor array buffer
       size = res_desc->descArrayCount * sizeof(VkMicromapTriangleEXT);
       createBuffer(size,
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         ommDescArrayBuffer,
         ommDescArrayMemory);
@@ -1699,7 +1705,155 @@ private:
       vkUnmapMemory(device, ommDescArrayMemory);
       printf("OMM descriptor array size: %u, addr=%p\n", size, (void*)getBufferDeviceAddress(ommDescArrayBuffer));
 
+      assert(res_desc->descArrayHistogramCount == 1);
+      omm::Cpu::OpacityMicromapUsageCount omuc0 = res_desc->descArrayHistogram[0];
+      ommDescArrayUsage.count = omuc0.count;
+      ommDescArrayUsage.format = omuc0.format;
+      ommDescArrayUsage.subdivisionLevel = omuc0.subdivisionLevel;
+
       // 4. OMM build info
+      VkMicromapBuildInfoEXT ommBuildInfo{};
+      ommBuildInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
+      ommBuildInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      ommBuildInfo.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+      ommBuildInfo.dstMicromap = NULL;
+      ommBuildInfo.usageCountsCount = res_desc->descArrayHistogramCount;
+      ommBuildInfo.pUsageCounts = &ommDescArrayUsage;
+      ommBuildInfo.data.deviceAddress = getBufferDeviceAddress(ommArrayDataBuffer);
+      ommBuildInfo.scratchData.deviceAddress = NULL;
+      ommBuildInfo.triangleArray.deviceAddress = getBufferDeviceAddress(ommDescArrayBuffer);
+      ommBuildInfo.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
+      PFN_vkGetMicromapBuildSizesEXT funcGetMicromapBuildSizes =
+        (PFN_vkGetMicromapBuildSizesEXT)vkGetInstanceProcAddr(
+          instance, "vkGetMicromapBuildSizesEXT");
+      VkMicromapBuildSizesInfoEXT ommBuildSizes{};
+      ommBuildSizes.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT;
+      funcGetMicromapBuildSizes(device,
+        VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &ommBuildInfo, &ommBuildSizes);
+
+      printf("OMM scratch size: %u, micromap size: %u\n",
+        ommBuildSizes.buildScratchSize, ommBuildSizes.micromapSize);
+
+      VkBuffer ommScratchBuffer{};
+      VkDeviceMemory ommScratchMemory{};
+
+      // 5. OMM buffer and scratch buffer
+      createBuffer(ommBuildSizes.micromapSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommBuffer,
+        ommMemory);
+      
+      ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
+      ommBlasDesc.pNext = nullptr;
+      ommBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
+      ommBlasDesc.indexBuffer.deviceAddress = getBufferDeviceAddress(ommTriangleIndicesBuffer);
+      ommBlasDesc.indexStride = sizeof(uint32_t);
+      ommBlasDesc.baseTriangle = 0;
+      ommBlasDesc.usageCountsCount = res_desc->indexHistogramCount;
+      omuc0 = res_desc->indexHistogram[0];
+      ommIndexUsage.count = omuc0.count;
+      ommIndexUsage.format = omuc0.format;
+      ommIndexUsage.subdivisionLevel = omuc0.subdivisionLevel;
+      ommBlasDesc.pUsageCounts = &ommIndexUsage;
+
+      VkMicromapCreateInfoEXT ommCreateInfo{};
+      ommCreateInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT;
+      ommCreateInfo.createFlags = 0;
+      ommCreateInfo.buffer = ommBuffer;
+      ommCreateInfo.offset = 0;
+      ommCreateInfo.size = ommBuildSizes.micromapSize;
+      ommCreateInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      ommCreateInfo.deviceAddress = 0;
+      auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(instance, "vkCreateMicromapEXT");
+      if (func_vkCreateMicromap(device, &ommCreateInfo, nullptr, &omm) != VK_SUCCESS) {
+        printf("Failed to create VkMicromap\n");
+      }
+
+      createBuffer(ommBuildSizes.buildScratchSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommScratchBuffer,
+        ommScratchMemory);
+
+      ommBuildInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
+      ommBuildInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      ommBuildInfo.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+      ommBuildInfo.dstMicromap = omm;
+      ommBuildInfo.data.deviceAddress = getBufferDeviceAddress(ommArrayDataBuffer);
+      ommBuildInfo.scratchData.deviceAddress = getBufferDeviceAddress(ommScratchBuffer);
+      ommBuildInfo.triangleArray.deviceAddress = getBufferDeviceAddress(ommDescArrayBuffer);
+      ommBuildInfo.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
+      ommBuildInfo.usageCountsCount = res_desc->descArrayHistogramCount;
+      ommBuildInfo.pUsageCounts = &ommDescArrayUsage;
+
+      VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+      PFN_vkCmdBuildMicromapsEXT funcCmdBuildMicromaps =
+        (PFN_vkCmdBuildMicromapsEXT)vkGetInstanceProcAddr(
+          instance, "vkCmdBuildMicromapsEXT");
+      funcCmdBuildMicromaps(commandBuffer, 1, &ommBuildInfo);
+
+      VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+      barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+      barrier.srcQueueFamilyIndex = (~0U);
+      barrier.dstQueueFamilyIndex = (~0U);
+      barrier.buffer = ommScratchBuffer;
+      barrier.offset = 0;
+      barrier.size = ommBuildSizes.buildScratchSize;
+      vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        0, 0, nullptr, 1, &barrier, 0, nullptr);
+      endSingleTimeCommands(commandBuffer);
+
+      ommBlasDesc.micromap = omm;
+      
+      triASData.pNext = &ommBlasDesc;
+
+      vkDestroyBuffer(device, ommScratchBuffer, nullptr);
+      vkFreeMemory(device, ommScratchMemory, nullptr);
+#else
+      // OMM Buffers
+      VkBufferCreateInfo createInfo{};
+      VkMemoryRequirements memReq{};
+      VkMemoryAllocateInfo allocInfo{};
+      VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+      void* data;
+
+      size_t size{};
+      // 1. Triangle indices buffer
+      size = res_desc->indexCount * sizeof(uint32_t);
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommTriangleIndicesBuffer,
+        ommTriangleIndicesMemory);
+      vkMapMemory(device, ommTriangleIndicesMemory, 0, size, 0, &data);
+      memcpy(data, res_desc->indexBuffer, size);
+      vkUnmapMemory(device, ommTriangleIndicesMemory);
+      printf("Triangle indices size: %u, addr=%p\n", size, (void*)getBufferDeviceAddress(ommTriangleIndicesBuffer));
+
+      // 2. Array buffer
+      size = res_desc->arrayDataSize;
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommArrayDataBuffer,
+        ommArrayDataMemory);
+      vkMapMemory(device, ommArrayDataMemory, 0, size, 0, &data);
+      memcpy(data, res_desc->arrayData, size);
+      vkUnmapMemory(device, ommArrayDataMemory);
+
+      // 3. Desc Array Buffer
+      size = res_desc->descArrayCount * sizeof(VkMicromapTriangleEXT);
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommDescArrayBuffer,
+        ommDescArrayMemory);
+      vkMapMemory(device, ommDescArrayMemory, 0, size, 0, &data);
+      memcpy(data, res_desc->descArray, size);
+      vkUnmapMemory(device, ommDescArrayMemory);
+
       VkMicromapBuildInfoEXT ommBuildInfo{};
       ommBuildInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
       ommBuildInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
@@ -1722,45 +1876,100 @@ private:
       printf("OMM scratch size: %u, micromap size: %u\n",
         ommBuildSizes.buildScratchSize, ommBuildSizes.micromapSize);
 
-      VkBuffer ommScratchBuffer{};
-      VkDeviceMemory ommScratchMemory{};
-
-      // 5. OMM buffer and scratch buffer
-      createBuffer(ommBuildSizes.buildScratchSize,
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        ommScratchBuffer,
-        ommScratchMemory);
-      createBuffer(ommBuildSizes.micromapSize,
+      // 4. OMM itself
+      size = ommBuildSizes.micromapSize;
+      createBuffer(size,
         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         ommBuffer,
         ommMemory);
 
+      createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+      createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+      createInfo.usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+      allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+      allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+      allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+      allocInfo.pNext = &allocFlagsInfo;
+      allocInfo.allocationSize = std::max(memReq.size, createInfo.size);
+
+      VkBufferDeviceAddressInfo addrInfo{};
+      addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+      addrInfo.buffer = ommTriangleIndicesBuffer;
+      addrInfo.pNext = nullptr;
+      VkDeviceAddress ommTriangleIndicesDeviceAddr = vkGetBufferDeviceAddress(device, &addrInfo);
+
+      ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
+      ommBlasDesc.pNext = nullptr;
+      ommBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
+      ommBlasDesc.indexBuffer.deviceAddress = getBufferDeviceAddress(ommTriangleIndicesBuffer);
+      ommBlasDesc.indexStride = sizeof(uint32_t);
+      ommBlasDesc.baseTriangle = 0;
+      ommBlasDesc.usageCountsCount = res_desc->indexHistogramCount;
+      assert(res_desc->indexHistogramCount == 1);
+      const omm::Cpu::OpacityMicromapUsageCount omuc0 = res_desc->indexHistogram[0];
+      VkMicromapUsageEXT ommUsage{};
+      ommUsage.count = omuc0.count;
+      ommUsage.format = omuc0.format;
+      ommUsage.subdivisionLevel = omuc0.subdivisionLevel;
+      ommBlasDesc.pUsageCounts = &ommUsage;
+
+      VkMicromapEXT omm{};
       VkMicromapCreateInfoEXT ommCreateInfo{};
       ommCreateInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT;
       ommCreateInfo.createFlags = 0;
       ommCreateInfo.buffer = ommBuffer;
       ommCreateInfo.offset = 0;
-      ommCreateInfo.size = ommBuildSizes.micromapSize;
+      ommCreateInfo.size = res_desc->arrayDataSize;
       ommCreateInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
       ommCreateInfo.deviceAddress = 0;
-      auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(instance, "vkCreateMicromapEXT");
+      auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(
+        instance, "vkCreateMicromapEXT");
       if (func_vkCreateMicromap(device, &ommCreateInfo, nullptr, &omm) != VK_SUCCESS) {
         printf("Failed to create VkMicromap\n");
       }
 
+      addrInfo.buffer = ommArrayDataBuffer;
+      addrInfo.pNext = nullptr;
+      VkDeviceAddress ommArrayDataAddr = vkGetBufferDeviceAddress(device, &addrInfo);
+
+      addrInfo.buffer = ommDescArrayBuffer;
+      VkDeviceAddress ommDescriptorAddr = vkGetBufferDeviceAddress(device, &addrInfo);
+
+      ommBuildInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
+      ommBuildInfo.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+      ommBuildInfo.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
       ommBuildInfo.dstMicromap = omm;
+      ommBuildInfo.usageCountsCount = res_desc->indexHistogramCount;
+      ommBuildInfo.pUsageCounts = &ommUsage;
+
+      ommBuildSizes.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT;
+      funcGetMicromapBuildSizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &ommBuildInfo, &ommBuildSizes);
+
+      printf("OMM scratch size: %u, micromap size: %u\n",
+        ommBuildSizes.buildScratchSize, ommBuildSizes.micromapSize);
+
+      // OMM scratch
+      size = ommBuildSizes.buildScratchSize;
+      VkBuffer ommScratchBuffer{};
+      VkDeviceMemory ommScratchMemory{};
+      createBuffer(size,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        ommScratchBuffer, ommScratchMemory);
+
       ommBuildInfo.data.deviceAddress = getBufferDeviceAddress(ommArrayDataBuffer);
       ommBuildInfo.scratchData.deviceAddress = getBufferDeviceAddress(ommScratchBuffer);
       ommBuildInfo.triangleArray.deviceAddress = getBufferDeviceAddress(ommDescArrayBuffer);
+      ommBuildInfo.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
 
       VkCommandBuffer commandBuffer = beginSingleTimeCommands();
       PFN_vkCmdBuildMicromapsEXT funcCmdBuildMicromaps =
-        (PFN_vkCmdBuildMicromapsEXT)vkGetInstanceProcAddr(
-          instance, "vkCmdBuildMicromapsEXT");
+      (PFN_vkCmdBuildMicromapsEXT)vkGetInstanceProcAddr(
+        instance, "vkCmdBuildMicromapsEXT");
       funcCmdBuildMicromaps(commandBuffer, 1, &ommBuildInfo);
-
       VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
       barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
       barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
@@ -1773,21 +1982,10 @@ private:
         0, 0, nullptr, 1, &barrier, 0, nullptr);
       endSingleTimeCommands(commandBuffer);
 
-
-      // 6. AS Triangles OMM
-      ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
-      ommBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
-      ommBlasDesc.indexBuffer.deviceAddress = getBufferDeviceAddress(ommTriangleIndicesBuffer);
-      ommBlasDesc.indexStride = sizeof(uint32_t);
-      ommBlasDesc.baseTriangle = 0;
-      ommBlasDesc.usageCountsCount = res_desc->indexHistogramCount;
-      ommBlasDesc.pUsageCounts = (VkMicromapUsageEXT*)(res_desc->indexHistogram);
       ommBlasDesc.micromap = omm;
-      
-      triASData.pNext = &ommBlasDesc;
 
-      vkDestroyBuffer(device, ommScratchBuffer, nullptr);
-      vkFreeMemory(device, ommScratchMemory, nullptr);
+      triASData.pNext = &ommBlasDesc;
+#endif
     }
 
     VkAccelerationStructureBuildSizesInfoKHR buildSizeInfo{};

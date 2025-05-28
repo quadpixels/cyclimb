@@ -7,13 +7,14 @@
 layout(location=0) rayPayloadInEXT hitPayload prd;
 hitAttributeEXT vec2 attribs;
 
-layout(binding=2) uniform sampler2D texSampler;
+layout(set=1, binding=0) uniform sampler2D texSampler[128];
 layout(binding=3) uniform sampler2D texSampler1;
 
 struct Vertex {
 	vec3 pos;
 	vec3 color;
 	vec2 uv;
+	int mat_index;
 };
 layout(std430, binding=4) readonly buffer VertexBuf {
 	Vertex vertices[];
@@ -29,5 +30,5 @@ void main() {
   const vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
   const vec2 uv = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z;
 
-  prd.hitValue = texture(texSampler, uv).xyz;
+  prd.hitValue = texture(texSampler[0], uv).xyz;
 }

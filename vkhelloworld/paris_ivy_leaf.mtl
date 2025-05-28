@@ -2,5 +2,5 @@ newmtl mtl0
   Ka 1.000 1.000 1.000
   Kd 1.000 1.000 1.000
   Ks 0.000 0.000 0.000
-  map_Kd PropTextures/Natural/Paris_Ivy_01a/Paris_ivy_leaf_a_diff.png
-  map_d  PropTextures/Natural/Paris_Ivy_01a/Paris_ivy_leaf_a_mask.png
+  map_Kd textures/Paris_ivy_leaf_a_diff.png
+  map_d  textures/Paris_ivy_leaf_a_mask.png
