@@ -1,0 +1,2 @@
+bunny.bin filter=lfs diff=lfs merge=lfs -text
+bunny.gltf filter=lfs diff=lfs merge=lfs -text

@@ -1,18 +1,19 @@
 #version 450
 
 layout(location=0) in vec3 pos;
-layout(location=1) in vec3 normal;
 layout(location=0) out vec3 fragColor;
 
-layout(std430) struct Vertex {
-	vec3 pos;
-	vec3 normal;
+layout(binding=0) readonly buffer NormalsBuf {
+	vec3 normals[];
 };
-layout(binding=0) readonly buffer VertexBuf {
-	Vertex vertices[];
+
+layout(binding=1) uniform PerSceneData {
+	mat4 M;
+	mat4 V;
+	mat4 P;
 };
 
 void main() {
-    gl_Position = vec4(pos, 1);
+    gl_Position = P * (V * (M * vec4(pos, 1)));
     fragColor = vec3(0.5, 0.5, 0.5);
 }
