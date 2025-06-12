@@ -39,6 +39,8 @@ HelloClasApplication* g_app{};
 GLFWwindow* window{};
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 bool g_is_rt{ false };
+bool g_is_cluster{ false };  // applies to both rast and rt
+constexpr bool UseIndirect = true;  // TODO: Fix normals
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 std::vector<const char*> validationLayers = {
@@ -50,6 +52,10 @@ const bool enableValidationLayers = false;
 const bool enableValidationLayers = true;
 #endif
 const uint32_t MAX_FRAMES_IN_FLIGHT = 3;
+
+static uint32_t AlignUp(uint32_t x, uint32_t align) {
+  return align * ((x - 1) / align + 1);
+}
 
 struct PerSceneUniformBuffer {
   glm::mat4 M, V, P;
@@ -83,14 +89,29 @@ std::vector<const char*> deviceExtensions = {
   VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
 
   VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+  VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME
+};
+
+struct MyIndirectClusterDraw {
+  VkDrawIndexedIndirectCommand command;
 };
 
 void SetWindowTitle() {
   if (!g_is_rt) {
-    glfwSetWindowTitle(window, "Vulkan CLAS (rast)");
+    if (!g_is_cluster) {
+      glfwSetWindowTitle(window, "Vulkan CLAS (rast)");
+    }
+    else {
+      glfwSetWindowTitle(window, "Vulkan CLAS (rast, cluster)");
+    }
   }
   else {
-    glfwSetWindowTitle(window, "Vulkan CLAS (RT)");
+    if (!g_is_cluster) {
+      glfwSetWindowTitle(window, "Vulkan CLAS (RT)");
+    }
+    else {
+      glfwSetWindowTitle(window, "Vulkan CLAS (RT, cluster)");
+    }
   }
 }
 
@@ -243,12 +264,15 @@ private:
     createUniformBuffer();
 
     readGLTF();
+    readClusters();
     createVertexIndexNormalBuffer();
     createAS();
 
     createDescriptorSetLayout();
     createDescriptorPool();
     createDescriptorSets();
+
+    createRtDescriptorSetLayout();
 
     createGraphicsPipeline();
     createFramebuffers();
@@ -264,6 +288,40 @@ private:
   }
 
   void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+    // Update descriptor set for indirect/not indirect
+    {
+      VkDescriptorBufferInfo dbi[2]{};
+      if (g_is_cluster) {
+        dbi[0].buffer = clusterNormalsBufferForIndirect;
+        dbi[0].offset = 0;
+        dbi[0].range = sizeof(glm::vec3) * cluster_normals.size();
+      }
+      else {
+        dbi[0].buffer = normalBuffer;
+        dbi[0].offset = 0;
+        dbi[0].range = sizeof(glm::vec3) * normals.size();
+      }
+
+      // For non-cluster, only the first entry, 0, will be used, so it's still correct
+      dbi[1].buffer = clusterNormalsOffsetBufferForIndirect;
+      dbi[1].offset = 0;
+      dbi[1].range = sizeof(uint32_t) * vertex_and_indices.size();
+
+      VkWriteDescriptorSet writeDesc[2]{};
+      writeDesc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writeDesc[0].dstSet = descriptorSets[0];
+      writeDesc[0].dstBinding = 0;
+      writeDesc[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      writeDesc[0].descriptorCount = 1;
+      writeDesc[0].pBufferInfo = &(dbi[0]);
+      writeDesc[1] = writeDesc[0];
+      writeDesc[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      writeDesc[1].dstBinding = 2;
+      writeDesc[1].pBufferInfo = &(dbi[1]);
+
+      vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
+    }
+
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = 0;
@@ -304,9 +362,31 @@ private:
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
     VkDeviceSize zero{ 0 };
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &zero);
-    vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdDrawIndexed(commandBuffer, indices.size(), 1, 0, 0, 0);
+    if (!g_is_cluster) {
+      vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &zero);
+      vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+      vkCmdDrawIndexed(commandBuffer, indices.size(), 1, 0, 0, 0);
+    }
+    else {
+      if (!UseIndirect) {
+        for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+          vkCmdBindVertexBuffers(commandBuffer, 0, 1, &(clusterVertexBuffers[i]), &zero);
+          vkCmdBindIndexBuffer(commandBuffer, clusterIndexBuffers[i], 0, VK_INDEX_TYPE_UINT32);
+          vkCmdDrawIndexed(commandBuffer, vertex_and_indices[i].indices.size(), 1, 0, 0, 0);
+        }
+      }
+      else {
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &clusterVertexBufferForIndirect, &zero);
+        vkCmdBindIndexBuffer(commandBuffer, clusterIndexBufferForIndirect, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexedIndirect(
+          commandBuffer,
+          clusterIndirectCommandBuffer,
+          0,
+          vertex_and_indices.size(),
+          sizeof(MyIndirectClusterDraw)
+        );
+      }
+    }
 
     vkCmdEndRenderPass(commandBuffer);
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
@@ -815,7 +895,7 @@ private:
   }
 
   void createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[2]{};
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[3]{};
 
     descriptorSetLayoutBindings[0].binding = 0;  // Normals
     descriptorSetLayoutBindings[0].descriptorCount = 1;
@@ -828,6 +908,12 @@ private:
     descriptorSetLayoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     descriptorSetLayoutBindings[1].pImmutableSamplers = nullptr;
     descriptorSetLayoutBindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    descriptorSetLayoutBindings[2].binding = 2;  // Normal offsets
+    descriptorSetLayoutBindings[2].descriptorCount = 1;
+    descriptorSetLayoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorSetLayoutBindings[2].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
     descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -926,6 +1012,269 @@ private:
 
     // 34817, 208890
     printf("%zu verts and %zu indices loaded.\n", vertices.size(), indices.size());
+  }
+
+  struct VertexAndIndex {
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+  };
+
+  bool readOBJ(const std::string& fn, VertexAndIndex& out) {
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+    bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, fn.c_str(), ".");
+    if (!err.empty()) {
+      printf("TinyObj error: %s\n", err.c_str());
+    }
+    if (!ret) {
+      return false;
+    }
+    printf("File %s has %zu verts and %zu shapes\n",
+      fn.c_str(), attrib.vertices.size(), shapes.size());
+    for (unsigned i = 0; i < attrib.vertices.size(); i += 3) {
+      glm::vec3 v{};
+      v.x = attrib.vertices.at(i);
+      v.y = attrib.vertices.at(i + 1);
+      v.z = attrib.vertices.at(i + 2);
+      out.vertices.push_back(v);
+    }
+    for (unsigned i = 0; i < shapes.size(); i++) {
+      for (uint32_t fidx = 0; fidx < shapes[i].mesh.indices.size() / 3; fidx++) {
+        tinyobj::index_t i0 = shapes[i].mesh.indices[fidx * 3];
+        tinyobj::index_t i1 = shapes[i].mesh.indices[fidx * 3 + 1];
+        tinyobj::index_t i2 = shapes[i].mesh.indices[fidx * 3 + 2];
+        out.indices.push_back(i0.vertex_index);
+        out.indices.push_back(i1.vertex_index);
+        out.indices.push_back(i2.vertex_index);
+
+        // Calculate normals (per face), accumulated, process in readClusters()
+        glm::vec3 p0 = out.vertices.at(i0.vertex_index);
+        glm::vec3 p1 = out.vertices.at(i1.vertex_index);
+        glm::vec3 p2 = out.vertices.at(i2.vertex_index);
+        glm::vec3 n = glm::normalize(glm::cross(p1 - p0, p2 - p0));
+        cluster_normals.push_back(n);
+      }
+    }
+    return true;
+  }
+
+  void readClusters() {
+    std::filesystem::path directoryPath = "cluster_dump";
+    uint32_t count = 0;
+    const int READ_LIMIT = 10000;
+    if (std::filesystem::exists(directoryPath) &&
+      std::filesystem::is_directory(directoryPath)) {
+      for (const auto& entry : std::filesystem::directory_iterator(directoryPath)) {
+        std::cout << entry.path() << std::endl;
+        VertexAndIndex vi;
+        readOBJ(entry.path().string(), vi);
+        vertex_and_indices.push_back(vi);
+        count++;
+        if (count >= READ_LIMIT) break;
+      }
+    }
+    else {
+      std::cerr << "Error: Directory does not exist or is not a directory." << std::endl;
+    }
+    printf("%u cluster files found.\n", count);
+
+    // Allocate memory
+    VkBufferCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    createInfo.size = sizeof(glm::vec3) * 64;
+    createInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+      | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+      | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer tempVertexBuffer;
+    if (vkCreateBuffer(device, &createInfo, nullptr, &tempVertexBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create vertex buffer");
+    }
+
+    VkMemoryRequirements memReq{};
+    vkGetBufferMemoryRequirements(device, tempVertexBuffer, &memReq);
+    uint32_t vb_alignment = memReq.alignment;
+    printf("Alignment: %u\n", vb_alignment);
+    vkDestroyBuffer(device, tempVertexBuffer, nullptr);
+
+    size_t total_size = 0;
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      total_size += vi.vertices.size() * sizeof(glm::vec3);
+      total_size = AlignUp(total_size, vb_alignment);
+      total_size += vi.indices.size() * sizeof(uint32_t);
+      total_size = AlignUp(total_size, vb_alignment);
+    }
+    printf("VB + IB buffer size: %u\n", total_size);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = total_size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    allocInfo.pNext = &allocFlagsInfo;
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &clusterVertexAndIndexMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for cluster vertex and index");
+    }
+
+    size_t offset = 0;
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      createInfo.size = sizeof(glm::vec3) * vi.vertices.size();
+      createInfo.usage &= (~VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      createInfo.usage |= (VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      VkBuffer clusterVertexBuffer;
+      if (vkCreateBuffer(device, &createInfo, nullptr, &clusterVertexBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("Could not create vertex buffer");
+      }
+      vkBindBufferMemory(device, clusterVertexBuffer, clusterVertexAndIndexMemory, offset);
+      clusterVertexBuffers.push_back(clusterVertexBuffer);
+
+      offset += vi.vertices.size() * sizeof(glm::vec3);
+      offset = AlignUp(offset, vb_alignment);
+
+      VkBuffer clusterIndexBuffer;
+      createInfo.size = sizeof(uint32_t) * vi.indices.size();
+      createInfo.usage &= (~VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+      createInfo.usage |= (VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+      if (vkCreateBuffer(device, &createInfo, nullptr, &clusterIndexBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("Could not create index buffer");
+      }
+      vkBindBufferMemory(device, clusterIndexBuffer, clusterVertexAndIndexMemory, offset);
+      clusterIndexBuffers.push_back(clusterIndexBuffer);
+
+      offset += vi.indices.size() * sizeof(uint32_t);
+      offset = AlignUp(offset, vb_alignment);
+    }
+
+    // Not using indirect
+    offset = 0;
+    void* data;
+    vkMapMemory(device, clusterVertexAndIndexMemory, 0, createInfo.size, 0, &data);
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      memcpy(((uint8_t*)data) + offset, vi.vertices.data(), sizeof(glm::vec3) * vi.vertices.size());
+      offset += vi.vertices.size() * sizeof(glm::vec3);
+      offset = AlignUp(offset, vb_alignment);
+      memcpy(((uint8_t*)data) + offset, vi.indices.data(), sizeof(uint32_t)* vi.indices.size());
+      offset += vi.indices.size() * sizeof(uint32_t);
+      offset = AlignUp(offset, vb_alignment);
+    }
+    vkUnmapMemory(device, clusterVertexAndIndexMemory);
+
+    // Using indirect
+    offset = 0;
+    uint32_t tot_vertex_count = 0, tot_index_count = 0;
+    uint32_t tot_index_offset = 0;
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      offset += sizeof(glm::vec3) * vi.vertices.size();
+      tot_vertex_count += vi.vertices.size();
+    }
+    offset = AlignUp(offset, vb_alignment);
+    tot_index_offset = offset;
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      offset += sizeof(uint32_t) * vi.indices.size();
+      tot_index_count += vi.indices.size();
+    }
+    offset = AlignUp(offset, vb_alignment);
+    allocInfo.allocationSize = offset;
+    printf("VB + IB Buffer for indirect size: %u\n", offset);
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &clusterVertexAndIndexMemoryForIndirect) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for cluster vertex and index for indirect");
+    }
+    createInfo.size = sizeof(glm::vec3) * tot_vertex_count;
+    createInfo.usage &= (~VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    createInfo.usage |= (VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    if (vkCreateBuffer(device, &createInfo, nullptr, &clusterVertexBufferForIndirect) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create vertex buffer for indirect");
+    }
+    vkBindBufferMemory(device, clusterVertexBufferForIndirect, clusterVertexAndIndexMemoryForIndirect, 0);
+    createInfo.size = sizeof(uint32_t) * tot_index_count;
+    createInfo.usage &= (~VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    createInfo.usage |= (VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    if (vkCreateBuffer(device, &createInfo, nullptr, &clusterIndexBufferForIndirect) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create index buffer for indirect");
+    }
+    vkBindBufferMemory(device, clusterIndexBufferForIndirect, clusterVertexAndIndexMemoryForIndirect, tot_index_offset);
+    vkMapMemory(device, clusterVertexAndIndexMemoryForIndirect, 0, allocInfo.allocationSize, 0, &data);
+    offset = 0;
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      memcpy(((uint8_t*)data) + offset, vi.vertices.data(), sizeof(glm::vec3)* vi.vertices.size());
+      offset += sizeof(glm::vec3) * vi.vertices.size();
+    }
+    offset = tot_index_offset;
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      memcpy(((uint8_t*)data) + offset, vi.indices.data(), sizeof(uint32_t) * vi.indices.size());
+      offset += sizeof(uint32_t) * vi.indices.size();
+    }
+    vkUnmapMemory(device, clusterVertexAndIndexMemoryForIndirect);
+
+    // Indirect Cmds and normal offsets
+    std::vector<uint32_t> normal_offsets;
+    uint32_t tri_count = 0;
+    uint32_t index_offset = 0;
+    uint32_t vertex_offset = 0;
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      MyIndirectClusterDraw draw{};
+      draw.command.firstIndex = index_offset;
+      draw.command.firstInstance = i;  // Use as cluster ID
+      draw.command.indexCount = vi.indices.size();
+      draw.command.instanceCount = 1;
+      draw.command.vertexOffset = vertex_offset;  // Vertex idx is local to cluster so we need set it here
+      normal_offsets.push_back(tri_count);
+      tri_count += vi.indices.size() / 3;
+      index_offset += vi.indices.size();
+      vertex_offset += vi.vertices.size();
+      clusterIndirectCommands.push_back(draw);
+    }
+    size_t indirectCmdsSize = sizeof(MyIndirectClusterDraw) * clusterIndirectCommands.size();
+    createBuffer(
+      indirectCmdsSize,
+      VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      clusterIndirectCommandBuffer, clusterIndirectCommandMemory);
+    vkMapMemory(device, clusterIndirectCommandMemory, 0, indirectCmdsSize, 0, &data);
+    memcpy(data, clusterIndirectCommands.data(), indirectCmdsSize);
+    vkUnmapMemory(device, clusterIndirectCommandMemory);
+
+    // Indirect normals
+    size_t normalsSize = sizeof(glm::vec3) * cluster_normals.size();
+    createBuffer(
+      normalsSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      clusterNormalsBufferForIndirect, clusterNormalsMemoryForIndirect);
+    vkMapMemory(device, clusterNormalsMemoryForIndirect, 0, normalsSize, 0, &data);
+    memcpy(data, cluster_normals.data(), normalsSize);
+    vkUnmapMemory(device, clusterNormalsMemoryForIndirect);
+
+    // Indirect normal offsets
+    size_t normalOffsetsSize = sizeof(uint32_t) * vertex_and_indices.size();
+    createBuffer(
+      normalOffsetsSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      clusterNormalsOffsetBufferForIndirect, clusterNormalsOffsetMemoryForIndirect);
+    vkMapMemory(device, clusterNormalsOffsetMemoryForIndirect, 0, normalOffsetsSize, 0, &data);
+    memcpy(data, normal_offsets.data(), normalOffsetsSize);
+    vkUnmapMemory(device, clusterNormalsOffsetMemoryForIndirect);
   }
 
   void createSwapChain() {
@@ -1427,7 +1776,7 @@ private:
   void createDescriptorPool() {
     VkDescriptorPoolSize poolSizes[1]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = 2;
+    poolSizes[0].descriptorCount = 3;
     VkDescriptorPoolCreateInfo poolInfo{};
 
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1662,6 +2011,10 @@ private:
     }
   }
 
+  void createRtDescriptorSetLayout() {
+
+  }
+
   void createAS() {
 
   }
@@ -1707,6 +2060,26 @@ private:
   VkImage rtOutputImages[MAX_FRAMES_IN_FLIGHT];
   VkDeviceMemory rtOutputImageMemories[MAX_FRAMES_IN_FLIGHT];
   VkImageView rtOutputImageViews[MAX_FRAMES_IN_FLIGHT];
+
+  std::vector<VertexAndIndex> vertex_and_indices;
+
+  // Not using indirect
+  std::vector<VkBuffer> clusterVertexBuffers;
+  std::vector<VkBuffer> clusterIndexBuffers;
+  VkDeviceMemory clusterVertexAndIndexMemory;
+  // Using indirect
+  VkBuffer clusterVertexBufferForIndirect;
+  VkBuffer clusterIndexBufferForIndirect;
+  VkDeviceMemory clusterVertexAndIndexMemoryForIndirect;
+
+  std::vector<glm::vec3> cluster_normals;  // Used with vkCmdDrawIndexedIndirect
+  std::vector<MyIndirectClusterDraw> clusterIndirectCommands;
+  VkBuffer clusterIndirectCommandBuffer;
+  VkDeviceMemory clusterIndirectCommandMemory;
+  VkBuffer clusterNormalsBufferForIndirect;
+  VkDeviceMemory clusterNormalsMemoryForIndirect;
+  VkBuffer clusterNormalsOffsetBufferForIndirect;
+  VkDeviceMemory clusterNormalsOffsetMemoryForIndirect;
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -1718,6 +2091,11 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     }
     case GLFW_KEY_SPACE: {
       g_is_rt = !g_is_rt;
+      SetWindowTitle();
+      break;
+    }
+    case GLFW_KEY_C: {
+      g_is_cluster = !g_is_cluster;
       SetWindowTitle();
       break;
     }
