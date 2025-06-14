@@ -4,7 +4,7 @@
 
 #include "raycommon.glsl"
 
-//layout(binding=0) uniform accelerationStructureEXT TLAS;
+layout(binding=0) uniform accelerationStructureEXT TLAS;
 layout(binding=1, rgba32f) uniform image2D image;
 
 layout(location=0) rayPayloadEXT hitPayload payload;
@@ -21,7 +21,7 @@ void main() {
 
   payload.hitValue = vec3(1.0, 1.0, 0.0);
 
-  /*traceRayEXT(TLAS,
+  traceRayEXT(TLAS,
               rayFlags,
               0xFF,
               0,
@@ -32,7 +32,7 @@ void main() {
               dir,
               tMax,
               0
-  );*/
+  );
 
   imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(payload.hitValue, 1.0));
 }
