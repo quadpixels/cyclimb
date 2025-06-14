@@ -34,11 +34,19 @@
     <CustomBuild Include="shaders\shader.vert">
       <Filter>Resource Files</Filter>
     </CustomBuild>
-    <CustomBuild Include="shaders\raytrace.rchit" />
-    <CustomBuild Include="shaders\raytrace.rgen" />
-    <CustomBuild Include="shaders\raytrace.rmiss" />
+    <CustomBuild Include="shaders\raytrace.rchit">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="shaders\raytrace.rgen">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
+    <CustomBuild Include="shaders\raytrace.rmiss">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <None Include="shaders\raycommon.glsl" />
+    <None Include="shaders\raycommon.glsl">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

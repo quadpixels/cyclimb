@@ -258,7 +258,6 @@ private:
 
     createSwapChain();
     createImageViews();
-    createRtOutputImages();
     createRenderPass();
     createDepthResources();
     createUniformBuffer();
@@ -272,9 +271,15 @@ private:
     createDescriptorPool();
     createDescriptorSets();
 
+    createRtOutputImages();
     createRtDescriptorSetLayout();
+    createRtDescriptorPool();
+    createRtDescriptorSets();
 
     createGraphicsPipeline();
+    createRtPipeline();
+    createRtSBT();
+
     createFramebuffers();
     createSyncObjects();
   }
@@ -395,6 +400,23 @@ private:
   }
 
   void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+    // Update descriptor
+    {
+      VkWriteDescriptorSet writes[1]{};
+      writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[0].descriptorCount = 1;
+      writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+      writes[0].dstArrayElement = 0;
+      writes[0].dstBinding = 1;
+      writes[0].dstSet = rtDescriptorSet;
+      VkDescriptorImageInfo ii{};
+      ii.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+      ii.imageView = rtOutputImageViews[imageIndex];
+      ii.sampler = VK_NULL_HANDLE;
+      writes[0].pImageInfo = &ii;
+      vkUpdateDescriptorSets(device, _countof(writes), writes, 0, nullptr);
+    }
+
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = 0;
@@ -402,6 +424,20 @@ private:
     if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
       throw std::runtime_error("Failed to begin command buffer");
     }
+
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipelineLayout, 0,
+      1, &rtDescriptorSet, 0, nullptr);
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipeline);
+    PFN_vkCmdTraceRaysKHR funcCmdTraceRaysKHR =
+      (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(
+        instance, "vkCmdTraceRaysKHR");
+    funcCmdTraceRaysKHR(commandBuffer,
+      &rtRGenRegion,
+      &rtMissRegion,
+      &rtHitRegion,
+      &rtCallRegion,
+      WIDTH, HEIGHT, 1);
 
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1063,7 +1099,11 @@ private:
   void readClusters() {
     std::filesystem::path directoryPath = "cluster_dump";
     uint32_t count = 0;
+#ifdef NDEBUG
     const int READ_LIMIT = 10000;
+#else
+    const int READ_LIMIT = 100;
+#endif
     if (std::filesystem::exists(directoryPath) &&
       std::filesystem::is_directory(directoryPath)) {
       for (const auto& entry : std::filesystem::directory_iterator(directoryPath)) {
@@ -2008,11 +2048,134 @@ private:
         rtOutputImageMemories[i]);
       rtOutputImageViews[i] = createImageView(rtOutputImages[i],
         VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT);
+      transitionImageLayout(rtOutputImages[i], VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_GENERAL);
     }
   }
 
   void createRtDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[1]{};
+    descriptorSetLayoutBindings[0].binding = 1;
+    descriptorSetLayoutBindings[0].descriptorCount = 1;
+    descriptorSetLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    descriptorSetLayoutBindings[0].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[0].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo{};
+    descriptorSetLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptorSetLayoutCreateInfo.bindingCount = _countof(descriptorSetLayoutBindings);
+    descriptorSetLayoutCreateInfo.pBindings = descriptorSetLayoutBindings;
+    if (vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, nullptr, &rtDescriptorSetLayout) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create RT descriptor set layout");
+    }
+  }
+
+  void createRtDescriptorPool() {
+    VkDescriptorPoolSize poolSizes[1]{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    VkDescriptorPoolCreateInfo poolCreateInfo{};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCreateInfo.poolSizeCount = _countof(poolSizes);
+    poolCreateInfo.pPoolSizes = poolSizes;
+    poolCreateInfo.maxSets = 1;
+    poolCreateInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    if (vkCreateDescriptorPool(device, &poolCreateInfo, nullptr, &rtDescriptorPool) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create RT descriptor pool");
+    }
+  }
+
+  void createRtDescriptorSets() {
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = rtDescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &rtDescriptorSetLayout;
+    if (vkAllocateDescriptorSets(device, &allocInfo, &rtDescriptorSet) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate rt descriptor set");
+    }
+  }
+
+  void createRtPipeline() {
+    VkPipelineLayoutCreateInfo rtPipelineLayoutCreateInfo{};
+    rtPipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    rtPipelineLayoutCreateInfo.setLayoutCount = 1;
+    rtPipelineLayoutCreateInfo.pSetLayouts = &rtDescriptorSetLayout;
+    if (vkCreatePipelineLayout(device, &rtPipelineLayoutCreateInfo, nullptr, &rtPipelineLayout) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create rt pipeline layout");
+    }
+
+    VkPipelineShaderStageCreateInfo stages[1]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].pName = "main";  // entry point name
+    VkShaderModule raygenShaderModule = createShaderModule(readFile("shaders/rgen.spv"));
+    stages[0].module = raygenShaderModule;
+    stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    
+    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[1]{};
+    shaderGroupInfos[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shaderGroupInfos[0].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[0].closestHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[0].generalShader = 0;  // RGen
+    shaderGroupInfos[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    
+    VkRayTracingPipelineCreateInfoKHR rtPipelineCreateInfo{};
+    rtPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+    rtPipelineCreateInfo.flags = 0;
+    rtPipelineCreateInfo.stageCount = _countof(stages);
+    rtPipelineCreateInfo.pStages = stages;
+    rtPipelineCreateInfo.groupCount = _countof(shaderGroupInfos);
+    rtPipelineCreateInfo.pGroups = shaderGroupInfos;
+    rtPipelineCreateInfo.maxPipelineRayRecursionDepth = 1;
+    rtPipelineCreateInfo.layout = rtPipelineLayout;
+
+    PFN_vkCreateRayTracingPipelinesKHR funcCreateRayTracingPipelines =
+      (PFN_vkCreateRayTracingPipelinesKHR)vkGetInstanceProcAddr(
+        instance, "vkCreateRayTracingPipelinesKHR");
+    assert(funcCreateRayTracingPipelines);
+    if (funcCreateRayTracingPipelines(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtPipelineCreateInfo, nullptr, &rtPipeline) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create RT pipeline");
+    }
+
+    vkDestroyShaderModule(device, raygenShaderModule, nullptr);
+  }
+
+  void createRtSBT() {
+    const size_t sbtSize = 32;
+    const size_t sbtAlignment = 64;
+    const size_t numSBTs = 1;  // Only raygen
+
+    createBuffer(
+      sbtAlignment * numSBTs,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
+      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      sbtBuffer, sbtMemory);
+
+    VkBufferDeviceAddressInfo sbtDevAddrInfo{};
+    sbtDevAddrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    sbtDevAddrInfo.buffer = sbtBuffer;
+    VkDeviceAddress sbtDeviceAddress = vkGetBufferDeviceAddress(device, &sbtDevAddrInfo);
+
+    char shaderGroupHandle[sbtSize * numSBTs]{};
+    PFN_vkGetRayTracingShaderGroupHandlesKHR funcGetRayTracingShaderGroupHandlesKHR =
+      (PFN_vkGetRayTracingShaderGroupHandlesKHR)vkGetInstanceProcAddr(
+        instance, "vkGetRayTracingShaderGroupHandlesKHR");
+    if (funcGetRayTracingShaderGroupHandlesKHR(device, rtPipeline, 0, numSBTs, sbtSize * numSBTs, shaderGroupHandle) != VK_SUCCESS) {
+      throw std::runtime_error("Could not get RT shader group handles");
+    }
+
+    uint8_t* mapped{};
+    vkMapMemory(device, sbtMemory, 0, sbtSize * numSBTs, 0, (void**)&mapped);
+    memcpy(mapped, shaderGroupHandle, sbtSize);  // rgen
+    vkUnmapMemory(device, sbtMemory);
+
+    rtRGenRegion.deviceAddress = sbtDeviceAddress;
+    rtRGenRegion.size = sbtSize;
+    rtRGenRegion.stride = sbtSize;
   }
 
   void createAS() {
@@ -2080,6 +2243,16 @@ private:
   VkDeviceMemory clusterNormalsMemoryForIndirect;
   VkBuffer clusterNormalsOffsetBufferForIndirect;
   VkDeviceMemory clusterNormalsOffsetMemoryForIndirect;
+
+  // RT
+  VkDescriptorSetLayout rtDescriptorSetLayout;
+  VkDescriptorPool rtDescriptorPool;
+  VkDescriptorSet rtDescriptorSet;
+  VkPipelineLayout rtPipelineLayout;
+  VkPipeline rtPipeline;
+  VkBuffer sbtBuffer;
+  VkDeviceMemory sbtMemory;
+  VkStridedDeviceAddressRegionKHR rtRGenRegion{}, rtMissRegion{}, rtHitRegion{}, rtCallRegion{};
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
