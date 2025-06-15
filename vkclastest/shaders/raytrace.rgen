@@ -1,25 +1,46 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
 #extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_debug_printf : enable
 
 #include "raycommon.glsl"
 
 layout(binding=0) uniform accelerationStructureEXT TLAS;
 layout(binding=1, rgba32f) uniform image2D image;
+layout(binding=2) uniform RtPerSceneData {
+    mat4 InverseView;
+    mat4 InverseProj;
+};
 
 layout(location=0) rayPayloadEXT hitPayload payload;
 
+vec3 transformPosition(mat4 m, vec3 x) {
+  return vec3(m * vec4(x, 1.0));
+}
+
+vec3 transformDirection(mat4 m, vec3 x) {
+  return mat3(m) * x;
+}
+
 void main() {
   const vec2 uv = (vec2(gl_LaunchIDEXT.xy) + vec2(0.5)) / vec2(gl_LaunchSizeEXT.xy);
-  vec3 origin;
-  origin.xy = vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
-  origin.z  = -1;
-  vec3 dir = vec3(0, 0, 1);
+
+  if (gl_LaunchIDEXT.xy == ivec2(0, 0)) {
+    debugPrintfEXT("Hey");
+  }
+
+  vec3 origin = transformPosition(InverseView, vec3(0, 0, 0));
+  vec3 d;
+  d.xy = vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+  d.z  = 1;
+  vec3 target = transformPosition(InverseProj, d);
+  vec3 dir = transformDirection(InverseView, normalize(target));
+
   uint rayFlags = gl_RayFlagsNoneEXT;
   float tMin = 0.01f;
   float tMax = 10000.0f;
 
-  payload.hitValue = vec3(1.0, 1.0, 0.0);
+  payload.hitValue = vec3(0.5, 0.5, 0.5);
 
   traceRayEXT(TLAS,
               rayFlags,

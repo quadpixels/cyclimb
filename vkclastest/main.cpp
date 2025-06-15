@@ -63,6 +63,10 @@ struct PerSceneUniformBuffer {
   glm::mat4 M, V, P;
 };
 
+struct RtPerSceneUniformBuffer {
+  glm::mat4 inv_view, inv_proj;
+};
+
 struct QueueFamilyIndices {
   std::optional<uint32_t> graphicsFamily;
   std::optional<uint32_t> presentFamily;
@@ -272,6 +276,7 @@ private:
     createDescriptorPool();
     createDescriptorSets();
 
+    createRtUniformBuffer();
     createRtOutputImages();
     createRtDescriptorSetLayout();
     createRtDescriptorPool();
@@ -413,7 +418,7 @@ private:
   void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     // Update descriptor
     {
-      VkWriteDescriptorSet writes[1]{};
+      VkWriteDescriptorSet writes[3]{};
       writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[0].descriptorCount = 1;
       writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -425,6 +430,30 @@ private:
       ii.imageView = rtOutputImageViews[imageIndex];
       ii.sampler = VK_NULL_HANDLE;
       writes[0].pImageInfo = &ii;
+
+      VkDescriptorBufferInfo bi[2]{};
+
+      if (!g_is_cluster) {
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[1].dstBinding = 3;
+        writes[1].dstSet = rtDescriptorSet;
+        bi[0].buffer = vertexBuffer;
+        bi[0].offset = 0;
+        bi[0].range = sizeof(glm::vec3) * g_vertex_count;
+        writes[1].pBufferInfo = &(bi[0]);
+
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[2].dstBinding = 4;
+        writes[2].dstSet = rtDescriptorSet;
+        bi[1].buffer = indexBuffer;
+        bi[1].offset = 0;
+        bi[1].range = sizeof(uint32_t) * g_index_count;
+        writes[2].pBufferInfo = &(bi[1]);
+      }
       vkUpdateDescriptorSets(device, _countof(writes), writes, 0, nullptr);
     }
 
@@ -537,6 +566,13 @@ private:
       vkMapMemory(device, perSceneUniformBufferMemory, 0, sizeof(PerSceneUniformBuffer), 0, (void**)&mapped);
       memcpy(mapped, &psub, sizeof(psub));
       vkUnmapMemory(device, perSceneUniformBufferMemory);
+
+      RtPerSceneUniformBuffer rtpsub{};
+      rtpsub.inv_proj = glm::inverse(psub.P);
+      rtpsub.inv_view = glm::inverse(psub.V);
+      vkMapMemory(device, perSceneRtUniformBufferMemory, 0, sizeof(RtPerSceneUniformBuffer), 0, (void**)&mapped);
+      memcpy(mapped, &rtpsub, sizeof(rtpsub));
+      vkUnmapMemory(device, perSceneRtUniformBufferMemory);
     }
 
     //
@@ -2084,7 +2120,7 @@ private:
   }
 
   void createRtDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[2]{};
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[5]{};
     descriptorSetLayoutBindings[0].binding = 1;
     descriptorSetLayoutBindings[0].descriptorCount = 1;
     descriptorSetLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -2096,6 +2132,24 @@ private:
     descriptorSetLayoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     descriptorSetLayoutBindings[1].pImmutableSamplers = nullptr;
     descriptorSetLayoutBindings[1].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+    descriptorSetLayoutBindings[2].binding = 2;
+    descriptorSetLayoutBindings[2].descriptorCount = 1;
+    descriptorSetLayoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorSetLayoutBindings[2].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[2].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+    descriptorSetLayoutBindings[3].binding = 3;  // Vertex buffer
+    descriptorSetLayoutBindings[3].descriptorCount = 1;
+    descriptorSetLayoutBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorSetLayoutBindings[3].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[3].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+    descriptorSetLayoutBindings[4].binding = 4;  // Index buffer
+    descriptorSetLayoutBindings[4].descriptorCount = 1;
+    descriptorSetLayoutBindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorSetLayoutBindings[4].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[4].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo{};
     descriptorSetLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -2109,7 +2163,7 @@ private:
   void createRtDescriptorPool() {
     VkDescriptorPoolSize poolSizes[1]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 2;
+    poolSizes[0].descriptorCount = 5;
     VkDescriptorPoolCreateInfo poolCreateInfo{};
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCreateInfo.poolSizeCount = _countof(poolSizes);
@@ -2141,7 +2195,7 @@ private:
       throw std::runtime_error("Could not create rt pipeline layout");
     }
 
-    VkPipelineShaderStageCreateInfo stages[2]{};
+    VkPipelineShaderStageCreateInfo stages[3]{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].pName = "main";  // entry point name
     VkShaderModule raygenShaderModule = createShaderModule(readFile("shaders/rgen.spv"));
@@ -2153,8 +2207,14 @@ private:
     VkShaderModule missShaderModule = createShaderModule(readFile("shaders/rmiss.spv"));
     stages[1].module = missShaderModule;
     stages[1].stage = VK_SHADER_STAGE_MISS_BIT_KHR;
+
+    stages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[2].pName = "main";
+    VkShaderModule chitShaderModule = createShaderModule(readFile("shaders/rchit.spv"));
+    stages[2].module = chitShaderModule;
+    stages[2].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     
-    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[2]{};
+    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[3]{};
     shaderGroupInfos[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     shaderGroupInfos[0].anyHitShader = VK_SHADER_UNUSED_KHR;
     shaderGroupInfos[0].closestHitShader = VK_SHADER_UNUSED_KHR;
@@ -2168,6 +2228,13 @@ private:
     shaderGroupInfos[1].generalShader = 1;  // Miss
     shaderGroupInfos[1].intersectionShader = VK_SHADER_UNUSED_KHR;
     shaderGroupInfos[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+
+    shaderGroupInfos[2].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shaderGroupInfos[2].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[2].closestHitShader = 2;
+    shaderGroupInfos[2].generalShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     
     VkRayTracingPipelineCreateInfoKHR rtPipelineCreateInfo{};
     rtPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
@@ -2194,7 +2261,7 @@ private:
   void createRtSBT() {
     const size_t sbtSize = 32;
     const size_t sbtAlignment = 64;
-    const size_t numSBTs = 2;  // raygen, miss
+    const size_t numSBTs = 3;  // raygen, miss, closest-hit
 
     createBuffer(
       sbtAlignment * numSBTs,
@@ -2222,6 +2289,7 @@ private:
     vkMapMemory(device, sbtMemory, 0, sbtSize * numSBTs, 0, (void**)&mapped);
     memcpy(mapped, shaderGroupHandle, sbtSize);  // rgen
     memcpy(mapped + sbtAlignment, shaderGroupHandle + sbtSize, sbtSize);  // miss
+    memcpy(mapped + sbtAlignment * 2, shaderGroupHandle + sbtSize * 2, sbtSize);  // c-hit
     vkUnmapMemory(device, sbtMemory);
 
     rtRGenRegion.deviceAddress = sbtDeviceAddress;
@@ -2231,6 +2299,10 @@ private:
     rtMissRegion.deviceAddress = sbtDeviceAddress + sbtAlignment;
     rtMissRegion.size = sbtSize;
     rtMissRegion.stride = sbtSize;
+    
+    rtHitRegion.deviceAddress = sbtDeviceAddress + sbtAlignment * 2;
+    rtHitRegion.size = sbtSize;
+    rtHitRegion.stride = sbtSize;
   }
 
   void createAS() {
@@ -2353,6 +2425,7 @@ private:
     instance.transform.matrix[0][0] = 1.0f;
     instance.transform.matrix[1][1] = 1.0f;
     instance.transform.matrix[2][2] = 1.0f;
+    instance.mask = 0xFF;
     instance.accelerationStructureReference = getBufferDeviceAddress(blasResultBuffer);
 
     size_t instanceDataSize = sizeof(VkAccelerationStructureInstanceKHR) * 1;
@@ -2463,15 +2536,36 @@ private:
     writeDescAS.accelerationStructureCount = 1;
     writeDescAS.pAccelerationStructures = &tlas;
 
-    VkWriteDescriptorSet writeDesc{};
-    writeDesc.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writeDesc.dstSet = rtDescriptorSet;
-    writeDesc.dstBinding = 0;
-    writeDesc.descriptorCount = 1;
-    writeDesc.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    writeDesc.pNext = &writeDescAS;
+    VkWriteDescriptorSet writeDesc[2]{};
+    writeDesc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writeDesc[0].dstSet = rtDescriptorSet;
+    writeDesc[0].dstBinding = 0;
+    writeDesc[0].descriptorCount = 1;
+    writeDesc[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    writeDesc[0].pNext = &writeDescAS;
+    writeDesc[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writeDesc[1].dstSet = rtDescriptorSet;
+    writeDesc[1].dstBinding = 2;
+    writeDesc[1].descriptorCount = 1;
+    writeDesc[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    VkDescriptorBufferInfo bi{};
+    bi.buffer = perSceneRtUniformBuffer;
+    bi.offset = 0;
+    bi.range = sizeof(RtPerSceneUniformBuffer);
+    writeDesc[1].pBufferInfo = &bi;
 
-    vkUpdateDescriptorSets(device, 1, &writeDesc, 0, nullptr);
+    vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
+  }
+
+  void createRtUniformBuffer() {
+    size_t sz = sizeof(RtPerSceneUniformBuffer);
+    createBuffer(sz,
+      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      perSceneRtUniformBuffer,
+      perSceneRtUniformBufferMemory);
   }
 
   std::vector<glm::vec3> vertices;
@@ -2553,6 +2647,8 @@ private:
   VkBuffer tlasResultBuffer;
   VkDeviceMemory tlasResultMemory;
   VkAccelerationStructureKHR tlas;
+  VkBuffer perSceneRtUniformBuffer;
+  VkDeviceMemory perSceneRtUniformBufferMemory;
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
