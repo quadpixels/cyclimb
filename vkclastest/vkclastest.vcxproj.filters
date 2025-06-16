@@ -43,6 +43,9 @@
     <CustomBuild Include="shaders\raytrace.rmiss">
       <Filter>Resource Files</Filter>
     </CustomBuild>
+    <CustomBuild Include="shaders\vert_process.comp">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\raycommon.glsl">

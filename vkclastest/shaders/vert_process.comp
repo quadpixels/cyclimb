@@ -1,0 +1,35 @@
+#version 450
+
+layout(binding=0) readonly buffer OrigVertPositions {
+    float originalPositions[];
+};
+
+layout(binding=1) buffer OutputVertPositions {
+    float outPositions[];
+};
+
+layout(binding=2) uniform RtPerSceneVertexProcessingData {
+    mat4 M;  // Model Matrix
+    uint num_verts;
+};
+
+
+
+layout(local_size_x=256, local_size_y=1, local_size_z=1) in;
+
+void main() {
+    for (uint index = gl_GlobalInvocationID.x;
+        index < num_verts; index += gl_WorkGroupSize.x * gl_NumWorkGroups.x) {
+        vec3 p = vec3(
+            originalPositions[index*3    ],
+            originalPositions[index*3 + 1],
+            originalPositions[index*3 + 2]
+        );
+
+        p.x += 0.1;
+
+        outPositions[index*3    ] = p.x;
+        outPositions[index*3 + 1] = p.y;
+        outPositions[index*3 + 2] = p.z;
+    }
+}

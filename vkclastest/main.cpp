@@ -67,6 +67,11 @@ struct RtPerSceneUniformBuffer {
   glm::mat4 inv_view, inv_proj;
 };
 
+struct RtPerSceneVertexProcessingDataBuffer {
+  glm::mat4 M;
+  uint32_t num_verts;
+};
+
 struct QueueFamilyIndices {
   std::optional<uint32_t> graphicsFamily;
   std::optional<uint32_t> presentFamily;
@@ -287,6 +292,11 @@ private:
     createGraphicsPipeline();
     createRtPipeline();
     createRtSBT();
+
+    createComputeDescriptorSetLayout();
+    createComputeDescriptorPool();
+    createComputeDescriptorSets();
+    createComputePipeline();
 
     createFramebuffers();
     createSyncObjects();
@@ -545,6 +555,53 @@ private:
     }
   }
 
+  void callComputeShader(VkCommandBuffer commandBuffer) {
+    // Update cb
+    uint8_t* mapped{};
+    vkMapMemory(device, rtPerSceneVertexProcessingBufferMemory, 0, sizeof(RtPerSceneVertexProcessingDataBuffer), 0, (void**)(&mapped));
+    RtPerSceneVertexProcessingDataBuffer rtpb{};
+    rtpb.M = glm::mat4(1);
+    rtpb.num_verts = g_vertex_count;
+    memcpy(mapped, &rtpb, sizeof(RtPerSceneVertexProcessingDataBuffer));
+    vkUnmapMemory(device, rtPerSceneVertexProcessingBufferMemory);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to begin compute command buffer");
+    }
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+      computePipelineLayout, 0, 1, &computeDescriptorSet, 0, 0);
+
+    vkCmdDispatch(commandBuffer, 256, 1, 1);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to record compute command buffer");
+    }
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to submit");
+    }
+
+    // Read something back
+    glm::vec3 v0, v1;
+    vkMapMemory(device, vertexBufferMemory, 0, sizeof(glm::vec3), 0, (void**)&mapped);
+    memcpy(&v0, mapped, sizeof(glm::vec3));
+    vkUnmapMemory(device, vertexBufferMemory);
+
+    vkMapMemory(device, vertexBufferDisplacedMemory, 0, sizeof(glm::vec3), 0, (void**)&mapped);
+    memcpy(&v1, mapped, sizeof(glm::vec3));
+    vkUnmapMemory(device, vertexBufferDisplacedMemory);
+
+    printf("v0=(%g,%g,%g), v1=(%g,%g,%g)\n", v0.x, v0.y, v0.z, v1.x, v1.y, v1.z);
+  }
+
   void drawFrame() {
     // Update cb
     {
@@ -587,6 +644,7 @@ private:
       recordCommandBuffer(commandBuffer, imageIndex);
     }
     else {
+      callComputeShader(commandBuffer);
       recordRtCommandBuffer(commandBuffer, imageIndex);
     }
 
@@ -1843,6 +1901,18 @@ private:
       vertexBuffer,
       vertexBufferMemory);
 
+    createBuffer(sz,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+      | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      vertexBufferDisplaced,
+      vertexBufferDisplacedMemory);
+
     void* data;
     vkMapMemory(device, vertexBufferMemory, 0, sz, 0, &data);
     memcpy(data, vertices.data(), sz);
@@ -2568,6 +2638,142 @@ private:
       perSceneRtUniformBufferMemory);
   }
 
+  void createComputeDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding bindings[3]{};
+
+    bindings[0].binding = 0;
+    bindings[0].descriptorCount = 1;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[0].pImmutableSamplers = nullptr;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorCount = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[1].pImmutableSamplers = nullptr;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorCount = 1;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[2].pImmutableSamplers = nullptr;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = _countof(bindings);
+    layoutInfo.pBindings = bindings;
+
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create compute descriptor set layout");
+    }
+
+    // compute per-scene cb
+    size_t sz = sizeof(RtPerSceneVertexProcessingDataBuffer);
+    createBuffer(sz,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+      | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+      | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      rtPerSceneVertexProcessingBuffer,
+      rtPerSceneVertexProcessingBufferMemory);
+  }
+
+  void createComputeDescriptorPool() {
+    VkDescriptorPoolSize poolSizes[1]{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].descriptorCount = 3;
+    VkDescriptorPoolCreateInfo poolCreateInfo{};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCreateInfo.poolSizeCount = _countof(poolSizes);
+    poolCreateInfo.pPoolSizes = poolSizes;
+    poolCreateInfo.maxSets = 1;
+    poolCreateInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    if (vkCreateDescriptorPool(device, &poolCreateInfo, nullptr, &computeDescriptorPool) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create RT descriptor pool");
+    }
+  }
+
+  void createComputeDescriptorSets() {
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = computeDescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &computeDescriptorSetLayout;
+    if (vkAllocateDescriptorSets(device, &allocInfo, &computeDescriptorSet) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate compute descriptor set");
+    }
+
+    VkWriteDescriptorSet writes[3]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = computeDescriptorSet;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    VkDescriptorBufferInfo bi[3]{};
+    bi[0].buffer = vertexBuffer;
+    bi[0].offset = 0;
+    bi[0].range = sizeof(glm::vec3) * g_vertex_count;
+    writes[0].pBufferInfo = &(bi[0]);
+    
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = computeDescriptorSet;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bi[1].buffer = vertexBufferDisplaced;
+    bi[1].offset = 0;
+    bi[1].range = sizeof(glm::vec3) * g_vertex_count;
+    writes[1].pBufferInfo = &(bi[1]);
+
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = computeDescriptorSet;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bi[2].buffer = rtPerSceneVertexProcessingBuffer;
+    bi[2].offset = 0;
+    bi[2].range = sizeof(RtPerSceneVertexProcessingDataBuffer);
+    writes[2].pBufferInfo = &(bi[2]);
+
+    vkUpdateDescriptorSets(device, _countof(writes), writes, 0, nullptr);
+  }
+
+  void createComputePipeline() {
+    // 1. pipeline layout
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &computeDescriptorSetLayout;
+    
+    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
+      printf("Failed to create compute pipeline layout");
+    }
+
+    // 2. pipeline shader stage
+    std::vector<char> compShaderCode = readFile("shaders/comp.spv");
+    VkShaderModule compShaderModule = createShaderModule(compShaderCode);
+    VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
+    computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    computeShaderStageInfo.module = compShaderModule;
+    computeShaderStageInfo.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.layout = computePipelineLayout;
+    pipelineInfo.stage = computeShaderStageInfo;
+    if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create compute pipeline");
+    }
+  }
+
   std::vector<glm::vec3> vertices;
   std::vector<glm::vec3> normals;
   std::vector<uint32_t> indices;
@@ -2649,6 +2855,18 @@ private:
   VkAccelerationStructureKHR tlas;
   VkBuffer perSceneRtUniformBuffer;
   VkDeviceMemory perSceneRtUniformBufferMemory;
+
+  // Compute
+  VkDescriptorSetLayout computeDescriptorSetLayout;
+  VkDescriptorPool computeDescriptorPool;
+  VkDescriptorSet computeDescriptorSet;
+  VkPipelineLayout computePipelineLayout;
+  VkPipeline computePipeline;
+  VkBuffer rtPerSceneVertexProcessingBuffer;
+  VkDeviceMemory rtPerSceneVertexProcessingBufferMemory;
+
+  VkBuffer vertexBufferDisplaced;  // Displaced by compute shader
+  VkDeviceMemory vertexBufferDisplacedMemory;
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
