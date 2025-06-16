@@ -560,7 +560,9 @@ private:
     uint8_t* mapped{};
     vkMapMemory(device, rtPerSceneVertexProcessingBufferMemory, 0, sizeof(RtPerSceneVertexProcessingDataBuffer), 0, (void**)(&mapped));
     RtPerSceneVertexProcessingDataBuffer rtpb{};
+    float angle = glfwGetTime();
     rtpb.M = glm::mat4(1);
+    rtpb.M = glm::rotate(rtpb.M, angle * 3.14159f / 2, glm::vec3(0, 1, 0));
     rtpb.num_verts = g_vertex_count;
     memcpy(mapped, &rtpb, sizeof(RtPerSceneVertexProcessingDataBuffer));
     vkUnmapMemory(device, rtPerSceneVertexProcessingBufferMemory);
@@ -585,9 +587,16 @@ private:
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+    submitInfo.signalSemaphoreCount = 0;
+    submitInfo.pSignalSemaphores = &computeFinishedSemaphore;
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, computeInFlightFence) != VK_SUCCESS) {
       throw std::runtime_error("Failed to submit");
     }
+
+    vkWaitForFences(device, 1, &computeInFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &computeInFlightFence);
+
+    vkResetCommandBuffer(commandBuffer, 0);
 
     // Read something back
     glm::vec3 v0, v1;
@@ -598,8 +607,6 @@ private:
     vkMapMemory(device, vertexBufferDisplacedMemory, 0, sizeof(glm::vec3), 0, (void**)&mapped);
     memcpy(&v1, mapped, sizeof(glm::vec3));
     vkUnmapMemory(device, vertexBufferDisplacedMemory);
-
-    printf("v0=(%g,%g,%g), v1=(%g,%g,%g)\n", v0.x, v0.y, v0.z, v1.x, v1.y, v1.z);
   }
 
   void drawFrame() {
@@ -645,6 +652,7 @@ private:
     }
     else {
       callComputeShader(commandBuffer);
+      updateAS();
       recordRtCommandBuffer(commandBuffer, imageIndex);
     }
 
@@ -1816,12 +1824,21 @@ private:
       throw std::runtime_error("Failed to create semaphore");
     }
 
+    if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &computeFinishedSemaphore) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create computeFinishedSemaphore");
+    }
+
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     if (vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create fence");
     }
+
+    if (vkCreateFence(device, &fenceInfo, nullptr, &computeInFlightFence) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create computeInFlightFence");
+    }
+    vkResetFences(device, 1, &computeInFlightFence);
   }
 
   uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -2396,6 +2413,7 @@ private:
 
     VkAccelerationStructureBuildGeometryInfoKHR buildGeomInfo{};
     buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildGeomInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildGeomInfo.srcAccelerationStructure = VK_NULL_HANDLE;
@@ -2523,7 +2541,7 @@ private:
     buildGeomInfo = {};
     buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    buildGeomInfo.flags = 0;
+    buildGeomInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildGeomInfo.srcAccelerationStructure = VK_NULL_HANDLE;
     buildGeomInfo.dstAccelerationStructure = VK_NULL_HANDLE;
@@ -2625,6 +2643,181 @@ private:
     writeDesc[1].pBufferInfo = &bi;
 
     vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
+  }
+
+  void updateAS() {
+    static int blah = 0;
+    VkAccelerationStructureGeometryTrianglesDataKHR triASData{};
+    triASData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    triASData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    triASData.vertexData.deviceAddress = getBufferDeviceAddress(vertexBufferDisplaced);
+    triASData.vertexStride = sizeof(glm::vec3);
+    triASData.indexType = VK_INDEX_TYPE_UINT32;
+    triASData.indexData.deviceAddress = getBufferDeviceAddress(indexBuffer);
+    triASData.maxVertex = g_vertex_count - 1;
+
+    VkAccelerationStructureGeometryKHR geomData{};
+    geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geomData.flags = 0;
+    geomData.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geomData.geometry.triangles = triASData;
+
+    uint32_t primCount = g_index_count / 3;
+
+    VkAccelerationStructureBuildGeometryInfoKHR buildGeomInfo{};
+    buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+    buildGeomInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    buildGeomInfo.srcAccelerationStructure = blas;
+    buildGeomInfo.dstAccelerationStructure = blas;
+    buildGeomInfo.geometryCount = 1;
+    buildGeomInfo.pGeometries = &geomData;
+    buildGeomInfo.ppGeometries = nullptr;
+    buildGeomInfo.scratchData.deviceAddress = 0;
+
+    VkAccelerationStructureBuildSizesInfoKHR asBuildSizeInfo{};
+    asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
+      (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetInstanceProcAddr(
+        instance, "vkGetAccelerationStructureBuildSizesKHR");
+    assert(funcGetAccelerationStructureBuildSizes);
+    funcGetAccelerationStructureBuildSizes(device,
+      VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+      &buildGeomInfo,
+      &primCount,
+      &asBuildSizeInfo);
+
+    //printf("BLAS update size: scratch=%u\n",
+    //  asBuildSizeInfo.updateScratchSize);
+
+    size_t updateScratchSize = asBuildSizeInfo.updateScratchSize;
+    if (updateScratchSize < 1) updateScratchSize = 1024;
+
+    VkBuffer updateScratchBuffer;
+    VkDeviceMemory updateScratchMemory;
+
+    createBuffer(updateScratchSize,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+      0,
+      updateScratchBuffer, updateScratchMemory);
+
+    buildGeomInfo.scratchData.deviceAddress = getBufferDeviceAddress(updateScratchBuffer);
+
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.primitiveCount = g_index_count / 3;
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.transformOffset = 0;
+
+    VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
+    PFN_vkCmdBuildAccelerationStructuresKHR funcCmdBuildAccelerationStructuresKHR =
+      (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetInstanceProcAddr(
+        instance, "vkCmdBuildAccelerationStructuresKHR");
+    funcCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildGeomInfo, buildRangeInfos);
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      0, 1, &barrier,
+      0, nullptr,
+      0, nullptr);
+    endSingleTimeCommands(commandBuffer);
+
+    vkDestroyBuffer(device, updateScratchBuffer, nullptr);
+    vkFreeMemory(device, updateScratchMemory, nullptr);
+
+    //printf("BLAS updated\n");
+
+    uint32_t instCount = 1;
+    asBuildSizeInfo = {};
+    asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+    // Instance data
+    VkAccelerationStructureInstanceKHR instance{};
+    instance.transform.matrix[0][0] = 1.0f;
+    instance.transform.matrix[1][1] = 1.0f;
+    instance.transform.matrix[2][2] = 1.0f;
+    instance.mask = 0xFF;
+    instance.accelerationStructureReference = getBufferDeviceAddress(blasResultBuffer);
+
+    size_t instanceDataSize = sizeof(VkAccelerationStructureInstanceKHR) * 1;
+
+    uint8_t* data;
+    vkMapMemory(device, tlasInstancesMemory, 0, instanceDataSize, 0, (void**)&data);
+    memcpy(data, &instance, instanceDataSize);
+    vkUnmapMemory(device, tlasInstancesMemory);
+
+    // VkAccelerationStructureGeometryKHR geomData{};
+    geomData = {};
+    geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geomData.flags = 0;
+    geomData.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geomData.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geomData.geometry.instances.data.deviceAddress = getBufferDeviceAddress(tlasInstancesBuffer);
+
+    // VkAccelerationStructureBuildGeometryInfoKHR buildGeomInfo{};
+    buildGeomInfo = {};
+    buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    buildGeomInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+    buildGeomInfo.srcAccelerationStructure = tlas;
+    buildGeomInfo.dstAccelerationStructure = tlas;
+    buildGeomInfo.geometryCount = instCount;
+    buildGeomInfo.pGeometries = &geomData;
+    buildGeomInfo.ppGeometries = nullptr;
+
+    funcGetAccelerationStructureBuildSizes(device,
+      VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+      &buildGeomInfo,
+      &instCount,
+      &asBuildSizeInfo);
+
+    //printf("TLAS update size: %u\n",
+    //  asBuildSizeInfo.updateScratchSize);
+
+    updateScratchSize = asBuildSizeInfo.updateScratchSize;
+    createBuffer(updateScratchSize,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+      0,
+      updateScratchBuffer, updateScratchMemory);
+
+    buildGeomInfo.scratchData.deviceAddress = getBufferDeviceAddress(updateScratchBuffer);
+
+    commandBuffer = beginSingleTimeCommands();
+
+    //VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.primitiveCount = instCount;
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.transformOffset = 0;
+
+    //VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
+    funcCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildGeomInfo, buildRangeInfos);
+    //VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      0, 1, &barrier,
+      0, nullptr,
+      0, nullptr);
+    endSingleTimeCommands(commandBuffer);
+
+    vkDestroyBuffer(device, updateScratchBuffer, nullptr);
+    vkFreeMemory(device, updateScratchMemory, nullptr);
   }
 
   void createRtUniformBuffer() {
@@ -2864,7 +3057,8 @@ private:
   VkPipeline computePipeline;
   VkBuffer rtPerSceneVertexProcessingBuffer;
   VkDeviceMemory rtPerSceneVertexProcessingBufferMemory;
-
+  VkFence computeInFlightFence;
+  VkSemaphore computeFinishedSemaphore;
   VkBuffer vertexBufferDisplaced;  // Displaced by compute shader
   VkDeviceMemory vertexBufferDisplacedMemory;
 };

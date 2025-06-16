@@ -26,7 +26,7 @@ void main() {
             originalPositions[index*3 + 2]
         );
 
-        p.x += 0.1;
+        p = vec3(M * vec4(p, 1.0));
 
         outPositions[index*3    ] = p.x;
         outPositions[index*3 + 1] = p.y;
