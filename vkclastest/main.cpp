@@ -2392,12 +2392,17 @@ private:
     rtHitRegion.stride = sbtSize;
   }
 
-  void createAS() {
+  void createOrUpdateAS(bool update) {
     // Build Blas
     VkAccelerationStructureGeometryTrianglesDataKHR triASData{};
     triASData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     triASData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    triASData.vertexData.deviceAddress = getBufferDeviceAddress(vertexBuffer);
+    if (update) {
+      triASData.vertexData.deviceAddress = getBufferDeviceAddress(vertexBufferDisplaced);
+    }
+    else {
+      triASData.vertexData.deviceAddress = getBufferDeviceAddress(vertexBuffer);
+    }
     triASData.vertexStride = sizeof(glm::vec3);
     triASData.indexType = VK_INDEX_TYPE_UINT32;
     triASData.indexData.deviceAddress = getBufferDeviceAddress(indexBuffer);
@@ -2415,9 +2420,16 @@ private:
     buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildGeomInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    buildGeomInfo.srcAccelerationStructure = VK_NULL_HANDLE;
-    buildGeomInfo.dstAccelerationStructure = VK_NULL_HANDLE;
+    if (update) {
+      buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+      buildGeomInfo.srcAccelerationStructure = blas;
+      buildGeomInfo.dstAccelerationStructure = blas;
+    }
+    else {
+      buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+      buildGeomInfo.srcAccelerationStructure = VK_NULL_HANDLE;
+      buildGeomInfo.dstAccelerationStructure = VK_NULL_HANDLE;
+    }
     buildGeomInfo.geometryCount = 1;
     buildGeomInfo.pGeometries = &geomData;
     buildGeomInfo.ppGeometries = nullptr;
@@ -2434,26 +2446,38 @@ private:
       &buildGeomInfo,
       &primCount,
       &asBuildSizeInfo);
-    printf("BLAS build size: scratch=%u, AS=%u\n",
-      asBuildSizeInfo.buildScratchSize,
-      asBuildSizeInfo.accelerationStructureSize);
+    if (!update) {
+      printf("BLAS build size: scratch=%u, AS=%u\n",
+        asBuildSizeInfo.buildScratchSize,
+        asBuildSizeInfo.accelerationStructureSize);
+    }
 
     VkBuffer blasScratchBuffer{};
     VkDeviceMemory blasScratchMemory{};
 
-    createBuffer(asBuildSizeInfo.buildScratchSize,
-      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-      0,
-      blasScratchBuffer, blasScratchMemory);
+    if (!update) {
+      createBuffer(asBuildSizeInfo.buildScratchSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+        0,
+        blasScratchBuffer, blasScratchMemory);
 
-    createBuffer(asBuildSizeInfo.accelerationStructureSize,
-      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-      0,
-      blasResultBuffer, blasResultMemory);
+      createBuffer(asBuildSizeInfo.accelerationStructureSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+        0,
+        blasResultBuffer, blasResultMemory);
+    }
+    else {
+      createBuffer(asBuildSizeInfo.updateScratchSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+        0,
+        blasScratchBuffer, blasScratchMemory);
+    }
 
     buildGeomInfo.scratchData.deviceAddress = getBufferDeviceAddress(blasScratchBuffer);
 
@@ -2467,11 +2491,13 @@ private:
     PFN_vkCreateAccelerationStructureKHR funcCreateAccelerationStructure =
       (PFN_vkCreateAccelerationStructureKHR)vkGetInstanceProcAddr(
         instance, "vkCreateAccelerationStructureKHR");
-    if (funcCreateAccelerationStructure(device, &asCreateInfo, nullptr, &blas) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create BLAS");
-    }
 
-    buildGeomInfo.dstAccelerationStructure = blas;
+    if (!update) {
+      if (funcCreateAccelerationStructure(device, &asCreateInfo, nullptr, &blas) != VK_SUCCESS) {
+        throw std::runtime_error("Could not create BLAS");
+      }
+      buildGeomInfo.dstAccelerationStructure = blas;
+    }
 
     VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
@@ -2518,16 +2544,18 @@ private:
 
     size_t instanceDataSize = sizeof(VkAccelerationStructureInstanceKHR) * 1;
 
-    createBuffer(instanceDataSize,
-      VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-      tlasInstancesBuffer, tlasInstancesMemory);
-
     uint8_t* data;
-    vkMapMemory(device, tlasInstancesMemory, 0, instanceDataSize, 0, (void**)&data);
-    memcpy(data, &instance, instanceDataSize);
-    vkUnmapMemory(device, tlasInstancesMemory);
+    if (!update) {
+      createBuffer(instanceDataSize,
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+        tlasInstancesBuffer, tlasInstancesMemory);
+
+      vkMapMemory(device, tlasInstancesMemory, 0, instanceDataSize, 0, (void**)&data);
+      memcpy(data, &instance, instanceDataSize);
+      vkUnmapMemory(device, tlasInstancesMemory);
+    }
 
     // VkAccelerationStructureGeometryKHR geomData{};
     geomData = {};
@@ -2542,9 +2570,16 @@ private:
     buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
     buildGeomInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
-    buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-    buildGeomInfo.srcAccelerationStructure = VK_NULL_HANDLE;
-    buildGeomInfo.dstAccelerationStructure = VK_NULL_HANDLE;
+    if (update) {
+      buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+      buildGeomInfo.srcAccelerationStructure = tlas;
+      buildGeomInfo.dstAccelerationStructure = tlas;
+    }
+    else {
+      buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+      buildGeomInfo.srcAccelerationStructure = VK_NULL_HANDLE;
+      buildGeomInfo.dstAccelerationStructure = VK_NULL_HANDLE;
+    }
     buildGeomInfo.geometryCount = instCount;
     buildGeomInfo.pGeometries = &geomData;
     buildGeomInfo.ppGeometries = nullptr;
@@ -2554,27 +2589,39 @@ private:
       &buildGeomInfo,
       &instCount,
       &asBuildSizeInfo);
-    
-    printf("TLAS build size: scratch=%u, AS=%u\n",
-      asBuildSizeInfo.buildScratchSize,
-      asBuildSizeInfo.accelerationStructureSize);
+
+    if (!update) {
+      printf("TLAS build size: scratch=%u, AS=%u\n",
+        asBuildSizeInfo.buildScratchSize,
+        asBuildSizeInfo.accelerationStructureSize);
+    }
 
     VkBuffer tlasScratchBuffer{};
     VkDeviceMemory tlasScratchMemory{};
 
-    createBuffer(asBuildSizeInfo.buildScratchSize,
-      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-      0,
-      tlasScratchBuffer, tlasScratchMemory);
+    if (!update) {
+      createBuffer(asBuildSizeInfo.buildScratchSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+        0,
+        tlasScratchBuffer, tlasScratchMemory);
 
-    createBuffer(asBuildSizeInfo.accelerationStructureSize,
-      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-      0,
-      tlasResultBuffer, tlasResultMemory);
+      createBuffer(asBuildSizeInfo.accelerationStructureSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+        0,
+        tlasResultBuffer, tlasResultMemory);
+    }
+    else {
+      createBuffer(asBuildSizeInfo.updateScratchSize,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+        0,
+        tlasScratchBuffer, tlasScratchMemory);
+    }
 
     buildGeomInfo.scratchData.deviceAddress = getBufferDeviceAddress(tlasScratchBuffer);
 
@@ -2586,11 +2633,13 @@ private:
     asCreateInfo.offset = 0;
     asCreateInfo.size = asBuildSizeInfo.accelerationStructureSize;
     asCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    if (funcCreateAccelerationStructure(device, &asCreateInfo, nullptr, &tlas) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create TLAS");
-    }
 
-    buildGeomInfo.dstAccelerationStructure = tlas;
+    if (!update) {
+      if (funcCreateAccelerationStructure(device, &asCreateInfo, nullptr, &tlas) != VK_SUCCESS) {
+        throw std::runtime_error("Could not create TLAS");
+      }
+      buildGeomInfo.dstAccelerationStructure = tlas;
+    }
 
     //VkCommandBuffer commandBuffer = beginSingleTimeCommands();
     commandBuffer = beginSingleTimeCommands();
@@ -2617,6 +2666,10 @@ private:
 
     vkDestroyBuffer(device, tlasScratchBuffer, nullptr);
     vkFreeMemory(device, tlasScratchMemory, nullptr);
+  }
+
+  void createAS() {
+    createOrUpdateAS(false);
 
     // Update to RT's descriptor set
     VkWriteDescriptorSetAccelerationStructureKHR writeDescAS{};
@@ -2646,178 +2699,7 @@ private:
   }
 
   void updateAS() {
-    static int blah = 0;
-    VkAccelerationStructureGeometryTrianglesDataKHR triASData{};
-    triASData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    triASData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    triASData.vertexData.deviceAddress = getBufferDeviceAddress(vertexBufferDisplaced);
-    triASData.vertexStride = sizeof(glm::vec3);
-    triASData.indexType = VK_INDEX_TYPE_UINT32;
-    triASData.indexData.deviceAddress = getBufferDeviceAddress(indexBuffer);
-    triASData.maxVertex = g_vertex_count - 1;
-
-    VkAccelerationStructureGeometryKHR geomData{};
-    geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geomData.flags = 0;
-    geomData.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    geomData.geometry.triangles = triASData;
-
-    uint32_t primCount = g_index_count / 3;
-
-    VkAccelerationStructureBuildGeometryInfoKHR buildGeomInfo{};
-    buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-    buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
-    buildGeomInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
-    buildGeomInfo.srcAccelerationStructure = blas;
-    buildGeomInfo.dstAccelerationStructure = blas;
-    buildGeomInfo.geometryCount = 1;
-    buildGeomInfo.pGeometries = &geomData;
-    buildGeomInfo.ppGeometries = nullptr;
-    buildGeomInfo.scratchData.deviceAddress = 0;
-
-    VkAccelerationStructureBuildSizesInfoKHR asBuildSizeInfo{};
-    asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-    PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
-      (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetInstanceProcAddr(
-        instance, "vkGetAccelerationStructureBuildSizesKHR");
-    assert(funcGetAccelerationStructureBuildSizes);
-    funcGetAccelerationStructureBuildSizes(device,
-      VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-      &buildGeomInfo,
-      &primCount,
-      &asBuildSizeInfo);
-
-    //printf("BLAS update size: scratch=%u\n",
-    //  asBuildSizeInfo.updateScratchSize);
-
-    size_t updateScratchSize = asBuildSizeInfo.updateScratchSize;
-    if (updateScratchSize < 1) updateScratchSize = 1024;
-
-    VkBuffer updateScratchBuffer;
-    VkDeviceMemory updateScratchMemory;
-
-    createBuffer(updateScratchSize,
-      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-      0,
-      updateScratchBuffer, updateScratchMemory);
-
-    buildGeomInfo.scratchData.deviceAddress = getBufferDeviceAddress(updateScratchBuffer);
-
-    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
-
-    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
-    buildRangeInfo.firstVertex = 0;
-    buildRangeInfo.primitiveCount = g_index_count / 3;
-    buildRangeInfo.primitiveOffset = 0;
-    buildRangeInfo.transformOffset = 0;
-
-    VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
-    PFN_vkCmdBuildAccelerationStructuresKHR funcCmdBuildAccelerationStructuresKHR =
-      (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetInstanceProcAddr(
-        instance, "vkCmdBuildAccelerationStructuresKHR");
-    funcCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildGeomInfo, buildRangeInfos);
-    VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    vkCmdPipelineBarrier(commandBuffer,
-      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-      0, 1, &barrier,
-      0, nullptr,
-      0, nullptr);
-    endSingleTimeCommands(commandBuffer);
-
-    vkDestroyBuffer(device, updateScratchBuffer, nullptr);
-    vkFreeMemory(device, updateScratchMemory, nullptr);
-
-    //printf("BLAS updated\n");
-
-    uint32_t instCount = 1;
-    asBuildSizeInfo = {};
-    asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-
-    // Instance data
-    VkAccelerationStructureInstanceKHR instance{};
-    instance.transform.matrix[0][0] = 1.0f;
-    instance.transform.matrix[1][1] = 1.0f;
-    instance.transform.matrix[2][2] = 1.0f;
-    instance.mask = 0xFF;
-    instance.accelerationStructureReference = getBufferDeviceAddress(blasResultBuffer);
-
-    size_t instanceDataSize = sizeof(VkAccelerationStructureInstanceKHR) * 1;
-
-    uint8_t* data;
-    vkMapMemory(device, tlasInstancesMemory, 0, instanceDataSize, 0, (void**)&data);
-    memcpy(data, &instance, instanceDataSize);
-    vkUnmapMemory(device, tlasInstancesMemory);
-
-    // VkAccelerationStructureGeometryKHR geomData{};
-    geomData = {};
-    geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geomData.flags = 0;
-    geomData.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    geomData.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    geomData.geometry.instances.data.deviceAddress = getBufferDeviceAddress(tlasInstancesBuffer);
-
-    // VkAccelerationStructureBuildGeometryInfoKHR buildGeomInfo{};
-    buildGeomInfo = {};
-    buildGeomInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-    buildGeomInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    buildGeomInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
-    buildGeomInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
-    buildGeomInfo.srcAccelerationStructure = tlas;
-    buildGeomInfo.dstAccelerationStructure = tlas;
-    buildGeomInfo.geometryCount = instCount;
-    buildGeomInfo.pGeometries = &geomData;
-    buildGeomInfo.ppGeometries = nullptr;
-
-    funcGetAccelerationStructureBuildSizes(device,
-      VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-      &buildGeomInfo,
-      &instCount,
-      &asBuildSizeInfo);
-
-    //printf("TLAS update size: %u\n",
-    //  asBuildSizeInfo.updateScratchSize);
-
-    updateScratchSize = asBuildSizeInfo.updateScratchSize;
-    createBuffer(updateScratchSize,
-      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-      0,
-      updateScratchBuffer, updateScratchMemory);
-
-    buildGeomInfo.scratchData.deviceAddress = getBufferDeviceAddress(updateScratchBuffer);
-
-    commandBuffer = beginSingleTimeCommands();
-
-    //VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
-    buildRangeInfo.firstVertex = 0;
-    buildRangeInfo.primitiveCount = instCount;
-    buildRangeInfo.primitiveOffset = 0;
-    buildRangeInfo.transformOffset = 0;
-
-    //VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
-    funcCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildGeomInfo, buildRangeInfos);
-    //VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    vkCmdPipelineBarrier(commandBuffer,
-      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-      0, 1, &barrier,
-      0, nullptr,
-      0, nullptr);
-    endSingleTimeCommands(commandBuffer);
-
-    vkDestroyBuffer(device, updateScratchBuffer, nullptr);
-    vkFreeMemory(device, updateScratchMemory, nullptr);
+    createOrUpdateAS(true);
   }
 
   void createRtUniformBuffer() {
