@@ -40,6 +40,7 @@ GLFWwindow* window{};
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 bool g_is_rt{ false };
 bool g_is_cluster{ false };  // applies to both rast and rt
+bool g_is_rotate{ true };
 constexpr bool UseIndirect = true;  // TODO: Fix normals
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -63,6 +64,7 @@ struct PerSceneUniformBuffer {
 
 struct RtPerSceneUniformBuffer {
   glm::mat4 inv_view, inv_proj;
+  int is_cluster;
 };
 
 struct RtPerSceneVertexProcessingDataBuffer {
@@ -427,7 +429,9 @@ private:
   void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     // Update descriptor
     {
-      VkWriteDescriptorSet writes[4]{};
+      VkWriteDescriptorSet writes[6]{};
+
+      // Output image
       writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[0].descriptorCount = 1;
       writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -440,30 +444,43 @@ private:
       ii.sampler = VK_NULL_HANDLE;
       writes[0].pImageInfo = &ii;
 
-      VkDescriptorBufferInfo bi[2]{};
+      VkDescriptorBufferInfo bi[4]{};
 
-      
+      // Vertex buffer
       writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[1].descriptorCount = 1;
       writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       writes[1].dstBinding = 3;
       writes[1].dstSet = rtDescriptorSet;
-      bi[0].buffer = vertexBuffer;
+      if (g_is_cluster) {
+        bi[0].buffer = clusterVertexBufferForIndirect;
+        bi[0].range = sizeof(glm::vec3) * g_cluster_vert_count;
+      }
+      else {
+        bi[0].buffer = vertexBuffer;
+        bi[0].range = sizeof(glm::vec3) * g_vertex_count;
+      }
       bi[0].offset = 0;
-      bi[0].range = sizeof(glm::vec3) * g_vertex_count;
       writes[1].pBufferInfo = &(bi[0]);
 
+      // Index buffer
       writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[2].descriptorCount = 1;
       writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       writes[2].dstBinding = 4;
       writes[2].dstSet = rtDescriptorSet;
-      bi[1].buffer = indexBuffer;
+      if (g_is_cluster) {
+        bi[1].buffer = clusterIndexBufferForIndirect;
+        bi[1].range = sizeof(uint32_t) * g_cluster_tri_count * 3;
+      }
+      else {
+        bi[1].buffer = indexBuffer;
+        bi[1].range = sizeof(uint32_t) * g_index_count;
+      }
       bi[1].offset = 0;
-      bi[1].range = sizeof(uint32_t) * g_index_count;
       writes[2].pBufferInfo = &(bi[1]);
 
-      // Update to RT's descriptor set
+      // TLAS
       VkWriteDescriptorSetAccelerationStructureKHR writeDescAS{};
       writeDescAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
       writeDescAS.accelerationStructureCount = 1;
@@ -478,6 +495,28 @@ private:
       writes[3].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
       writes[3].pNext = &writeDescAS;
       
+      // Normal offset
+      writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[4].descriptorCount = 1;
+      writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      writes[4].dstBinding = 5;
+      writes[4].dstSet = rtDescriptorSet;
+      bi[2].buffer = clusterNormalsOffsetBufferForIndirect;
+      bi[2].offset = 0;
+      bi[2].range = sizeof(uint32_t) * vertex_and_indices.size();
+      writes[4].pBufferInfo = &(bi[2]);
+
+      // Vertex offset
+      writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[5].descriptorCount = 1;
+      writes[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      writes[5].dstBinding = 6;
+      writes[5].dstSet = rtDescriptorSet;
+      bi[3].buffer = clusterVertexIdxOffsetBuffer;
+      bi[3].offset = 0;
+      bi[3].range = sizeof(uint32_t) * vertex_and_indices.size();
+      writes[5].pBufferInfo = &(bi[3]);
+
       vkUpdateDescriptorSets(device, _countof(writes), writes, 0, nullptr);
     }
 
@@ -574,7 +613,7 @@ private:
     uint8_t* mapped{};
     vkMapMemory(device, rtPerSceneVertexProcessingBufferMemory, 0, sizeof(RtPerSceneVertexProcessingDataBuffer), 0, (void**)(&mapped));
     RtPerSceneVertexProcessingDataBuffer rtpb{};
-    float angle = glfwGetTime();
+    float angle = g_is_rotate ? glfwGetTime() : 0;
     rtpb.M = glm::mat4(1);
     rtpb.M = glm::rotate(rtpb.M, angle * 3.14159f / 2, glm::vec3(0, 1, 0));
     rtpb.num_verts = g_vertex_count;
@@ -629,7 +668,7 @@ private:
       PerSceneUniformBuffer psub{};
       psub.M = glm::mat4(1.0f);
 
-      float angle = glfwGetTime();
+      float angle = g_is_rotate ? glfwGetTime() : 0;
       psub.M = glm::rotate(psub.M, angle * 3.14159f / 2, glm::vec3(0, 1, 0));
 
       psub.V = glm::lookAt(
@@ -648,6 +687,7 @@ private:
       RtPerSceneUniformBuffer rtpsub{};
       rtpsub.inv_proj = glm::inverse(psub.P);
       rtpsub.inv_view = glm::inverse(psub.V);
+      rtpsub.is_cluster = (int)g_is_cluster;
       vkMapMemory(device, perSceneRtUniformBufferMemory, 0, sizeof(RtPerSceneUniformBuffer), 0, (void**)&mapped);
       memcpy(mapped, &rtpsub, sizeof(rtpsub));
       vkUnmapMemory(device, perSceneRtUniformBufferMemory);
@@ -1204,6 +1244,8 @@ private:
   struct VertexAndIndex {
     std::vector<glm::vec3> vertices;
     std::vector<uint32_t> indices;
+    uint32_t vert_offset;
+    uint32_t index_offset;
   };
 
   bool readOBJ(const std::string& fn, VertexAndIndex& out) {
@@ -1246,6 +1288,8 @@ private:
         cluster_normals.push_back(n);
       }
     }
+    out.vert_offset = g_cluster_vert_count;
+    out.index_offset = g_cluster_tri_count * 3;
     return true;
   }
 
@@ -1369,12 +1413,14 @@ private:
     vkUnmapMemory(device, clusterVertexAndIndexMemory);
 
     // Using indirect
+    std::vector<uint32_t> vert_idx_offsets;
     offset = 0;
     uint32_t tot_vertex_count = 0, tot_index_count = 0;
     uint32_t tot_index_offset = 0;
     for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
       const VertexAndIndex& vi = vertex_and_indices[i];
       offset += sizeof(glm::vec3) * vi.vertices.size();
+      vert_idx_offsets.push_back(tot_vertex_count);
       tot_vertex_count += vi.vertices.size();
     }
     offset = AlignUp(offset, vb_alignment);
@@ -1459,7 +1505,7 @@ private:
     memcpy(data, cluster_normals.data(), normalsSize);
     vkUnmapMemory(device, clusterNormalsMemoryForIndirect);
 
-    // Indirect normal offsets
+    // Indirect normal offsets, should be index offsets divided by 3 ?
     size_t normalOffsetsSize = sizeof(uint32_t) * vertex_and_indices.size();
     createBuffer(
       normalOffsetsSize,
@@ -1469,6 +1515,17 @@ private:
     vkMapMemory(device, clusterNormalsOffsetMemoryForIndirect, 0, normalOffsetsSize, 0, &data);
     memcpy(data, normal_offsets.data(), normalOffsetsSize);
     vkUnmapMemory(device, clusterNormalsOffsetMemoryForIndirect);
+
+    // Indirect (and RT) vertex offsets
+    size_t vertOffsetsSize = sizeof(uint32_t) * vertex_and_indices.size();
+    createBuffer(
+      vertOffsetsSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      clusterVertexIdxOffsetBuffer, clusterVertexIdxOffsetMemory);
+    vkMapMemory(device, clusterVertexIdxOffsetMemory, 0, vertOffsetsSize, 0, &data);
+    memcpy(data, vert_idx_offsets.data(), vertOffsetsSize);
+    vkUnmapMemory(device, clusterVertexIdxOffsetMemory);
   }
 
   void createSwapChain() {
@@ -2230,7 +2287,7 @@ private:
   }
 
   void createRtDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[5]{};
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[7]{};
     descriptorSetLayoutBindings[0].binding = 1;
     descriptorSetLayoutBindings[0].descriptorCount = 1;
     descriptorSetLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -2247,19 +2304,31 @@ private:
     descriptorSetLayoutBindings[2].descriptorCount = 1;
     descriptorSetLayoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     descriptorSetLayoutBindings[2].pImmutableSamplers = nullptr;
-    descriptorSetLayoutBindings[2].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    descriptorSetLayoutBindings[2].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
     descriptorSetLayoutBindings[3].binding = 3;  // Vertex buffer
     descriptorSetLayoutBindings[3].descriptorCount = 1;
     descriptorSetLayoutBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     descriptorSetLayoutBindings[3].pImmutableSamplers = nullptr;
-    descriptorSetLayoutBindings[3].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    descriptorSetLayoutBindings[3].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;;
 
     descriptorSetLayoutBindings[4].binding = 4;  // Index buffer
     descriptorSetLayoutBindings[4].descriptorCount = 1;
     descriptorSetLayoutBindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     descriptorSetLayoutBindings[4].pImmutableSamplers = nullptr;
-    descriptorSetLayoutBindings[4].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    descriptorSetLayoutBindings[4].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;;
+
+    descriptorSetLayoutBindings[5].binding = 5;  // Norm ofst
+    descriptorSetLayoutBindings[5].descriptorCount = 1;
+    descriptorSetLayoutBindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorSetLayoutBindings[5].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[5].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+    descriptorSetLayoutBindings[6].binding = 6;  // Vert ofst
+    descriptorSetLayoutBindings[6].descriptorCount = 1;
+    descriptorSetLayoutBindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorSetLayoutBindings[6].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[6].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo{};
     descriptorSetLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -2273,7 +2342,7 @@ private:
   void createRtDescriptorPool() {
     VkDescriptorPoolSize poolSizes[1]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 5;
+    poolSizes[0].descriptorCount = 7;
     VkDescriptorPoolCreateInfo poolCreateInfo{};
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCreateInfo.poolSizeCount = _countof(poolSizes);
@@ -2355,6 +2424,15 @@ private:
     rtPipelineCreateInfo.pGroups = shaderGroupInfos;
     rtPipelineCreateInfo.maxPipelineRayRecursionDepth = 1;
     rtPipelineCreateInfo.layout = rtPipelineLayout;
+
+    // NEW for clusters! we need to enable their usage explicitly for a ray tracing pipeline
+    VkRayTracingPipelineClusterAccelerationStructureCreateInfoNV pipeClusters = {
+        VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CLUSTER_ACCELERATION_STRUCTURE_CREATE_INFO_NV };
+    pipeClusters.allowClusterAccelerationStructure = true;
+    //pipeClusters.allowClusterAccelerationStructures = true;
+
+    // chain extension it into next of the pipeline create info
+    rtPipelineCreateInfo.pNext = &pipeClusters;
 
     PFN_vkCreateRayTracingPipelinesKHR funcCreateRayTracingPipelines =
       (PFN_vkCreateRayTracingPipelinesKHR)vkGetInstanceProcAddr(
@@ -3043,6 +3121,10 @@ private:
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
       clusterTlasInstancesBuffer, clusterTlasInstancesMemory);
 
+    vkMapMemory(device, clusterTlasInstancesMemory, 0, sizeof(VkAccelerationStructureInstanceKHR), 0, (void**)&data);
+    memcpy(data, &blasInst, sizeof(blasInst));
+    vkUnmapMemory(device, clusterTlasInstancesMemory);
+
     // Geom Info
     VkAccelerationStructureGeometryKHR geomData{};
     geomData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -3369,6 +3451,8 @@ private:
   VkDeviceMemory clusterNormalsMemoryForIndirect;
   VkBuffer clusterNormalsOffsetBufferForIndirect;
   VkDeviceMemory clusterNormalsOffsetMemoryForIndirect;
+  VkBuffer clusterVertexIdxOffsetBuffer;
+  VkDeviceMemory clusterVertexIdxOffsetMemory;
 
   // RT
   VkDescriptorSetLayout rtDescriptorSetLayout;
@@ -3432,6 +3516,10 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     case GLFW_KEY_C: {
       g_is_cluster = !g_is_cluster;
       SetWindowTitle();
+      break;
+    }
+    case GLFW_KEY_R: {
+      g_is_rotate = !g_is_rotate;
       break;
     }
     default:

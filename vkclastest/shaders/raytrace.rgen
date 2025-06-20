@@ -7,9 +7,11 @@
 
 layout(binding=0) uniform accelerationStructureEXT TLAS;
 layout(binding=1, rgba32f) uniform image2D image;
+
 layout(binding=2) uniform RtPerSceneData {
     mat4 InverseView;
     mat4 InverseProj;
+    int IsUsingCluster;
 };
 
 layout(location=0) rayPayloadEXT hitPayload payload;
