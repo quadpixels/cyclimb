@@ -40,6 +40,7 @@ GLFWwindow* window{};
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 bool g_is_rt{ false };
 bool g_is_cluster{ false };  // applies to both rast and rt
+bool g_is_cluster_template{ false };  // only applies to rt
 bool g_is_rotate{ true };
 constexpr bool UseIndirect = true;  // TODO: Fix normals
 const uint32_t WIDTH = 800;
@@ -100,7 +101,9 @@ std::vector<const char*> deviceExtensions = {
   VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
 
   VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-  VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME
+  VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME,
+
+  VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME
 };
 
 struct MyIndirectClusterDraw {
@@ -121,7 +124,12 @@ void SetWindowTitle() {
       glfwSetWindowTitle(window, "Vulkan CLAS (RT)");
     }
     else {
-      glfwSetWindowTitle(window, "Vulkan CLAS (RT, cluster)");
+      if (g_is_cluster_template) {
+        glfwSetWindowTitle(window, "Vulkan CLAS (RT, cluster, template)");
+      }
+      else {
+        glfwSetWindowTitle(window, "Vulkan CLAS (RT, cluster)");
+      }
     }
   }
 }
@@ -289,6 +297,7 @@ private:
 
     createAS();
     createClusterAS();
+    createClusterASTemplate();
 
     createGraphicsPipeline();
     createRtPipeline();
@@ -484,10 +493,17 @@ private:
       VkWriteDescriptorSetAccelerationStructureKHR writeDescAS{};
       writeDescAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
       writeDescAS.accelerationStructureCount = 1;
-      if (!g_is_cluster)
+      if (!g_is_cluster) {
         writeDescAS.pAccelerationStructures = &tlas;
-      else
-        writeDescAS.pAccelerationStructures = &clusterTlas;
+      }
+      else {
+        if (g_is_cluster_template) {
+          writeDescAS.pAccelerationStructures = &clusterTlasTemplated;
+        }
+        else {
+          writeDescAS.pAccelerationStructures = &clusterTlas;
+        }
+      }
       writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[3].dstSet = rtDescriptorSet;
       writes[3].dstBinding = 0;
@@ -1129,8 +1145,12 @@ private:
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
     // Feature train/chain
+    VkPhysicalDeviceClusterAccelerationStructureFeaturesNV clusterASFeatures{};
+    clusterASFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
+
     VkPhysicalDeviceRayTracingValidationFeaturesNV rtValidationFeatures{};
     rtValidationFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV;
+    rtValidationFeatures.pNext = &clusterASFeatures;
 
     VkPhysicalDeviceOpacityMicromapFeaturesEXT ommFeatures{};
     ommFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
@@ -2112,9 +2132,12 @@ private:
   }
 
   void createDescriptorPool() {
-    VkDescriptorPoolSize poolSizes[1]{};
+    VkDescriptorPoolSize poolSizes[2]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = 3;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = 3;
+
     VkDescriptorPoolCreateInfo poolInfo{};
 
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2405,9 +2428,15 @@ private:
   }
 
   void createRtDescriptorPool() {
-    VkDescriptorPoolSize poolSizes[1]{};
+    VkDescriptorPoolSize poolSizes[4]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 7;
+    poolSizes[0].descriptorCount = 2;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    poolSizes[1].descriptorCount = 2;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[2].descriptorCount = 4;
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[3].descriptorCount = 4;
     VkDescriptorPoolCreateInfo poolCreateInfo{};
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCreateInfo.poolSizeCount = _countof(poolSizes);
@@ -2961,7 +2990,7 @@ private:
     uint32_t trunc = 0;
 
     VkDeviceAddress clusterIndexBufferForIndirectAddr = getBufferDeviceAddress(clusterIndexBufferForIndirect);
-    VkDeviceAddress clusterVertexBufferForIndirectAddr = getBufferDeviceAddress(clusterIndexBufferForIndirect);
+    VkDeviceAddress clusterVertexBufferForIndirectAddr = getBufferDeviceAddress(clusterVertexBufferForIndirect);
     VkDeviceAddress clusterVertexBufferForIndirectDisplacedAddr = getBufferDeviceAddress(clusterVertexBufferForIndirectDisplaced);
     uint8_t* data{};
 
@@ -3131,6 +3160,7 @@ private:
 
     // VkClusterAccelerationStructureInputInfoNV inputs{};
     inputs = {};
+    inputs.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV;
     inputs.maxAccelerationStructureCount = 1;
     inputs.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
     inputs.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_CLUSTERS_BOTTOM_LEVEL_NV;
@@ -3167,14 +3197,16 @@ private:
       clusterBlasDstBuffer, clusterBlasDstMemory);
 
     // BLAS itself.
-    createBuffer(
-      sizesInfo.accelerationStructureSize,
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-      clusterBlasBuffer, clusterBlasMemory);
+    if (!update) {
+      createBuffer(
+        sizesInfo.accelerationStructureSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+        clusterBlasBuffer, clusterBlasMemory);
+    }
 
     // Update Blas
     cmdInfo.dstAddressesArray.deviceAddress = getBufferDeviceAddress(clusterBlasDstBuffer);
@@ -3197,6 +3229,25 @@ private:
     funcCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &cmdInfo);
     endSingleTimeCommands(commandBuffer);
 
+    // Create AS data structure for existing buffer
+    {
+      VkAccelerationStructureCreateInfoKHR asCreateInfo{};
+      asCreateInfo = {};
+      asCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+      asCreateInfo.createFlags = 0;
+      asCreateInfo.buffer = clusterBlasBuffer;
+      asCreateInfo.offset = 0;
+      asCreateInfo.size = sizesInfo.accelerationStructureSize;
+      asCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+
+      PFN_vkCreateAccelerationStructureKHR funcCreateAccelerationStructure =
+        (PFN_vkCreateAccelerationStructureKHR)vkGetInstanceProcAddr(
+          instance, "vkCreateAccelerationStructureKHR");
+      if (funcCreateAccelerationStructure(device, &asCreateInfo, nullptr, &clusterBlas) != VK_SUCCESS) {
+        throw std::runtime_error("Could not create TLAS");
+      }
+    }
+
     if (!update) {
       // Should be the same
       vkMapMemory(device, clusterBlasDstMemory, 0, sizeof(uint64_t), 0, (void**)&data);
@@ -3215,6 +3266,17 @@ private:
     blasInst.mask = 0xFF;
     blasInst.flags = VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
     blasInst.accelerationStructureReference = getBufferDeviceAddress(clusterBlasBuffer);
+    {
+      PFN_vkGetAccelerationStructureDeviceAddressKHR funcGetAccelerationStructureDeviceAddressKHR =
+        (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetInstanceProcAddr(
+          instance, "vkGetAccelerationStructureDeviceAddressKHR");
+      VkAccelerationStructureDeviceAddressInfoKHR asAddrInfo{};
+      asAddrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+      asAddrInfo.accelerationStructure = clusterBlas;
+      printf(">>>>> 1 clusterBlasBuffer addr is %p; clusterBlas's addr is %p\n",
+        (void*)getBufferDeviceAddress(clusterBlasBuffer),
+        (void*)funcGetAccelerationStructureDeviceAddressKHR(device, &asAddrInfo));
+    }
 
     if (!update) {
       createBuffer(
@@ -3362,6 +3424,674 @@ private:
     return;
   }
 
+  void createClusterASTemplate() {
+    bool useImplicitTemplates = false;
+    bool useDedicatedVertices = false;
+
+    // initRayTracingTemplates
+    VkClusterAccelerationStructureTriangleClusterInputNV templateTriangleInput{};
+    templateTriangleInput.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_TRIANGLE_CLUSTER_INPUT_NV;
+    templateTriangleInput.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    templateTriangleInput.maxClusterTriangleCount = 64;
+    templateTriangleInput.maxClusterVertexCount = 64;
+    templateTriangleInput.maxTotalTriangleCount = g_cluster_tri_count;
+    templateTriangleInput.maxTotalVertexCount = g_cluster_vert_count;
+    templateTriangleInput.minPositionTruncateBitCount = 0;
+
+    VkClusterAccelerationStructureMoveObjectsInputNV moveInput{};
+    moveInput.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_MOVE_OBJECTS_INPUT_NV;
+
+    VkClusterAccelerationStructureInputInfoNV inputs{};
+    inputs.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV;
+    inputs.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_TRIANGLE_CLUSTER_TEMPLATE_NV;
+    inputs.maxAccelerationStructureCount = g_cluster_count;
+    inputs.opMode = useImplicitTemplates ?
+      VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV :
+      VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_EXPLICIT_DESTINATIONS_NV;
+    inputs.opInput.pTriangleClusters = &templateTriangleInput;
+    inputs.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+
+    VkAccelerationStructureBuildSizesInfoKHR sizesInfo{};
+    sizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+    PFN_vkGetClusterAccelerationStructureBuildSizesNV
+      funcGetClusterAccelerationStructureBuildSizesNV =
+      (PFN_vkGetClusterAccelerationStructureBuildSizesNV)vkGetInstanceProcAddr(
+        instance, "vkGetClusterAccelerationStructureBuildSizesNV");
+    funcGetClusterAccelerationStructureBuildSizesNV(device, &inputs, &sizesInfo);
+    uint32_t tempScratchSize = sizesInfo.buildScratchSize;
+
+    printf("[cluster template build sizes] as=%u, build scratch=%u, update scratch=%u\n",
+      sizesInfo.accelerationStructureSize, sizesInfo.buildScratchSize, sizesInfo.updateScratchSize);
+
+    if (useImplicitTemplates) {
+      assert(false && "not implemented.");
+    }
+    else {
+      inputs.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_TRIANGLE_CLUSTER_TEMPLATE_NV;
+      inputs.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_COMPUTE_SIZES_NV;
+      funcGetClusterAccelerationStructureBuildSizesNV(device, &inputs, &sizesInfo);
+      printf("[cluster template compute sizes] as=%u, build scratch=%u, update scratch=%u\n",
+        sizesInfo.accelerationStructureSize, sizesInfo.buildScratchSize, sizesInfo.updateScratchSize);
+      tempScratchSize = std::max(tempScratchSize, (uint32_t)sizesInfo.buildScratchSize);
+    }
+
+    inputs.opInput.pTriangleClusters = &templateTriangleInput;
+    inputs.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_INSTANTIATE_TRIANGLE_CLUSTER_NV;
+    inputs.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_COMPUTE_SIZES_NV;
+    inputs.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    funcGetClusterAccelerationStructureBuildSizesNV(device, &inputs, &sizesInfo);
+    tempScratchSize = std::max(tempScratchSize, (uint32_t)sizesInfo.buildScratchSize);
+
+    printf("[cluster compute instantiate sizes] as=%u, build scratch=%u, update scratch=%u\n",
+      sizesInfo.accelerationStructureSize, sizesInfo.buildScratchSize, sizesInfo.updateScratchSize);
+
+    // Let's setup temporary resources
+    VkDeviceAddress clusterIndexBufferForIndirectAddr = getBufferDeviceAddress(clusterIndexBufferForIndirect);
+    VkDeviceAddress clusterVertexBufferForIndirectAddr = getBufferDeviceAddress(clusterVertexBufferForIndirect);
+    VkDeviceAddress clusterVertexBufferForIndirectDisplacedAddr = getBufferDeviceAddress(clusterVertexBufferForIndirectDisplaced);
+
+    std::vector<VkClusterAccelerationStructureBuildTriangleClusterTemplateInfoNV> templateInfos;
+    if (templateInfos.empty()) {
+      templateInfos.resize(g_cluster_count);
+      for (uint32_t c = 0; c < g_cluster_count; c++) {
+        const VertexAndIndex& vi = vertex_and_indices[c];
+        VkClusterAccelerationStructureBuildTriangleClusterTemplateInfoNV& templateInfo = templateInfos[c];
+
+        // Ignore BBoxes for now ..?
+        templateInfo = {};
+        templateInfo.clusterID = c;
+        templateInfo.clusterFlags = 0;
+        templateInfo.triangleCount = vi.indices.size() / 3;
+        templateInfo.vertexCount = vi.vertices.size();
+        templateInfo.positionTruncateBitCount = 0;
+        templateInfo.indexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_32BIT_NV;
+        templateInfo.opacityMicromapIndexType = 0;
+        templateInfo.baseGeometryIndexAndGeometryFlags.geometryFlags = 0;
+        templateInfo.indexBufferStride = sizeof(uint32_t);
+        templateInfo.vertexBufferStride = sizeof(glm::vec3);
+        templateInfo.geometryIndexAndFlagsBufferStride = 0;
+        templateInfo.opacityMicromapIndexBufferStride = 0;
+
+        if (useDedicatedVertices) {
+          templateInfo.indexBuffer = getBufferDeviceAddress(clusterIndexBuffers[c]);
+          templateInfo.indexBufferStride = sizeof(uint32_t);
+          templateInfo.indexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_32BIT_NV;
+          templateInfo.vertexBuffer = getBufferDeviceAddress(clusterVertexBuffers[c]);
+          templateInfo.vertexBufferStride = sizeof(glm::vec3);
+        }
+        else {
+          templateInfo.indexBuffer = clusterIndexBufferForIndirectAddr + cluster_normal_offsets[c] * 3 * sizeof(uint32_t);
+          templateInfo.indexBufferStride = sizeof(uint32_t);
+          templateInfo.indexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_32BIT_NV;
+          if (true/*!update*/) {
+            templateInfo.vertexBuffer = clusterVertexBufferForIndirectAddr + cluster_vert_idx_offsets[c] * sizeof(glm::vec3);
+          }
+          else {
+            templateInfo.vertexBuffer = clusterVertexBufferForIndirectDisplacedAddr + cluster_vert_idx_offsets[c] * sizeof(glm::vec3);
+          }
+          templateInfo.vertexBufferStride = sizeof(glm::vec3);
+        }
+
+        templateInfo.geometryIndexAndFlagsBuffer = 0;
+        templateInfo.opacityMicromapArray = 0;
+        templateInfo.opacityMicromapIndexBuffer = 0;
+
+        templateInfo.instantiationBoundingBoxLimit = 0;
+      }
+    }
+
+    inputs.maxAccelerationStructureCount = g_cluster_count;
+
+    VkClusterAccelerationStructureCommandsInfoNV cmdInfo{};
+    cmdInfo.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV;
+
+    VkBuffer srcInfosBuffer{};
+    VkDeviceMemory srcInfosMemory{};
+    VkBuffer dstSizesBuffer{};
+    VkDeviceMemory dstSizesMemory{};
+    VkBuffer dstAddressesBuffer{};
+    VkDeviceMemory dstAddressesMemory{};
+    VkBuffer scratchBuffer{};
+    VkDeviceMemory scratchMemory{};
+
+    size_t srcInfosSize = std::max(
+      sizeof(VkClusterAccelerationStructureBuildTriangleClusterTemplateInfoNV),  // build template
+      sizeof(VkClusterAccelerationStructureInstantiateClusterInfoNV))            // instantiate template
+      * g_cluster_count;
+    size_t dstSizesSize = sizeof(uint32_t) * g_cluster_count;
+    size_t dstAddressesSize = sizeof(uint64_t) * g_cluster_count;
+    size_t sizes[] = { srcInfosSize, dstSizesSize, dstAddressesSize, tempScratchSize };
+    VkBuffer* buffers[] = { &srcInfosBuffer, &dstSizesBuffer, &dstAddressesBuffer, &scratchBuffer };
+    VkDeviceMemory* memories[] = { &srcInfosMemory, &dstSizesMemory, &dstAddressesMemory, &scratchMemory };
+
+    for (uint32_t i = 0; i < 4; i++) {
+      createBuffer(sizes[i],
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        *(buffers[i]), *(memories[i]));
+    }
+
+    uint8_t* data{};
+    vkMapMemory(device, srcInfosMemory, 0, srcInfosSize, 0, (void**)&data);
+    memcpy(data, templateInfos.data(), sizeof(VkClusterAccelerationStructureBuildTriangleClusterTemplateInfoNV) * templateInfos.size());
+    vkUnmapMemory(device, srcInfosMemory);
+
+    cmdInfo.srcInfosArray.deviceAddress = getBufferDeviceAddress(srcInfosBuffer);
+    cmdInfo.srcInfosArray.size = srcInfosSize;
+    cmdInfo.srcInfosArray.stride = sizeof(VkClusterAccelerationStructureBuildTriangleClusterTemplateInfoNV);
+    cmdInfo.dstSizesArray.deviceAddress = getBufferDeviceAddress(dstSizesBuffer);
+    cmdInfo.dstSizesArray.size = dstSizesSize;
+    cmdInfo.dstSizesArray.stride = sizeof(uint32_t);
+    cmdInfo.dstAddressesArray.deviceAddress = getBufferDeviceAddress(dstAddressesBuffer);
+    cmdInfo.dstAddressesArray.size = dstAddressesSize;
+    cmdInfo.dstAddressesArray.stride = sizeof(uint64_t);
+    cmdInfo.scratchData = getBufferDeviceAddress(scratchBuffer);
+
+    if (useImplicitTemplates) {
+      assert(false && "not implemented");
+    }
+    else {
+      inputs.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_COMPUTE_SIZES_NV;
+      inputs.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_TRIANGLE_CLUSTER_TEMPLATE_NV;
+      inputs.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    }
+
+    cmdInfo.input = inputs;
+
+    printf(">> 1. build cluster template - compute sizes\n");
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+    PFN_vkCmdBuildClusterAccelerationStructureIndirectNV
+      funcCmdBuildClusterAccelerationStructureIndirectNV =
+      (PFN_vkCmdBuildClusterAccelerationStructureIndirectNV)vkGetInstanceProcAddr(
+        instance, "vkCmdBuildClusterAccelerationStructureIndirectNV");
+    assert(funcCmdBuildClusterAccelerationStructureIndirectNV);
+    funcCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &cmdInfo);
+    endSingleTimeCommands(commandBuffer);
+
+    // compute template buffer sizes
+
+    uint32_t buildSum = 0;
+    std::vector<uint32_t> templateSizes{};
+    {
+      vkMapMemory(device, dstSizesMemory, 0, dstSizesSize, 0, (void**)&data);
+      printf("template dst sizes:");
+      for (uint32_t i = 0; i < g_cluster_count; i++) {
+        uint32_t s = ((uint32_t*)data)[i];
+        printf(" %u", s);
+        buildSum += s;
+        templateSizes.push_back(s);
+      }
+      printf("\n");
+      vkUnmapMemory(device, dstSizesMemory);
+    }
+
+    printf("template total build size: %u\n", buildSum);
+    VkBuffer templatesBuffer;
+    VkDeviceMemory templatesMemory;
+    std::vector<uint64_t> templateAddresses{};
+
+    createBuffer(buildSum,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      templatesBuffer, templatesMemory);
+    uint64_t templatesAddr = getBufferDeviceAddress(templatesBuffer);
+
+    if (useImplicitTemplates) {
+      assert(false && "unimplemented");
+    }
+    else {
+      vkMapMemory(device, dstAddressesMemory, 0, dstAddressesSize, 0, (void**)(&data));
+      buildSum = 0;
+      uint64_t* dst_addrs = (uint64_t*)data;
+      for (uint32_t c = 0; c < g_cluster_count; c++) {
+        dst_addrs[c] = templatesAddr + buildSum;
+        templateAddresses.push_back(templatesAddr + buildSum);
+        buildSum += templateSizes[c];
+      }
+      vkUnmapMemory(device, dstAddressesMemory);
+
+      inputs.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_EXPLICIT_DESTINATIONS_NV;
+      cmdInfo.input = inputs;
+
+      printf(">> 2. build cluster template - explicit\n");
+      commandBuffer = beginSingleTimeCommands();
+      funcCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &cmdInfo);
+      endSingleTimeCommands(commandBuffer);
+    }
+
+    // now compute instantiation sizes.
+    std::vector<VkClusterAccelerationStructureInstantiateClusterInfoNV> instantiationInfos(g_cluster_count);
+
+    for (uint32_t c = 0; c < g_cluster_count; c++) {
+      VkClusterAccelerationStructureInstantiateClusterInfoNV& instantiationInfo = instantiationInfos[c];
+      instantiationInfo.clusterIdOffset = 0;
+      instantiationInfo.clusterTemplateAddress = templateAddresses[c];
+      instantiationInfo.geometryIndexOffset = 0;
+      instantiationInfo.vertexBuffer.startAddress = 0;
+      instantiationInfo.vertexBuffer.strideInBytes = 0;
+    }
+
+    vkMapMemory(device, srcInfosMemory, 0, srcInfosSize, 0, (void**)&data);
+    memcpy(data, instantiationInfos.data(), sizeof(VkClusterAccelerationStructureInstantiateClusterInfoNV) * instantiationInfos.size());
+    vkUnmapMemory(device, srcInfosMemory);
+
+    inputs.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_COMPUTE_SIZES_NV;
+    inputs.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_INSTANTIATE_TRIANGLE_CLUSTER_NV;
+    inputs.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+
+    cmdInfo.srcInfosArray.deviceAddress = getBufferDeviceAddress(srcInfosBuffer);
+    cmdInfo.srcInfosArray.size = sizeof(VkClusterAccelerationStructureInstantiateClusterInfoNV) * g_cluster_count;
+    cmdInfo.srcInfosArray.stride = sizeof(VkClusterAccelerationStructureInstantiateClusterInfoNV);
+    cmdInfo.dstSizesArray.deviceAddress = getBufferDeviceAddress(dstSizesBuffer);
+    cmdInfo.dstSizesArray.size = sizeof(uint32_t) * g_cluster_count;
+    cmdInfo.dstSizesArray.stride = sizeof(uint32_t);
+    cmdInfo.dstAddressesArray.deviceAddress = 0;
+    cmdInfo.dstAddressesArray.stride = 0;
+    cmdInfo.dstAddressesArray.size= 0;
+
+    cmdInfo.input = inputs;
+
+    printf(">> 3. instantiate cluster template - compute sizes\n");
+    commandBuffer = beginSingleTimeCommands();
+    funcCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &cmdInfo);
+    endSingleTimeCommands(commandBuffer);
+
+    std::vector<uint32_t> instantiationSizes{};
+
+    // Track instantiation size for each instance.
+    size_t sumInstantationSize = 0;
+    {
+      vkMapMemory(device, dstSizesMemory, 0, dstSizesSize, 0, (void**)&data);
+      printf("template instantiation dst sizes:");
+      for (uint32_t i = 0; i < g_cluster_count; i++) {
+        uint32_t s = ((uint32_t*)data)[i];
+        printf(" %u", s);
+        sumInstantationSize += s;
+        instantiationSizes.push_back(s);
+      }
+      printf("\n");
+      vkUnmapMemory(device, dstSizesMemory);
+    }
+
+    // Init template instantiations
+    vkDestroyBuffer(device, scratchBuffer, nullptr);
+    vkFreeMemory(device, scratchMemory, nullptr);
+    vkDestroyBuffer(device, srcInfosBuffer, nullptr);
+    vkFreeMemory(device, srcInfosMemory, nullptr);
+    vkDestroyBuffer(device, dstSizesBuffer, nullptr);
+    vkFreeMemory(device, dstSizesMemory, nullptr);
+    vkDestroyBuffer(device, dstAddressesBuffer, nullptr);
+    vkFreeMemory(device, dstAddressesMemory, nullptr);
+
+    inputs.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV;
+    inputs.maxAccelerationStructureCount = g_cluster_count;
+    inputs.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_INSTANTIATE_TRIANGLE_CLUSTER_NV;
+    inputs.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_EXPLICIT_DESTINATIONS_NV;
+    inputs.opInput.pTriangleClusters = &templateTriangleInput;
+    funcGetClusterAccelerationStructureBuildSizesNV(device, &inputs, &sizesInfo);
+    tempScratchSize = sizesInfo.buildScratchSize;
+
+    // Per instance cluster buffer.
+    // 1 instance = 1 cluster BLAS ?
+    createBuffer(sumInstantationSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      0,
+      clusterBufferTemplated, clusterBufferTemplatedMemory);
+    VkDeviceAddress instantiationsAddr = getBufferDeviceAddress(clusterBufferTemplated);
+
+    srcInfosSize = sizeof(VkClusterAccelerationStructureInstantiateClusterInfoNV) * g_cluster_count;
+    dstSizesSize = sizeof(uint32_t) * g_cluster_count;
+    dstAddressesSize = sizeof(uint64_t) * g_cluster_count;
+    size_t sizes1[] = { srcInfosSize, dstSizesSize, dstAddressesSize, tempScratchSize };
+    VkBuffer* buffers1[] = { &srcInfosBuffer, &dstSizesBuffer, &dstAddressesBuffer, &scratchBuffer };
+    VkDeviceMemory* memories1[] = { &srcInfosMemory, &dstSizesMemory, &dstAddressesMemory, &scratchMemory };
+
+    for (uint32_t i = 0; i < 4; i++) {
+      createBuffer(sizes[i],
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        *(buffers[i]), *(memories[i]));
+    }
+
+    std::vector<uint64_t> instantiatedTemplateAddresses{};
+    // Fill instanciation task data, and calculate instantiation output addresses
+    // per-instance
+    std::vector<VkClusterAccelerationStructureInstantiateClusterInfoNV> instantiateClusterInfos(g_cluster_count);
+    {
+      uint32_t instantiationOffset = 0;
+      for (uint32_t c = 0; c < g_cluster_count; c++) {
+        VkClusterAccelerationStructureInstantiateClusterInfoNV& instInfo = instantiateClusterInfos[c];
+        
+        instInfo.clusterIdOffset = 0;
+        instInfo.clusterTemplateAddress = templateAddresses[c];
+        instantiatedTemplateAddresses.push_back(instantiationsAddr + instantiationOffset);
+        instantiationOffset += instantiationSizes[c];
+
+        if (useDedicatedVertices) {
+          instInfo.vertexBuffer.startAddress = getBufferDeviceAddress(clusterVertexBuffers[c]);
+          instInfo.vertexBuffer.strideInBytes = sizeof(glm::vec3);
+        }
+        else {
+          if (true/*!update*/) {
+            instInfo.vertexBuffer.startAddress = clusterVertexBufferForIndirectAddr + cluster_vert_idx_offsets[c] * sizeof(glm::vec3);
+          }
+          else {
+            instInfo.vertexBuffer.startAddress = clusterVertexBufferForIndirectDisplacedAddr + cluster_vert_idx_offsets[c] * sizeof(glm::vec3);
+          }
+          instInfo.vertexBuffer.strideInBytes = sizeof(glm::vec3);
+        }
+      }
+    }
+
+    vkMapMemory(device, srcInfosMemory, 0, srcInfosSize, 0, (void**)&data);
+    memcpy(data, instantiateClusterInfos.data(), srcInfosSize);
+    vkUnmapMemory(device, srcInfosMemory);
+
+    vkMapMemory(device, dstSizesMemory, 0, dstSizesSize, 0, (void**)&data);
+    memcpy(data, instantiationSizes.data(), dstSizesSize);
+    vkUnmapMemory(device, dstSizesMemory);
+
+    // Destination data
+    vkMapMemory(device, dstAddressesMemory, 0, dstAddressesSize, 0, (void**)&data);
+    memcpy(data, instantiatedTemplateAddresses.data(), dstAddressesSize);
+    vkUnmapMemory(device, dstAddressesMemory);
+
+    cmdInfo.srcInfosArray.deviceAddress = getBufferDeviceAddress(srcInfosBuffer);
+    cmdInfo.srcInfosArray.size = srcInfosSize;
+    cmdInfo.srcInfosArray.stride = sizeof(VkClusterAccelerationStructureInstantiateClusterInfoNV);
+    cmdInfo.dstSizesArray.deviceAddress = getBufferDeviceAddress(dstSizesBuffer);
+    cmdInfo.dstSizesArray.size = dstSizesSize;
+    cmdInfo.dstSizesArray.stride = sizeof(uint32_t);
+    cmdInfo.dstAddressesArray.deviceAddress = getBufferDeviceAddress(dstAddressesBuffer);
+    cmdInfo.dstAddressesArray.stride = sizeof(uint64_t);
+    cmdInfo.dstAddressesArray.size = dstAddressesSize;
+    cmdInfo.input = inputs;
+    commandBuffer = beginSingleTimeCommands();
+    printf(">> 4. instantiate cluster template - explicit\n");
+    funcCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &cmdInfo);
+    endSingleTimeCommands(commandBuffer);
+
+    // Initialize cluster BLAS
+    VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV blasInfo{};
+    blasInfo.clusterReferences = getBufferDeviceAddress(dstAddressesBuffer);
+    blasInfo.clusterReferencesCount = g_cluster_count;  // Only 1 instance
+    blasInfo.clusterReferencesStride = sizeof(uint64_t);
+
+    VkBuffer clusterBlasInfosBuffer;
+    VkDeviceMemory clusterBlasInfosMemory;
+    VkBuffer clusterBlasSizesBuffer;
+    VkDeviceMemory clusterBlasSizesMemory;
+
+    size_t clusterBlasInfosSize = sizeof(VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV) * 1;
+    size_t clusterBlasSizesSize = sizeof(uint32_t) * 1;
+    size_t sizes2[] = { clusterBlasInfosSize, clusterBlasSizesSize };
+    VkBuffer* buffers2[] = { &clusterBlasInfosBuffer, &clusterBlasSizesBuffer };
+    VkDeviceMemory* memories2[] = { &clusterBlasInfosMemory, &clusterBlasSizesMemory };
+    for (uint32_t i = 0; i < 2; i++) {
+      createBuffer(sizes2[i],
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+        | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        *(buffers2[i]), *(memories2[i]));
+    }
+
+    vkMapMemory(device, clusterBlasInfosMemory, 0, clusterBlasInfosSize, 0, (void**)&data);
+    memcpy(data, &blasInfo, clusterBlasInfosSize);
+    vkUnmapMemory(device, clusterBlasInfosMemory);
+
+    uint32_t numInstances = 1;
+    VkClusterAccelerationStructureClustersBottomLevelInputNV clusterBlasInput{};
+    clusterBlasInput.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_CLUSTERS_BOTTOM_LEVEL_INPUT_NV;
+    clusterBlasInput.maxClusterCountPerAccelerationStructure = g_cluster_count;
+    clusterBlasInput.maxTotalClusterCount = g_cluster_count;
+
+    // VkClusterAccelerationStructureInputInfoNV inputs{};
+    inputs = {};
+    inputs.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_INPUT_INFO_NV;
+    inputs.maxAccelerationStructureCount = numInstances;
+    inputs.opMode = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_MODE_IMPLICIT_DESTINATIONS_NV;
+    inputs.opType = VK_CLUSTER_ACCELERATION_STRUCTURE_OP_TYPE_BUILD_CLUSTERS_BOTTOM_LEVEL_NV;
+    inputs.opInput.pClustersBottomLevel = &clusterBlasInput;
+    inputs.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+
+    // VkAccelerationStructureBuildSizesInfoKHR sizesInfo{};
+    funcGetClusterAccelerationStructureBuildSizesNV(device, &inputs, &sizesInfo);
+    tempScratchSize = sizesInfo.buildScratchSize;
+    printf("cluster BLAS: as=%u, buildScrach=%u, updateScratch=%u\n",
+      sizesInfo.accelerationStructureSize, sizesInfo.buildScratchSize, sizesInfo.updateScratchSize);
+
+    vkDestroyBuffer(device, scratchBuffer, nullptr);
+    vkFreeMemory(device, scratchMemory, nullptr);
+    createBuffer(
+      tempScratchSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      scratchBuffer, scratchMemory);
+
+    createBuffer(
+      sizesInfo.accelerationStructureSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      clusterBlasTemplatedBuffer, clusterBlasTemplatedMemory);
+
+    VkBuffer clusterBlasTemplatedDstBuffer;
+    VkDeviceMemory clusterBlasTemplatedDstMemory;
+    size_t clusterBlasTemplatedDstSize = sizeof(uint64_t) * numInstances;
+    createBuffer(
+      clusterBlasTemplatedDstSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      clusterBlasTemplatedDstBuffer, clusterBlasTemplatedDstMemory);
+
+    // Update cluster BLAS
+    // VkClusterAccelerationStructureCommandsInfoNV cmdInfo{};
+    cmdInfo = {};
+    cmdInfo.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_COMMANDS_INFO_NV;
+
+    // VkClusterAccelerationStructureInputInfoNV inputs{}; // unchanged
+    cmdInfo.dstAddressesArray.deviceAddress = getBufferDeviceAddress(clusterBlasTemplatedDstBuffer);
+    cmdInfo.dstAddressesArray.size = clusterBlasTemplatedDstSize;
+    cmdInfo.dstAddressesArray.stride = sizeof(uint64_t);
+
+    cmdInfo.dstSizesArray.deviceAddress = getBufferDeviceAddress(clusterBlasSizesBuffer);
+    cmdInfo.dstSizesArray.size = clusterBlasSizesSize;
+    cmdInfo.dstSizesArray.stride = sizeof(uint32_t);
+
+    cmdInfo.srcInfosArray.deviceAddress = getBufferDeviceAddress(clusterBlasInfosBuffer);
+    cmdInfo.srcInfosArray.size = clusterBlasInfosSize;
+    cmdInfo.srcInfosArray.stride = sizeof(VkClusterAccelerationStructureBuildClustersBottomLevelInfoNV);
+
+    cmdInfo.dstImplicitData = getBufferDeviceAddress(clusterBlasTemplatedBuffer);
+    cmdInfo.scratchData = getBufferDeviceAddress(scratchBuffer);
+    cmdInfo.input = inputs;
+
+    commandBuffer = beginSingleTimeCommands();
+    funcCmdBuildClusterAccelerationStructureIndirectNV(commandBuffer, &cmdInfo);
+    endSingleTimeCommands(commandBuffer);
+
+    // Create and update TLAS
+    VkAccelerationStructureInstanceKHR tlasInstance{};
+    tlasInstance.transform.matrix[0][0] = 1.0f;
+    tlasInstance.transform.matrix[1][1] = 1.0f;
+    tlasInstance.transform.matrix[2][2] = 1.0f;
+    tlasInstance.mask = 0xFF;
+    tlasInstance.accelerationStructureReference = getBufferDeviceAddress(clusterBlasTemplatedBuffer);
+    //tlasInstance.accelerationStructureReference = getBufferDeviceAddress(clusterBlasBuffer);
+    {
+      PFN_vkGetAccelerationStructureDeviceAddressKHR funcGetAccelerationStructureDeviceAddressKHR =
+        (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetInstanceProcAddr(
+          instance, "vkGetAccelerationStructureDeviceAddressKHR");
+      VkAccelerationStructureDeviceAddressInfoKHR asAddrInfo{};
+      asAddrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+      asAddrInfo.accelerationStructure = clusterBlas;
+      printf(">>>>> 2 clusterBlasBuffer addr is %p; clusterBlas's addr is %p\n",
+        (void*)getBufferDeviceAddress(clusterBlasBuffer),
+        (void*)funcGetAccelerationStructureDeviceAddressKHR(device, &asAddrInfo));
+    }
+    
+    createBuffer(
+      sizeof(VkAccelerationStructureInstanceKHR),
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      clusterTlasTemplatedInstancesBuffer, clusterTlasTemplatedInstancesMemory);
+
+    vkMapMemory(device, clusterTlasTemplatedInstancesMemory, 0, sizeof(VkAccelerationStructureInstanceKHR), 0, (void**)&data);
+    memcpy(data, &tlasInstance, sizeof(VkAccelerationStructureInstanceKHR));
+    vkUnmapMemory(device, clusterTlasTemplatedInstancesMemory);
+
+    VkAccelerationStructureGeometryKHR tlasGeometry{};
+    tlasGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    tlasGeometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    tlasGeometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    tlasGeometry.geometry.instances.data.deviceAddress = getBufferDeviceAddress(clusterTlasTemplatedInstancesBuffer);
+
+    VkAccelerationStructureBuildGeometryInfoKHR tlasBuildGeometryInfo{};
+    tlasBuildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    tlasBuildGeometryInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    tlasBuildGeometryInfo.geometryCount = 1;
+    tlasBuildGeometryInfo.pGeometries = &tlasGeometry;
+    tlasBuildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    tlasBuildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    tlasBuildGeometryInfo.srcAccelerationStructure = VK_NULL_HANDLE;
+
+    uint32_t instanceCount = 1;
+    
+    // Determine build size
+    PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
+      (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetInstanceProcAddr(
+        instance, "vkGetAccelerationStructureBuildSizesKHR");
+    assert(funcGetAccelerationStructureBuildSizes);
+    funcGetAccelerationStructureBuildSizes(device,
+      VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+      &tlasBuildGeometryInfo,
+      &instanceCount,
+      &sizesInfo);
+    printf("[cluster-templated tlas] as=%u buildScratch=%u updateScratch=%u\n",
+      sizesInfo.accelerationStructureSize, sizesInfo.buildScratchSize, sizesInfo.updateScratchSize);
+
+    // Create Buffer
+    createBuffer(
+      sizesInfo.accelerationStructureSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      clusterTlasTemplatedBuffer, clusterTlasTemplatedMemory);
+
+    vkDestroyBuffer(device, scratchBuffer, nullptr);
+    vkFreeMemory(device, scratchMemory, nullptr);
+    createBuffer(
+      sizesInfo.buildScratchSize,
+      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      scratchBuffer, scratchMemory);
+
+    // Create TLAS
+    VkAccelerationStructureCreateInfoKHR tlasCreateInfo{};
+    tlasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    tlasCreateInfo.createFlags = 0;
+    tlasCreateInfo.size = sizesInfo.accelerationStructureSize;
+    tlasCreateInfo.buffer = clusterTlasTemplatedBuffer;
+    tlasCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+
+    PFN_vkCreateAccelerationStructureKHR funcCreateAccelerationStructure =
+      (PFN_vkCreateAccelerationStructureKHR)vkGetInstanceProcAddr(
+        instance, "vkCreateAccelerationStructureKHR");
+    if (funcCreateAccelerationStructure(device, &tlasCreateInfo, nullptr, &clusterTlasTemplated) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create cluster templated tlas.");
+    }
+
+    {
+      PFN_vkGetAccelerationStructureDeviceAddressKHR funcGetAccelerationStructureDeviceAddressKHR =
+        (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetInstanceProcAddr(
+          instance, "vkGetAccelerationStructureDeviceAddressKHR");
+      VkAccelerationStructureDeviceAddressInfoKHR asAddrInfo{};
+      asAddrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+      asAddrInfo.accelerationStructure = clusterTlasTemplated;
+      printf(">>>>> clusterTlastemplated addr is %p\n",
+        (void*)funcGetAccelerationStructureDeviceAddressKHR(device, &asAddrInfo));
+    }
+
+    tlasBuildGeometryInfo.dstAccelerationStructure = clusterTlasTemplated;
+    tlasBuildGeometryInfo.scratchData.deviceAddress = getBufferDeviceAddress(scratchBuffer);
+
+    PFN_vkCmdBuildAccelerationStructuresKHR funcCmdBuildAccelerationStructuresKHR =
+      (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetInstanceProcAddr(
+        instance, "vkCmdBuildAccelerationStructuresKHR");
+    VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
+    buildRangeInfo.firstVertex = 0;
+    buildRangeInfo.primitiveCount = 1;
+    buildRangeInfo.primitiveOffset = 0;
+    buildRangeInfo.transformOffset = 0;
+    VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
+
+    commandBuffer = beginSingleTimeCommands();
+    funcCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &tlasBuildGeometryInfo, buildRangeInfos);
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+      0, 1, &barrier,
+      0, nullptr,
+      0, nullptr);
+    endSingleTimeCommands(commandBuffer);
+
+    vkDestroyBuffer(device, srcInfosBuffer, nullptr);
+    vkFreeMemory(device, srcInfosMemory, nullptr);
+    vkDestroyBuffer(device, dstSizesBuffer, nullptr);
+    vkFreeMemory(device, dstSizesMemory, nullptr);
+    vkDestroyBuffer(device, dstAddressesBuffer, nullptr);
+    vkFreeMemory(device, dstAddressesMemory, nullptr);
+    vkDestroyBuffer(device, scratchBuffer, nullptr);
+    vkFreeMemory(device, scratchMemory, nullptr);
+    vkDestroyBuffer(device, clusterBlasInfosBuffer, nullptr);
+    vkFreeMemory(device, clusterBlasInfosMemory, nullptr);
+    vkDestroyBuffer(device, clusterBlasSizesBuffer, nullptr);
+    vkFreeMemory(device, clusterBlasSizesMemory, nullptr);
+    vkDestroyBuffer(device, clusterBlasTemplatedDstBuffer, nullptr);
+    vkFreeMemory(device, clusterBlasTemplatedDstMemory, nullptr);
+
+    return;
+  }
+
   void updateAS() {
     bool is_clas = (g_is_rt && g_is_cluster);
     if (is_clas) {
@@ -3430,9 +4160,11 @@ private:
   }
 
   void createComputeDescriptorPool() {
-    VkDescriptorPoolSize poolSizes[1]{};
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    VkDescriptorPoolSize poolSizes[2]{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[0].descriptorCount = 3;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[1].descriptorCount = 3;
     VkDescriptorPoolCreateInfo poolCreateInfo{};
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCreateInfo.poolSizeCount = _countof(poolSizes);
@@ -3636,11 +4368,22 @@ private:
   VkDeviceMemory clusterMemory;
   VkBuffer clusterBlasBuffer; // Cluster BLAS
   VkDeviceMemory clusterBlasMemory;
+  VkAccelerationStructureKHR clusterBlas;
   VkBuffer clusterTlasBuffer; // Cluster TLAS
   VkAccelerationStructureKHR clusterTlas;
   VkDeviceMemory clusterTlasMemory;
   VkBuffer clusterTlasInstancesBuffer;
   VkDeviceMemory clusterTlasInstancesMemory;
+  // CLAS, templated
+  VkBuffer clusterBufferTemplated;
+  VkDeviceMemory clusterBufferTemplatedMemory;
+  VkBuffer clusterBlasTemplatedBuffer;  // Cluster (templated) BLAS
+  VkDeviceMemory clusterBlasTemplatedMemory;
+  VkBuffer clusterTlasTemplatedInstancesBuffer;
+  VkDeviceMemory clusterTlasTemplatedInstancesMemory;
+  VkAccelerationStructureKHR clusterTlasTemplated;
+  VkBuffer clusterTlasTemplatedBuffer;
+  VkDeviceMemory clusterTlasTemplatedMemory;
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -3662,6 +4405,11 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     }
     case GLFW_KEY_R: {
       g_is_rotate = !g_is_rotate;
+      break;
+    }
+    case GLFW_KEY_T: {
+      g_is_cluster_template = !g_is_cluster_template;
+      SetWindowTitle();
       break;
     }
     default:
