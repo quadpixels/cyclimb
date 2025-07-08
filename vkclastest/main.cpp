@@ -3634,8 +3634,6 @@ private:
       }
 
       printf("template total build size: %u\n", buildSum);
-      VkBuffer templatesBuffer;
-      VkDeviceMemory templatesMemory;
 
       createBuffer(buildSum,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
@@ -3746,12 +3744,14 @@ private:
 
     // Per instance cluster buffer.
     // 1 instance = 1 cluster BLAS ?
-    createBuffer(sumInstantationSize,
-      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-      0,
-      clusterBufferTemplated, clusterBufferTemplatedMemory);
+    if (!update) {
+      createBuffer(sumInstantationSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        0,
+        clusterBufferTemplated, clusterBufferTemplatedMemory);
+    }
     VkDeviceAddress instantiationsAddr = getBufferDeviceAddress(clusterBufferTemplated);
 
     srcInfosSize = sizeof(VkClusterAccelerationStructureInstantiateClusterInfoNV) * g_cluster_count;
@@ -4403,6 +4403,8 @@ private:
   VkBuffer clusterTlasInstancesBuffer;
   VkDeviceMemory clusterTlasInstancesMemory;
   // CLAS, templated
+  VkBuffer templatesBuffer;
+  VkDeviceMemory templatesMemory;
   VkBuffer clusterBufferTemplated;
   VkDeviceMemory clusterBufferTemplatedMemory;
   VkBuffer clusterBlasTemplatedBuffer;  // Cluster (templated) BLAS
