@@ -34,6 +34,8 @@ public:
   {
     Viewport viewport;
     Viewport stencil;
+    int my_flags;
+    int anyhit_idx;
   };
   struct Mat3x4 {
     float m[3][4];
@@ -84,6 +86,20 @@ public:
 
   // Output
   ID3D12Resource* rt_output_resource;
+
+  // Controls
+  bool is_facing_plus_z{ false };
+  bool is_ignore_hit{ false };
+  bool ToggleIsFacingPlusZ();
+  bool ToggleIsIgnoreHit();
+
+  // Info
+  TextPass* text_pass;
+  ID3D12DescriptorHeap* dsv_heap{};
+  ID3D12Resource* depth_map{};
+  int dsv_descriptor_size{};
+  int anyhit_idx;
+  void CycleAnyhitIdx(int delta);
 };
 
 class TriangleScene : public Scene {

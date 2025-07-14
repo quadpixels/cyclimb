@@ -17,11 +17,13 @@
 RaytracingAccelerationStructure Scene : register(t0, space0);
 RWTexture2D<float4> RenderTarget : register(u0);
 ConstantBuffer<RayGenConstantBuffer> g_rayGenCB : register(b0);
+RWStructuredBuffer<float4> MyDebugBuffer : register(u1);
 
 typedef BuiltInTriangleIntersectionAttributes MyAttributes;
 struct RayPayload
 {
     float4 color;
+    int counter;
 };
 
 bool IsInsideViewport(float2 p, Viewport viewport)
@@ -36,11 +38,24 @@ void MyRaygenShader()
     float2 lerpValues = (float2)DispatchRaysIndex() / (float2)DispatchRaysDimensions();
 
     // Orthographic projection since we're raytracing in screen space.
-    float3 rayDir = float3(0, 0, 1);
-    float3 origin = float3(
+    float3 rayDir, origin;
+
+    if (g_rayGenCB.my_flags & 1)
+    {
+        rayDir = float3(0, 0, 1);
+        origin = float3(
+            lerp(g_rayGenCB.viewport.left, g_rayGenCB.viewport.right, lerpValues.x),
+            lerp(g_rayGenCB.viewport.top, g_rayGenCB.viewport.bottom, lerpValues.y),
+            0.0f);
+    } else
+    {
+        rayDir = float3(0, 0, -1);
+        origin = float3(
         lerp(g_rayGenCB.viewport.left, g_rayGenCB.viewport.right, lerpValues.x),
         lerp(g_rayGenCB.viewport.top, g_rayGenCB.viewport.bottom, lerpValues.y),
-        0.0f);
+        1000.0f);
+    }
+    
 
     if (IsInsideViewport(origin.xy, g_rayGenCB.stencil))
     {
@@ -53,8 +68,8 @@ void MyRaygenShader()
         // TMin should be kept small to prevent missing geometry at close contact areas.
         ray.TMin = 0.001;
         ray.TMax = 10000.0;
-        RayPayload payload = { float4(0, 0, 0, 1) };
-        TraceRay(Scene, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, ~0, 0, 0, 0, ray, payload);
+        RayPayload payload = { float4(0, 0, 0, 1), 0 };
+        TraceRay(Scene, RAY_FLAG_NONE, ~0, 0, 0, 0, ray, payload);
 
         // Write the raytraced color to the output texture.
         RenderTarget[DispatchRaysIndex().xy] = payload.color;
@@ -73,7 +88,8 @@ void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
     int pidx = PrimitiveIndex();
     int gidx = GeometryIndex();
 
-    payload.color.xy = barycentrics;
+    payload.color.rg = barycentrics;
+    //payload.color.rgb = float3(0.5, 0.5, 0.5);
     /*switch (gidx) {
       case 0: {
         switch (pidx) {
@@ -99,10 +115,34 @@ void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
 [shader("anyhit")]
 void MyAnyHitShader(inout RayPayload payload, in MyAttributes attr)
 {
-  payload.color.r += 0.2f;
-  payload.color.g += 0.2f;
-  payload.color.b = RayTCurrent();
-  IgnoreHit();  
+    uint pidx = PrimitiveIndex();
+    if (g_rayGenCB.anyhit_idx == -1 || (payload.counter == g_rayGenCB.anyhit_idx))
+    {
+        switch (PrimitiveIndex() % 6)
+        {
+            case 0:
+                payload.color.rgb = float3(1, 0, 0);
+                break;
+            case 1:
+                payload.color.rgb = float3(0, 1, 0);
+                break;
+            case 2:
+                payload.color.rgb = float3(0, 0, 1);
+                break;
+            case 3:
+                payload.color.rgb = float3(1, 1, 0);
+                break;
+            case 4:
+                payload.color.rgb = float3(1, 0, 1);
+                break;
+            case 5:
+                payload.color.rgb = float3(1, 1, 0);
+                break;
+        }
+    }
+    payload.counter++;
+    if (g_rayGenCB.my_flags & 2)
+        IgnoreHit();
 }
 
 [shader("miss")]
@@ -121,9 +161,8 @@ void MyIntersectionShader()
   MyAttributes attr;
   attr.barycentrics.x = ray.Origin.x;
   attr.barycentrics.y = ray.Origin.y;
-  ReportHit(1.0f, 0, attr);
-  ReportHit(0.9f, 0, attr);
-  ReportHit(0.8f, 0, attr);
+  ReportHit(0.45f, 0, attr);
+  ReportHit(0.55f, 0, attr);
 }
 
 [shader("callable")]

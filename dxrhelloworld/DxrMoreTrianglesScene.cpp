@@ -3,8 +3,11 @@
 #include <d3dx12.h>
 #include <dxgi1_4.h>
 
+#include "dxrhelloworld/x64/Debug/CompiledShaders/raytracing_tutorial.hlsl.h";
+
 extern int WIN_W, WIN_H;
 extern ID3D12Device5* g_device12;
+extern std::wstring g_device_name;
 extern ID3D12DescriptorHeap* g_rtv_heap;
 extern int g_rtv_descriptor_size;
 extern int g_frame_index;
@@ -65,7 +68,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
   {
     D3D12_ROOT_PARAMETER root_param;
     root_param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    root_param.Constants.Num32BitValues = 8;
+    root_param.Constants.Num32BitValues = 12;  // viewport, scissor, is_facing_pos_z, is_ignore_hit
     root_param.Constants.ShaderRegister = 0;
     root_param.Constants.RegisterSpace = 0;
     root_param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -102,7 +105,6 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     // 1. DXIL library
     D3D12_DXIL_LIBRARY_DESC dxil_lib_desc = {};
-    IDxcBlob* dxil_library = CompileShaderLibrary(L"shaders/raytracing_tutorial.hlsl");
     D3D12_EXPORT_DESC dxil_lib_exports[6];
     dxil_lib_exports[0].Flags = D3D12_EXPORT_FLAG_NONE;
     dxil_lib_exports[0].ExportToRename = nullptr;
@@ -122,8 +124,8 @@ MoreTrianglesScene::MoreTrianglesScene() {
     dxil_lib_exports[5].Flags = D3D12_EXPORT_FLAG_NONE;
     dxil_lib_exports[5].ExportToRename = nullptr;
     dxil_lib_exports[5].Name = L"MyCallableShader";
-    dxil_lib_desc.DXILLibrary.pShaderBytecode = dxil_library->GetBufferPointer();
-    dxil_lib_desc.DXILLibrary.BytecodeLength = dxil_library->GetBufferSize();
+    dxil_lib_desc.DXILLibrary.pShaderBytecode = g_ShadersMoreTrianglesScene;
+    dxil_lib_desc.DXILLibrary.BytecodeLength = sizeof(g_ShadersMoreTrianglesScene);
     dxil_lib_desc.NumExports = _countof(dxil_lib_exports);
     dxil_lib_desc.pExports = dxil_lib_exports;
 
@@ -168,7 +170,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     D3D12_STATE_SUBOBJECT subobj_shaderconfig = {};
     subobj_shaderconfig.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
     D3D12_RAYTRACING_SHADER_CONFIG shader_config = {};
-    shader_config.MaxPayloadSizeInBytes = 16;  // float4 color
+    shader_config.MaxPayloadSizeInBytes = 20;  // float4 color + int
     shader_config.MaxAttributeSizeInBytes = 8;  // float2 bary
     subobj_shaderconfig.pDesc = &shader_config;
     subobjects.push_back(subobj_shaderconfig);
@@ -183,9 +185,13 @@ MoreTrianglesScene::MoreTrianglesScene() {
     D3D12_STATE_SUBOBJECT subobj_local_rootsig_assoc = {};
     subobj_local_rootsig_assoc.Type = D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION;
     D3D12_SUBOBJECT_TO_EXPORTS_ASSOCIATION local_rootsig_assoc{};
-    local_rootsig_assoc.NumExports = 1;
+    local_rootsig_assoc.NumExports = _countof(dxil_lib_exports);
     local_rootsig_assoc.pSubobjectToAssociate = &(subobjects.back());
-    local_rootsig_assoc.pExports = &(dxil_lib_exports[0].Name);  // L"MyRaygenShader"
+    std::vector<LPCWSTR> exports{};
+    for (const auto& e : dxil_lib_exports) {
+      exports.push_back(e.Name);
+    }
+    local_rootsig_assoc.pExports = exports.data();  // Make the CB usable in all shaders
     subobj_local_rootsig_assoc.pDesc = &local_rootsig_assoc;
     subobjects.push_back(subobj_local_rootsig_assoc);
 
@@ -217,9 +223,9 @@ MoreTrianglesScene::MoreTrianglesScene() {
   {
     int16_t indices[] = { 0,1,2 };
     Vertex vertices[] = {
-      { 0, -l, 1.0 },
-      { -l, l, 1.0 },
-      { l, l, 1.0 },
+      { 0, -l, 0.0 },
+      { -l, l, 0.0 },
+      { l, l, 0.0 },
     };
 
     CE(g_device12->CreateCommittedResource(
@@ -260,7 +266,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     aabbs[1].MaxY = l * 0.4f + 0.5f;
 
 
-    // AABBs in the center for any-hit
+    // AABBs at the bottom for any-hit
     std::vector<D3D12_RAYTRACING_AABB> aabbs2;
     for (int i = -2; i <= 2; i++) {
       const float l0 = 0.3f;
@@ -268,10 +274,10 @@ MoreTrianglesScene::MoreTrianglesScene() {
       const float dx = l0 * 0.8f * i;
       ab.MinX = dx - l0 * 0.5f;
       ab.MaxX = dx + l0 * 0.5f;
-      ab.MinY = -l0 * 0.5f;
-      ab.MaxY = -l0 * 0.5f + l0 * 0.1f;
+      ab.MinY = -l0 * 0.5f + 0.5f;
+      ab.MaxY = -l0 * 0.5f + l0 * 0.1f + 0.5f;
       ab.MinZ = 0.4f - eps;
-      ab.MaxZ = 0.4f + eps;
+      ab.MaxZ = 0.6f + eps;
       aabbs2.push_back(ab);
     }
 
@@ -300,22 +306,59 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
   // Triangles in the center for any-hit
   std::vector<Vertex> vertices2;
+  std::ofstream ofs("./nonopaque_tris.obj", std::ios::trunc);
+  ofs << "mtllib nonopaque_tris.mtl\n";
+  ofs << "o obj_1\n";
+  uint32_t nf = 0;
   for (int i=-2; i<=2; i++) {
     const float l0 = 0.1f;
     Vertex v0(0, -l0, 1.0);
     Vertex v1(-l0, l0, 1.0);
     Vertex v2(l0, l0, 1.0);
     const float dx = l0 * 0.2f;
+    const float ADJUST1 = 0.1f;
     v0.x += i * dx;
     v1.x += i * dx;
     v2.x += i * dx;
     v0.z += i * 0.01f;
-    v1.z += i * 0.01f;
-    v2.z += i * 0.01f;
+    v1.z += i * 0.01f + i * ADJUST1;
+    v2.z += i * 0.01f - i * ADJUST1;
     vertices2.push_back(v0);
     vertices2.push_back(v1);
     vertices2.push_back(v2);
+    ofs << "v " << v0.x << " " << v0.y << " " << v0.z << "\n";
+    ofs << "v " << v1.x << " " << v1.y << " " << v1.z << "\n";
+    ofs << "v " << v2.x << " " << v2.y << " " << v2.z << "\n";
+    nf++;
   };
+  
+  uint32_t vidx = 1;
+  for (uint32_t f = 0; f < nf; f++) {
+    if (f < 6) {
+      ofs << "usemtl mtl" << (f % 6) << "\n";
+    }
+    ofs << "f " << vidx << " " << vidx + 1 << " " << vidx + 2 << "\n";
+    vidx += 3;
+  }
+  ofs.close();
+
+  {
+    ofs = std::ofstream("./nonopaque_tris.mtl", std::ios::trunc);
+    glm::vec3 colors[] = {
+      glm::vec3(1,0,0),
+      glm::vec3(0,1,0),
+      glm::vec3(0,0,1),
+      glm::vec3(1,1,0),
+      glm::vec3(1,0,1),
+      glm::vec3(0,1,1)
+    };
+    for (uint32_t i = 0; i < _countof(colors); i++) {
+      ofs << "newmtl mtl" << i << "\n";
+      glm::vec3 kd = colors[i];
+      ofs << "Kd " << kd.x << " " << kd.y << " " << kd.z << "\n";
+    }
+    ofs.close();
+  }
 
   {
     CE(g_device12->CreateCommittedResource(
@@ -341,16 +384,21 @@ MoreTrianglesScene::MoreTrianglesScene() {
       IID_PPV_ARGS(&transform_matrices0)));
 
     char* mapped;
-    Mat3x4 mats[2] = {};
+    Mat3x4 mats[3] = {};
     mats[0].m[0][0] = 0.4f;
     mats[0].m[1][1] = 0.4f;
     mats[0].m[2][2] = 0.4f;
     mats[0].m[0][3] = -0.5f;  // left-top
     mats[0].m[1][3] = -0.5f;
-    mats[0].m[2][3] = 0.0f;
+    mats[0].m[2][3] = 0.5f;
 
     mats[1] = mats[0];
     mats[1].m[1][3] = 0.5f;  // left-bottom
+
+    mats[2] = mats[0];
+    mats[2].m[0][3] = 1000.0f;  // center
+    mats[2].m[1][3] = 0.0f;
+    mats[2].m[2][3] = -2.0f;
 
     transform_matrices0->Map(0, nullptr, (void**)(&mapped));
     memcpy(mapped, &(mats[0]), sizeof(mats));
@@ -362,7 +410,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
   // AS
   {
-    D3D12_RAYTRACING_GEOMETRY_DESC geom_desc[2];
+    D3D12_RAYTRACING_GEOMETRY_DESC geom_desc[3];
     geom_desc[0].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
     geom_desc[0].Triangles.VertexBuffer.StartAddress = vertex_buffer->GetGPUVirtualAddress();
     geom_desc[0].Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
@@ -377,6 +425,9 @@ MoreTrianglesScene::MoreTrianglesScene() {
     geom_desc[1] = geom_desc[0];
     geom_desc[1].Triangles.Transform3x4 = transform_matrices0->GetGPUVirtualAddress() + sizeof(float) * 12;
 
+    geom_desc[2] = geom_desc[0];
+    geom_desc[2].Triangles.Transform3x4 = transform_matrices0->GetGPUVirtualAddress() + sizeof(float) * 24;
+
     D3D12_RAYTRACING_GEOMETRY_DESC proc_descs[2]{};
     proc_descs[0].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
     proc_descs[0].AABBs.AABBCount = 2;
@@ -388,7 +439,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     proc_descs[1].AABBs.AABBCount = 5;
     proc_descs[1].AABBs.AABBs.StartAddress = proc_aabb2_buffer->GetGPUVirtualAddress();
     proc_descs[1].AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
-    proc_descs[1].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+    proc_descs[1].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
 
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO tlas_buildinfo{};
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas0_buildinfo{};
@@ -406,7 +457,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
     g_device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &tlas_buildinfo);
     blas0_inputs = tlas_inputs;
-    blas0_inputs.NumDescs = 2;
+    blas0_inputs.NumDescs = 3;
     blas0_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
     blas0_inputs.pGeometryDescs = geom_desc;
     
@@ -564,29 +615,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
   // Shader binding table
   {
-    void* raygen_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyRaygenShader");
-    struct RootArguments {
-      RayGenConstantBuffer cb;
-    } root_args;
-    root_args.cb.viewport.left = -1;
-    root_args.cb.viewport.top = -1;
-    root_args.cb.viewport.right = 1;
-    root_args.cb.viewport.bottom = 1;
-    float border = 0.1f;
-    float ar = WIN_W * 1.0f / WIN_H;
-    if (WIN_W < WIN_H) {
-      root_args.cb.stencil = {
-        -1 + border, -1 + border * ar,
-        1 - border, 1 - border * ar
-      };
-    }
-    else {
-      root_args.cb.stencil = {
-        -1 + border / ar, -1 + border,
-        1 - border / ar, 1 - border
-      };
-    }
-    int shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + sizeof(root_args);
+    int shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + sizeof(RayGenConstantBuffer);
     shader_record_size = RoundUp(shader_record_size, D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT);
     D3D12_RESOURCE_DESC sbt_desc{};
     sbt_desc.DepthOrArraySize = 1;
@@ -604,13 +633,8 @@ MoreTrianglesScene::MoreTrianglesScene() {
       D3D12_HEAP_FLAG_NONE, &sbt_desc,
       D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
       IID_PPV_ARGS(&raygen_sbt_storage)));
-    char* mapped;
-    raygen_sbt_storage->Map(0, nullptr, (void**)&mapped);
-    memcpy(mapped, raygen_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    mapped += D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    memcpy(mapped, &root_args, sizeof(root_args));
-    raygen_sbt_storage->Unmap(0, nullptr);
-    printf("Raygen's SBT size is %d\n", D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + sizeof(root_args));
+
+    printf("Raygen's SBT size is %d\n", D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + sizeof(RayGenConstantBuffer));
 
     void* miss_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyMissShader");
     shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
@@ -620,26 +644,16 @@ MoreTrianglesScene::MoreTrianglesScene() {
       D3D12_HEAP_FLAG_NONE, &sbt_desc,
       D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
       IID_PPV_ARGS(&miss_sbt_storage)));
-    miss_sbt_storage->Map(0, nullptr, (void**)&mapped);
-    memcpy(mapped, miss_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    miss_sbt_storage->Unmap(0, nullptr);
 
-    void* hit_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup");
-    void* hit_shader_id1 = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup1");
-    void* hit_shader_id2 = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup2");
     shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    sbt_desc.Width = shader_record_size * 4;
+    const uint32_t hit_sbt_stride = 128;  // Need space for the root params too
+    sbt_desc.Width = hit_sbt_stride * 4;
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
       D3D12_HEAP_FLAG_NONE, &sbt_desc,
       D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
       IID_PPV_ARGS(&hit_sbt_storage)));
-    hit_sbt_storage->Map(0, nullptr, (void**)&mapped);
-    memcpy(mapped, hit_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    memcpy(mapped + 32, hit_shader_id1, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    memcpy(mapped + 64, hit_shader_id2, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    hit_sbt_storage->Unmap(0, nullptr);
-    
+
     void* callable_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyCallableShader");
     sbt_desc.Width = shader_record_size;
     CE(g_device12->CreateCommittedResource(
@@ -647,9 +661,6 @@ MoreTrianglesScene::MoreTrianglesScene() {
       D3D12_HEAP_FLAG_NONE, &sbt_desc,
       D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
       IID_PPV_ARGS(&callable_sbt_storage)));
-    callable_sbt_storage->Map(0, nullptr, (void**)&mapped);
-    memcpy(mapped, callable_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-    callable_sbt_storage->Unmap(0, nullptr);
   }
 
   // Output resource
@@ -697,6 +708,44 @@ MoreTrianglesScene::MoreTrianglesScene() {
     g_device12->CreateShaderResourceView(nullptr, &srv_desc, srv_handle);
   }
 
+  // Text render pass
+  text_pass = new TextPass(g_device12, g_command_queue, command_list, command_allocator);
+  text_pass->AllocateConstantBuffers(1024);
+  text_pass->InitD3D12(nullptr);
+  text_pass->InitFreetype();
+
+  // DSV and depth map, just to make text render pass happy
+  // DSV heap, depthmap, DSV
+  {
+    D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc{};
+    dsv_heap_desc.NumDescriptors = 1;
+    dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    dsv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    CE(g_device12->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(&dsv_heap)));
+    dsv_heap->SetName(L"DSV heap");
+    dsv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+    D3D12_CLEAR_VALUE depth_clear{};
+    depth_clear.Format = DXGI_FORMAT_D32_FLOAT;
+    depth_clear.DepthStencil.Depth = 1.0f;
+    depth_clear.DepthStencil.Stencil = 0;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Tex2D(
+        DXGI_FORMAT_D32_FLOAT, WIN_W, WIN_H, 1, 0, 1, 0,
+        D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      &depth_clear,
+      IID_PPV_ARGS(&depth_map)));
+    depth_map->SetName(L"Depth map");
+
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
+    dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    dsv_desc.Flags = D3D12_DSV_FLAG_NONE;
+    g_device12->CreateDepthStencilView(depth_map, &dsv_desc, dsv_heap->GetCPUDescriptorHandleForHeapStart());
+  }
 }
 
 void MoreTrianglesScene::Render() {
@@ -735,10 +784,10 @@ void MoreTrianglesScene::Render() {
   desc.MissShaderTable.SizeInBytes = 32;
   desc.MissShaderTable.StrideInBytes = 32;
   desc.HitGroupTable.StartAddress = hit_sbt_storage->GetGPUVirtualAddress();
-  desc.HitGroupTable.SizeInBytes = 64;
-  desc.HitGroupTable.StrideInBytes = 32;
+  desc.HitGroupTable.SizeInBytes = 128 * 4;
+  desc.HitGroupTable.StrideInBytes = 128;
   desc.CallableShaderTable.StartAddress = callable_sbt_storage->GetGPUVirtualAddress();
-  desc.CallableShaderTable.SizeInBytes = 64;
+  desc.CallableShaderTable.SizeInBytes = 32;
   desc.Width = WIN_W;
   desc.Height = WIN_H;
   desc.Depth = 1;
@@ -759,14 +808,159 @@ void MoreTrianglesScene::Render() {
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
     D3D12_RESOURCE_STATE_COPY_DEST,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1,
+    (ID3D12CommandList* const*)&command_list);
+
+  WaitForPreviousFrame();
+
+  // --------------------------- Text ----------------------
+  // text_pass makes use of the command list now
+  text_pass->StartPass();
+  std::wstring info;
+  if (is_ignore_hit) {
+    info += L"AHS ignores hit, ";
+    if (anyhit_idx == -1) {
+      info += L"showing final, ";
+    }
+    else {
+      info += L"showing #" + std::to_wstring(anyhit_idx) + L", ";
+    }
+  }
+  else {
+    info += L"AHS accepts hit, ";
+  }
+  if (is_facing_plus_z) {
+    info += L"ray dir is +Z";
+  }
+  else {
+    info += L"ray dir is -Z";
+  }
+
+  text_pass->AddText(info.c_str(), WIN_W*0.5f - 10 * info.size() * 0.5f, WIN_H*0.45f-3.0f, 1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
+
+  info = L"Device: " + g_device_name;
+  text_pass->AddText(info.c_str(), 8, 24, 1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
+
+  // done using it
+  WaitForPreviousFrame();
+
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, text_pass->pipeline_state));
+  command_list->SetGraphicsRootSignature(text_pass->root_signature);
+  // Text pass's rendering process
+  ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
+  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
+  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
+  command_list->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissor);
+  D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle = dsv_heap->GetCPUDescriptorHandleForHeapStart();
+  command_list->ClearDepthStencilView(dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+  command_list->OMSetRenderTargets(1, &handle_rtv, false, &dsv_handle);
+  float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  command_list->OMSetBlendFactor(blend_factor);
+  text_pass->RenderText(command_list);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
     D3D12_RESOURCE_STATE_PRESENT)));
 
   CE(command_list->Close());
   g_command_queue->ExecuteCommandLists(1,
     (ID3D12CommandList* const*)&command_list);
+
+  // -------------------------------------------------------
+
+
   CE(g_swapchain->Present(1, 0));
   WaitForPreviousFrame();
 }
 
 void MoreTrianglesScene::Update(float secs) {
+  // Update SBTs (=shader IDs and root args)
+  RayGenConstantBuffer cb;
+  cb.viewport.left = -1;
+  cb.viewport.top = -1;
+  cb.viewport.right = 1;
+  cb.viewport.bottom = 1;
+  cb.my_flags = 0;
+  if (is_facing_plus_z) cb.my_flags |= 1;
+  if (is_ignore_hit) cb.my_flags |= 2;
+  cb.anyhit_idx = anyhit_idx;
+  float border = 0.1f;
+  float ar = WIN_W * 1.0f / WIN_H;
+  if (WIN_W < WIN_H) {
+    cb.stencil = {
+      -1 + border, -1 + border * ar,
+      1 - border, 1 - border * ar
+    };
+  }
+  else {
+    cb.stencil = {
+      -1 + border / ar, -1 + border,
+      1 - border / ar, 1 - border
+    };
+  }
+
+  void* raygen_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyRaygenShader");
+  char* mapped;
+  raygen_sbt_storage->Map(0, nullptr, (void**)&mapped);
+  memcpy(mapped, raygen_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  mapped += D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+  memcpy(mapped, &cb, sizeof(cb));
+  raygen_sbt_storage->Unmap(0, nullptr);
+
+  void* miss_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyMissShader");
+  miss_sbt_storage->Map(0, nullptr, (void**)&mapped);
+  memcpy(mapped, miss_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  mapped += D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+  memcpy(mapped, &cb, sizeof(cb));
+  miss_sbt_storage->Unmap(0, nullptr);
+
+  void* hit_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup");
+  void* hit_shader_id1 = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup1");
+  void* hit_shader_id2 = rt_state_object_props->GetShaderIdentifier(L"MyHitGroup2");
+  hit_sbt_storage->Map(0, nullptr, (void**)&mapped);
+  memcpy(mapped, hit_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  memcpy(mapped + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES, &cb, sizeof(cb));
+  memcpy(mapped + 128, hit_shader_id1, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  memcpy(mapped + 128 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES, &cb, sizeof(cb));
+  memcpy(mapped + 256, hit_shader_id2, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  memcpy(mapped + 256 + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES, &cb, sizeof(cb));
+  hit_sbt_storage->Unmap(0, nullptr);
+
+  void* callable_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyCallableShader");
+  callable_sbt_storage->Map(0, nullptr, (void**)&mapped);
+  memcpy(mapped, callable_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  callable_sbt_storage->Unmap(0, nullptr);
+}
+
+bool MoreTrianglesScene::ToggleIsFacingPlusZ() {
+  is_facing_plus_z = !is_facing_plus_z;
+  return is_facing_plus_z;
+}
+
+bool MoreTrianglesScene::ToggleIsIgnoreHit() {
+  is_ignore_hit = !is_ignore_hit;
+  return is_ignore_hit;
+}
+
+void MoreTrianglesScene::CycleAnyhitIdx(int delta) {
+  const int N = 5;
+  if (delta > 0) {
+    anyhit_idx++;
+    if (anyhit_idx >= N) {
+      anyhit_idx = -1;
+    }
+  }
+  else if (delta < 0) {
+    anyhit_idx--;
+    if (anyhit_idx < -1) {
+      anyhit_idx = N;
+    }
+  }
 }

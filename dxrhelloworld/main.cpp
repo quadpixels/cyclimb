@@ -11,6 +11,7 @@
 #include "textrender.hpp"
 
 ID3D12Device5* g_device12;
+std::wstring g_device_name;
 IDXGIFactory4* g_factory;
 ID3D12CommandQueue* g_command_queue;
 IDXGISwapChain3* g_swapchain;
@@ -94,6 +95,24 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     g_scene_idx = wParam - '0'; break;
   }
   default: break;
+    case 'F': {
+      bool f = ((MoreTrianglesScene*)(g_scenes[2]))->ToggleIsFacingPlusZ();
+      printf("MoreTrianglesScene is facing +z = %d\n", f);
+      break;
+    }
+    case 'I': {
+      bool i = ((MoreTrianglesScene*)(g_scenes[2]))->ToggleIsIgnoreHit();
+      printf("MoreTrianglesScene is ignore hit in any-hit shader = %d\n", i);
+      break;
+    }
+    case VK_RIGHT: {
+      ((MoreTrianglesScene*)(g_scenes[2]))->CycleAnyhitIdx(1);
+      break;
+    }
+    case VK_LEFT: {
+      ((MoreTrianglesScene*)(g_scenes[2]))->CycleAnyhitIdx(-1);
+      break;
+    }
   }
 
   if (g_scene_idx == 0) {
@@ -148,7 +167,8 @@ void InitDeviceAndCommandQ() {
     IDXGIAdapter* warp_adapter;
     CE(g_factory->EnumWarpAdapter(IID_PPV_ARGS(&warp_adapter)));
     CE(D3D12CreateDevice(warp_adapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&g_device12)));
-    printf("Created a WARP device=%p\n", g_device12);;
+    printf("Created a WARP device=%p\n", g_device12);
+    g_device_name = L"WARP";
   }
   else {
     IDXGIAdapter1* hw_adapter;
@@ -159,6 +179,7 @@ void InitDeviceAndCommandQ() {
       else {
         CE(D3D12CreateDevice(hw_adapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&g_device12)));
         printf("Created a hardware device = %p, %ls\n", g_device12, desc.Description);
+        g_device_name = desc.Description;
         break;
       }
     }

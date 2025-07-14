@@ -24,6 +24,8 @@ struct RayGenConstantBuffer
 {
     Viewport viewport;
     Viewport stencil;
+    int my_flags;  // bit0: face +Z, bit1: ignore hit
+    int anyhit_idx;
 };
 
 #endif // RAYTRACINGHLSLCOMPAT_H
