@@ -357,6 +357,9 @@ private:
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtPipelineProps{};
     rtPipelineProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
     prop2.pNext = &rtPipelineProps;
+    VkPhysicalDeviceRayTracingPropertiesNV rtProps{};
+    rtProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PROPERTIES_NV;
+    rtPipelineProps.pNext = &rtProps;
     vkGetPhysicalDeviceProperties2(physicalDevice, &prop2);
 
     uint32_t extensionCount{};
@@ -364,6 +367,16 @@ private:
     std::vector<VkExtensionProperties> extensions(extensionCount);
     vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionCount, extensions.data());
     printf("%u device extensions\n", extensionCount);
+
+    printf("Ray tracing properties:\n");
+    printf("shaderGroupHandleSize = %u\n", rtProps.shaderGroupHandleSize);
+    printf("maxRecursionDepth     = %u\n", rtProps.maxRecursionDepth);
+    printf("maxShaderGroupStride  = %u\n", rtProps.maxShaderGroupStride);
+    printf("shaderGroupBaseAlignment = %u\n", rtProps.shaderGroupBaseAlignment);
+    printf("maxGeometryCount      = %u\n", rtProps.maxGeometryCount);
+    printf("maxInstanceCount      = %u\n", rtProps.maxInstanceCount);
+    printf("maxTriangleCount      = %u\n", rtProps.maxTriangleCount);
+    printf("maxDescriptorSetAccelerationStructures = %u\n", rtProps.maxDescriptorSetAccelerationStructures);
   }
 
   bool isDeviceSuitable(VkPhysicalDevice device) {
