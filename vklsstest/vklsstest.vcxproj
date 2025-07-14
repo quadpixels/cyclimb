@@ -147,7 +147,20 @@
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VULKAN_SDK)\Bin\glslc.exe %(FullPath) --target-spv=spv1.5 -o $(ProjectDir)shaders\rgen.spv</Command>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shaders\rgen.spv</Outputs>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shaders\rgen.spv</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VULKAN_SDK)\Bin\glslc.exe %(FullPath) --target-spv=spv1.5 -o $(ProjectDir)shaders\rgen.spv</Command>
     </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="shaders\raytrace.rmiss">
+      <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(ProjectDir)shaders\rmiss.spv</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(ProjectDir)shaders\rmiss.spv</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VULKAN_SDK)\Bin\glslc.exe %(FullPath) --target-spv=spv1.5 -o $(ProjectDir)shaders\rmiss.spv</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VULKAN_SDK)\Bin\glslc.exe %(FullPath) --target-spv=spv1.5 -o $(ProjectDir)shaders\rmiss.spv</Command>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\raytrace.rchit" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

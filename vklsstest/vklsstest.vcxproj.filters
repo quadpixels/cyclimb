@@ -23,5 +23,13 @@
     <CustomBuild Include="shaders\raytrace.rgen">
       <Filter>Resource Files</Filter>
     </CustomBuild>
+    <CustomBuild Include="shaders\raytrace.rmiss">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\raytrace.rchit">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

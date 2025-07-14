@@ -1111,7 +1111,7 @@ private:
   void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     // Update descriptor
     {
-      VkWriteDescriptorSet writes[1]{};
+      VkWriteDescriptorSet writes[2]{};
       writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[0].descriptorCount = 1;
       writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1123,6 +1123,18 @@ private:
       ii.imageView = rtOutputImageViews[imageIndex];
       ii.sampler = VK_NULL_HANDLE;
       writes[0].pImageInfo = &ii;
+
+      VkWriteDescriptorSetAccelerationStructureKHR writeAS{};
+      writeAS.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+      writeAS.accelerationStructureCount = 1;
+      writeAS.pAccelerationStructures = &tlas;
+      writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[1].descriptorCount = 1;
+      writes[1].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+      writes[1].dstArrayElement = 0;
+      writes[1].dstBinding = 0;
+      writes[1].dstSet = rtDescriptorSet;
+      writes[1].pNext = &writeAS;
 
       vkUpdateDescriptorSets(device, _countof(writes), writes, 0, nullptr);
     }
@@ -1391,12 +1403,17 @@ private:
   }
 
   void createRtDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[1]{};
+    VkDescriptorSetLayoutBinding descriptorSetLayoutBindings[2]{};
     descriptorSetLayoutBindings[0].binding = 1;
     descriptorSetLayoutBindings[0].descriptorCount = 1;
     descriptorSetLayoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     descriptorSetLayoutBindings[0].pImmutableSamplers = nullptr;
     descriptorSetLayoutBindings[0].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    descriptorSetLayoutBindings[1].binding = 0;
+    descriptorSetLayoutBindings[1].descriptorCount = 1;
+    descriptorSetLayoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    descriptorSetLayoutBindings[1].pImmutableSamplers = nullptr;
+    descriptorSetLayoutBindings[1].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
     descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1409,9 +1426,11 @@ private:
   }
 
   void createRtDescriptorPool() {
-    VkDescriptorPoolSize poolSizes[1]{};
+    VkDescriptorPoolSize poolSizes[2]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
 
     VkDescriptorPoolCreateInfo poolCreateInfo{};
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1456,20 +1475,46 @@ private:
       throw std::runtime_error("Could not create RT pipeline layout");
     }
 
-    VkPipelineShaderStageCreateInfo stages[1]{};
+    VkPipelineShaderStageCreateInfo stages[3]{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].pName = "main";  // entry point name
     VkShaderModule raygenShaderModule = createShaderModule(readFile("shaders/rgen.spv"));
     stages[0].module = raygenShaderModule;
     stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
-    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[1]{};
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].pName = "main";  // entry point name
+    VkShaderModule rmissShaderModule = createShaderModule(readFile("shaders/rmiss.spv"));
+    stages[1].module = rmissShaderModule;
+    stages[1].stage = VK_SHADER_STAGE_MISS_BIT_KHR;
+
+    stages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[2].pName = "main";  // entry point name
+    VkShaderModule rchitShaderModule = createShaderModule(readFile("shaders/rchit.spv"));
+    stages[2].module = rchitShaderModule;
+    stages[2].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[3]{};
     shaderGroupInfos[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     shaderGroupInfos[0].anyHitShader = VK_SHADER_UNUSED_KHR;
     shaderGroupInfos[0].closestHitShader = VK_SHADER_UNUSED_KHR;
     shaderGroupInfos[0].generalShader = 0;  // RGen
     shaderGroupInfos[0].intersectionShader = VK_SHADER_UNUSED_KHR;
     shaderGroupInfos[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+
+    shaderGroupInfos[1].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shaderGroupInfos[1].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[1].closestHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[1].generalShader = 1;  // Miss
+    shaderGroupInfos[1].intersectionShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+
+    shaderGroupInfos[2].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shaderGroupInfos[2].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[2].closestHitShader = 2;
+    shaderGroupInfos[2].generalShader = VK_SHADER_UNUSED_KHR;  // Miss
+    shaderGroupInfos[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+    shaderGroupInfos[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
 
     VkRayTracingPipelineCreateInfoKHR rtPipelineCreateInfo{};
     rtPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
@@ -1495,7 +1540,7 @@ private:
   void createRtSBT() {
     const size_t sbtSize = 32;
     const size_t sbtAlignment = 64;
-    const size_t numSBTs = 1;
+    const size_t numSBTs = 3;
 
     createBuffer(
       sbtAlignment * numSBTs,
@@ -1522,15 +1567,14 @@ private:
     uint8_t* mapped{};
     vkMapMemory(device, sbtMemory, 0, sbtSize * numSBTs, 0, (void**)&mapped);
     memcpy(mapped, shaderGroupHandle, sbtSize);  // rgen
-    //memcpy(mapped + sbtAlignment, shaderGroupHandle + sbtSize, sbtSize);  // miss
-    //memcpy(mapped + sbtAlignment * 2, shaderGroupHandle + sbtSize * 2, sbtSize);  // c-hit
+    memcpy(mapped + sbtAlignment, shaderGroupHandle + sbtSize, sbtSize);  // miss
+    memcpy(mapped + sbtAlignment * 2, shaderGroupHandle + sbtSize * 2, sbtSize);  // c-hit
     vkUnmapMemory(device, sbtMemory);
 
     rtRGenRegion.deviceAddress = sbtDeviceAddress;
     rtRGenRegion.size = sbtSize;
     rtRGenRegion.stride = sbtSize;
 
-    /*
     rtMissRegion.deviceAddress = sbtDeviceAddress + sbtAlignment;
     rtMissRegion.size = sbtSize;
     rtMissRegion.stride = sbtSize;
@@ -1538,7 +1582,6 @@ private:
     rtHitRegion.deviceAddress = sbtDeviceAddress + sbtAlignment * 2;
     rtHitRegion.size = sbtSize;
     rtHitRegion.stride = sbtSize;
-    */
   }
 
   void createFramebuffers() {
