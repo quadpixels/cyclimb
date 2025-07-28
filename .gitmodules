@@ -13,3 +13,6 @@
 [submodule "freetype2"]
 	path = freetype2
 	url = https://github.com/aseprite/freetype2
+[submodule "dxrquestions/nvapi"]
+	path = dxrquestions/nvapi
+	url = https://github.com/NVIDIA/nvapi.git
