@@ -147,3 +147,7 @@ void MyFramework::InitDeviceAndCommandQ() {
   fence_value = 1;
   fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 }
+
+ID3D12Device5* MyFramework::GetDevice() {
+  return device12;
+}

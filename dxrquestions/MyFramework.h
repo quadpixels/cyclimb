@@ -8,6 +8,7 @@ class MyFramework {
 public:
   void InitWindow();
   void InitDeviceAndCommandQ();
+  ID3D12Device5* GetDevice();
 private:
   constexpr static uint32_t WIN_W = 512, WIN_H = 512;
   constexpr static uint32_t FRAME_COUNT = 2;

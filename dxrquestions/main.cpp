@@ -18,7 +18,9 @@
 #include "x64\Release\g_VertexShader.h"
 #endif
 
-#include "nvapi/nvapi.h"
+#include <d3d12.h>
+#include <dxgi1_4.h>
+#include <nvapi.h>
 
 #include "MyFramework.h"
 
@@ -43,8 +45,16 @@ void InitNVAPI() {
     printf("NVAPI inited.\n");
   }
   else {
-    printf("NVAPI init failed = %d [%s]\n", (int)status);
+    printf("NVAPI init failed = %d\n", (int)status);
+    return;
   }
+  size_t lss_data_size = sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC);
+  printf("sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC) = %zu\n", lss_data_size);
+  NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAPS lssCaps = NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAP_NONE;
+  NvAPI_D3D12_GetRaytracingCaps(g_myframework->GetDevice(), NVAPI_D3D12_RAYTRACING_CAPS_TYPE_LINEAR_SWEPT_SPHERES, &lssCaps, sizeof(NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAPS));
+  printf("lssCaps = %u, %s\n",
+    (uint32_t)(lssCaps),
+    lssCaps == NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAP_NONE ? "LSS not supported" : "LSS supported");
 }
 
 void InitDX12Stuff() {
