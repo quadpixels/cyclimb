@@ -170,6 +170,9 @@
     <ClInclude Include="tiny_obj_loader.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="shaders\hellotriangle_rayquery.hlsl">
+      <FileType>Document</FileType>
+    </None>
     <FxCompile Include="shaders\raytracing_tutorial.hlsl">
       <FileType>Document</FileType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Library</ShaderType>

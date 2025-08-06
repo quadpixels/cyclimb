@@ -17,7 +17,7 @@
 RaytracingAccelerationStructure Scene : register(t0, space0);
 RWTexture2D<float4> RenderTarget : register(u0);
 ConstantBuffer<RayGenConstantBuffer> g_rayGenCB : register(b0);
-RWStructuredBuffer<float4> MyDebugBuffer : register(u1);
+RWStructuredBuffer<uint> MyDebugBuffer : register(u1);
 
 typedef BuiltInTriangleIntersectionAttributes MyAttributes;
 struct RayPayload
@@ -66,10 +66,13 @@ void MyRaygenShader()
         ray.Direction = rayDir;
         // Set TMin to a non-zero small value to avoid aliasing issues due to floating - point errors.
         // TMin should be kept small to prevent missing geometry at close contact areas.
-        ray.TMin = 0.001;
+        ray.TMin = 0.50;
         ray.TMax = 10000.0;
         RayPayload payload = { float4(0, 0, 0, 1), 0 };
-        TraceRay(Scene, RAY_FLAG_NONE, ~0, 0, 0, 0, ray, payload);
+        TraceRay(Scene,
+            //RAY_FLAG_NONE,
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            ~0, 0, 0, 0, ray, payload);
 
         // Write the raytraced color to the output texture.
         RenderTarget[DispatchRaysIndex().xy] = payload.color;
@@ -84,10 +87,14 @@ void MyRaygenShader()
 [shader("closesthit")]
 void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
 {
+    float ray_t = RayTCurrent();
     float3 barycentrics = float3(1 - attr.barycentrics.x - attr.barycentrics.y, attr.barycentrics.x, attr.barycentrics.y);
     int pidx = PrimitiveIndex();
     int gidx = GeometryIndex();
-
+    if (ray_t == 1e20)  // Make debugger recognize ray_t
+    {
+        payload.color.rgb = float3(1, 1, 1);
+    }
     payload.color.rg = barycentrics;
     //payload.color.rgb = float3(0.5, 0.5, 0.5);
     /*switch (gidx) {
@@ -115,6 +122,11 @@ void MyClosestHitShader(inout RayPayload payload, in MyAttributes attr)
 [shader("anyhit")]
 void MyAnyHitShader(inout RayPayload payload, in MyAttributes attr)
 {
+    float ray_t = RayTCurrent();
+    if (ray_t == 1e20)  // Make debugger recognize ray_t
+    {
+        payload.color.rgb = float3(1, 1, 1);
+    }
     uint pidx = PrimitiveIndex();
     if (g_rayGenCB.anyhit_idx == -1 || (payload.counter == g_rayGenCB.anyhit_idx))
     {
@@ -155,14 +167,47 @@ void MyMissShader(inout RayPayload payload)
 [shader("intersection")]
 void MyIntersectionShader()
 {
-  RayDesc ray;
-  ray.Origin = ObjectRayOrigin();
-  ray.Direction = ObjectRayDirection();
-  MyAttributes attr;
-  attr.barycentrics.x = ray.Origin.x;
-  attr.barycentrics.y = ray.Origin.y;
-  ReportHit(0.45f, 0, attr);
-  ReportHit(0.55f, 0, attr);
+    RayDesc ray;
+    ray.Origin = ObjectRayOrigin();
+    ray.Direction = ObjectRayDirection();
+    MyAttributes attr;
+    attr.barycentrics.x = ray.Origin.x;
+    attr.barycentrics.y = ray.Origin.y;
+    uint orig;
+    uint2 dixy = DispatchRaysIndex().xy;
+    bool ok = (dixy.x == 123 && dixy.y == 349);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.55f, 2147483648, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.54f, 2147483647, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.53f, 4294967295, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.52f, 3, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.51f, 4, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.50f, 5, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.50f, 5000, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.51f, 40000000, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.51f, 50000000, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
+    ReportHit(0.49f, 50000000, attr);
+    if (ok)
+        InterlockedAdd(MyDebugBuffer[0], 1, orig);
 }
 
 [shader("callable")]

@@ -76,6 +76,9 @@
     <None Include="shaders\hellotriangle_mvp.hlsl">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="shaders\hellotriangle_rayquery.hlsl">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shaders\raytracing_tutorial.hlsl">

@@ -56,6 +56,7 @@ public:
 
   // RT SRV descriptor heap
   ID3D12DescriptorHeap* srv_uav_heap;
+  ID3D12DescriptorHeap* srv_uav_heap_cpu;  // CPU-only descriptor heap for clearing
   int srv_uav_descriptor_size;
 
   // Triangle geometry
@@ -86,6 +87,8 @@ public:
 
   // Output
   ID3D12Resource* rt_output_resource;
+  ID3D12Resource* my_debug_resource;
+  ID3D12Resource* my_debug_resource_cpu;
 
   // Controls
   bool is_facing_plus_z{ false };

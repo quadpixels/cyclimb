@@ -36,7 +36,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     root_params[0].DescriptorTable.NumDescriptorRanges = 1;
     D3D12_DESCRIPTOR_RANGE desc_range{};
     desc_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-    desc_range.NumDescriptors = 1;
+    desc_range.NumDescriptors = 2;
     desc_range.BaseShaderRegister = 0;
     desc_range.RegisterSpace = 0;
     desc_range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -433,13 +433,15 @@ MoreTrianglesScene::MoreTrianglesScene() {
     proc_descs[0].AABBs.AABBCount = 2;
     proc_descs[0].AABBs.AABBs.StartAddress = proc_aabb_buffer->GetGPUVirtualAddress();
     proc_descs[0].AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
-    proc_descs[0].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
+    proc_descs[0].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+    //proc_descs[0].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
 
     proc_descs[1].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
     proc_descs[1].AABBs.AABBCount = 5;
     proc_descs[1].AABBs.AABBs.StartAddress = proc_aabb2_buffer->GetGPUVirtualAddress();
     proc_descs[1].AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
-    proc_descs[1].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
+    proc_descs[1].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+    //proc_descs[1].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NO_DUPLICATE_ANYHIT_INVOCATION;
 
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO tlas_buildinfo{};
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas0_buildinfo{};
@@ -681,25 +683,60 @@ MoreTrianglesScene::MoreTrianglesScene() {
       D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr,
       IID_PPV_ARGS(&rt_output_resource)));
 
+    D3D12_RESOURCE_DESC desc_dbg = desc;
+    desc_dbg.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc_dbg.Format = DXGI_FORMAT_UNKNOWN;
+    desc_dbg.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    desc_dbg.Width = sizeof(uint32_t) * 16;
+    desc_dbg.Height = 1;
+    desc_dbg.DepthOrArraySize = 1;
+    desc_dbg.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    desc_dbg.MipLevels = 1;
+    desc_dbg.SampleDesc.Count = 1;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE, &desc_dbg,
+      D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr,
+      IID_PPV_ARGS(&my_debug_resource)));
+    desc_dbg.Flags = D3D12_RESOURCE_FLAG_NONE;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK)),
+      D3D12_HEAP_FLAG_NONE, &desc_dbg,
+      D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+      IID_PPV_ARGS(&my_debug_resource_cpu)));
+
     // UAV heap
     D3D12_DESCRIPTOR_HEAP_DESC dhd{};
-    dhd.NumDescriptors = 2;
+    dhd.NumDescriptors = 3;
     dhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     dhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     dhd.NodeMask = 0;
     g_device12->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&srv_uav_heap));
     srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-  
+    dhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    g_device12->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&srv_uav_heap_cpu));
+
     CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart(), 0, srv_uav_descriptor_size);
+    CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle_cpu(srv_uav_heap_cpu->GetCPUDescriptorHandleForHeapStart(), 0, srv_uav_descriptor_size);
 
     D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc{};
     uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     g_device12->CreateUnorderedAccessView(rt_output_resource, nullptr, &uav_desc, uav_handle);
+    g_device12->CreateUnorderedAccessView(rt_output_resource, nullptr, &uav_desc, uav_handle_cpu);
+    
+    uav_handle.Offset(srv_uav_descriptor_size);
+    uav_handle_cpu.Offset(srv_uav_descriptor_size);
+    
+    uav_desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    uav_desc.Format = DXGI_FORMAT_R32_UINT;
+    uav_desc.Buffer.NumElements = 16;
+    g_device12->CreateUnorderedAccessView(my_debug_resource, nullptr, &uav_desc, uav_handle);
+    g_device12->CreateUnorderedAccessView(my_debug_resource, nullptr, &uav_desc, uav_handle_cpu);
   }
 
   // SRV of TLAS
   {
-    CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart(), 1, srv_uav_descriptor_size);
+    CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart(), 2, srv_uav_descriptor_size);
     D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
     srv_desc.Format = DXGI_FORMAT_UNKNOWN;
     srv_desc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
@@ -769,8 +806,21 @@ void MoreTrianglesScene::Render() {
     D3D12_RESOURCE_STATE_COPY_SOURCE,
     D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
 
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    my_debug_resource,
+    D3D12_RESOURCE_STATE_COPY_SOURCE,
+    D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
+
   command_list->SetComputeRootSignature(global_rootsig);
   command_list->SetDescriptorHeaps(1, &srv_uav_heap);
+
+  CD3DX12_GPU_DESCRIPTOR_HANDLE dbg_uav_gpu_handle(
+    srv_uav_heap->GetGPUDescriptorHandleForHeapStart(), 1, srv_uav_descriptor_size);
+  CD3DX12_CPU_DESCRIPTOR_HANDLE dbg_uav_cpu_handle(
+    srv_uav_heap_cpu->GetCPUDescriptorHandleForHeapStart(), 1, srv_uav_descriptor_size);
+  uint32_t dbg_clr_value[4] = { 0 };
+  command_list->ClearUnorderedAccessViewUint(dbg_uav_gpu_handle, dbg_uav_cpu_handle,
+    my_debug_resource, dbg_clr_value, 0, nullptr);
 
   CD3DX12_GPU_DESCRIPTOR_HANDLE handle_uav(
     srv_uav_heap->GetGPUDescriptorHandleForHeapStart());
@@ -799,6 +849,13 @@ void MoreTrianglesScene::Render() {
     rt_output_resource,
     D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
     D3D12_RESOURCE_STATE_COPY_SOURCE)));
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    my_debug_resource,
+    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+    D3D12_RESOURCE_STATE_COPY_SOURCE)));
+
+  command_list->CopyResource(my_debug_resource_cpu, my_debug_resource);
 
   command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
     g_rendertargets[g_frame_index],
@@ -839,7 +896,7 @@ void MoreTrianglesScene::Render() {
     info += L"ray dir is -Z";
   }
 
-  text_pass->AddText(info.c_str(), WIN_W*0.5f - 10 * info.size() * 0.5f, WIN_H*0.45f-3.0f, 1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
+  text_pass->AddText(info.c_str(), WIN_W * 0.5f - 10 * info.size() * 0.5f, WIN_H * 0.45f - 3.0f, 1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
 
   info = L"Device: " + g_device_name;
   text_pass->AddText(info.c_str(), 8, 24, 1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
@@ -878,6 +935,18 @@ void MoreTrianglesScene::Render() {
 
   CE(g_swapchain->Present(1, 0));
   WaitForPreviousFrame();
+
+  // ------------------
+  {
+    printf("My Debug: ");
+    uint32_t* mapped{};
+    my_debug_resource_cpu->Map(0, nullptr, (void**)&mapped);
+    for (uint32_t i = 0; i < 16; i++) {
+      printf("%u ", mapped[i]);
+    }
+    printf("\n");
+    my_debug_resource_cpu->Unmap(0, nullptr);
+  }
 }
 
 void MoreTrianglesScene::Update(float secs) {
