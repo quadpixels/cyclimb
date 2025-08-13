@@ -25,13 +25,13 @@ namespace dxc {
 }
 
 
-TriangleScene::TriangleScene() {
+AtomicCounterScene::AtomicCounterScene() {
   dxc_support.Initialize();
   InitDX12Stuff();
   CreateAS();
 }
 
-void TriangleScene::InitDX12Stuff() {
+void AtomicCounterScene::InitDX12Stuff() {
   CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&command_allocator)));
   CE(g_device12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator, nullptr, IID_PPV_ARGS(&command_list)));
   CE(command_list->Close());
@@ -230,7 +230,7 @@ void TriangleScene::InitDX12Stuff() {
   g_device12->CreateConstantBufferView(&cbv_desc, uav_handle);
 }
 
-void TriangleScene::CreateAS() {
+void AtomicCounterScene::CreateAS() {
   printf("Creating AS for a single triangle\n");
   // BLAS
   D3D12_RAYTRACING_GEOMETRY_DESC geom_desc{};
@@ -386,7 +386,7 @@ void TriangleScene::CreateAS() {
   g_device12->CreateShaderResourceView(nullptr, &srv_desc, srv_handle);
 }
 
-void TriangleScene::Render() {
+void AtomicCounterScene::Render() {
   CE(command_allocator->Reset());
   CE(command_list->Reset(command_allocator, pipeline_state));
 
@@ -451,7 +451,7 @@ void TriangleScene::Render() {
   WaitForPreviousFrame();
 }
 
-void TriangleScene::Update(float secs) {
+void AtomicCounterScene::Update(float secs) {
   TriSceneCB cb{};
   cb.WIN_W = WIN_W;
   cb.WIN_H = WIN_H;

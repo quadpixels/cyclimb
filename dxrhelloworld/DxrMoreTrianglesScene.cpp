@@ -410,7 +410,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
 
   // AS
   {
-    D3D12_RAYTRACING_GEOMETRY_DESC geom_desc[3];
+    D3D12_RAYTRACING_GEOMETRY_DESC geom_desc[4];
     geom_desc[0].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
     geom_desc[0].Triangles.VertexBuffer.StartAddress = vertex_buffer->GetGPUVirtualAddress();
     geom_desc[0].Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);

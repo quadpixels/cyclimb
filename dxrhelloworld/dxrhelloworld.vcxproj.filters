@@ -24,7 +24,7 @@
     <ClCompile Include="DxrObjScene.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="DxrTriangleScene.cpp">
+    <ClCompile Include="DxrAtomicCounterScene.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\camera.cpp">
@@ -36,7 +36,10 @@
     <ClCompile Include="DxrMoreTrianglesScene.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="DxrObjScene1.cpp">
+    <ClCompile Include="DxrOneTriangleWithBorderScene.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="DxrMoreTrianglesScene2.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -82,6 +85,9 @@
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shaders\raytracing_tutorial.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
+    <FxCompile Include="shaders\raytracing_moretriangles2.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
   </ItemGroup>

@@ -16,6 +16,60 @@ class Scene {
 public:
   virtual void Render() = 0;
   virtual void Update(float secs) = 0;
+
+  ID3D12CommandAllocator* command_allocator;
+  ID3D12GraphicsCommandList4* command_list;
+  ID3D12RootSignature* global_rootsig;
+
+  // RT PSO
+  ID3D12StateObject* rt_state_object;
+  ID3D12StateObjectProperties* rt_state_object_props;
+
+  // RT SRV descriptor heap
+  ID3D12DescriptorHeap* srv_uav_heap;
+  ID3D12DescriptorHeap* srv_uav_heap_cpu;  // CPU-only descriptor heap for clearing
+  int srv_uav_descriptor_size;
+
+  // Triangle geometry
+  ID3D12Resource* vertex_buffer;
+  ID3D12Resource* index_buffer;
+
+  // Building AS
+  ID3D12Resource* as_scratch;
+  ID3D12Resource* tlas;
+
+  // SBT
+  ID3D12Resource* raygen_sbt_storage;
+  ID3D12Resource* miss_sbt_storage;
+  ID3D12Resource* hit_sbt_storage;
+  ID3D12Resource* callable_sbt_storage;
+
+  // Output
+  ID3D12Resource* rt_output_resource;
+  ID3D12Resource* my_debug_resource;
+  ID3D12Resource* my_debug_resource_cpu;
+
+  // Info
+  TextPass* text_pass;
+  ID3D12DescriptorHeap* dsv_heap{};
+  ID3D12Resource* depth_map{};
+  int dsv_descriptor_size{};
+};
+
+class MoreTrianglesScene2 : public Scene {
+public:
+  struct RayGenConstantBuffer
+  {
+    int the_ray_flag;
+  };
+  struct Vertex {
+    float x, y, z;
+  };
+  MoreTrianglesScene2();
+  void Render() override;
+  void Update(float secs) override;
+
+  ID3D12Resource* blas0;
 };
 
 class MoreTrianglesScene : public Scene {
@@ -105,7 +159,7 @@ public:
   void CycleAnyhitIdx(int delta);
 };
 
-class TriangleScene : public Scene {
+class AtomicCounterScene : public Scene {
 public:
   struct Vertex {
     DirectX::XMFLOAT3 position;
@@ -114,7 +168,7 @@ public:
   struct TriSceneCB {
     int WIN_W, WIN_H, use_counter;
   };
-  TriangleScene();
+  AtomicCounterScene();
 
   void InitDX12Stuff();
   void CreateAS();
@@ -262,7 +316,7 @@ public:
 };
 
 // For finding out why ObjScene does not work in Release mode ...
-class ObjScene1 : public Scene {
+class OneTriangleWithBorderScene : public Scene {
 public:
   struct Vertex {
     DirectX::XMFLOAT3 position;
@@ -279,7 +333,7 @@ public:
     Viewport viewport;
     Viewport stencil;
   };
-  ObjScene1();
+  OneTriangleWithBorderScene();
   void InitDX12Stuff();
   void CreateRTPipeline();
   void CreateShaderBindingTable();

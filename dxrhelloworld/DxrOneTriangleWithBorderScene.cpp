@@ -28,14 +28,14 @@ void PrintShaderIdentifier(const char* tag, void* id) {
   printf("\n");
 }
 
-ObjScene1::ObjScene1() {
+OneTriangleWithBorderScene::OneTriangleWithBorderScene() {
   InitDX12Stuff();
   CreateRTPipeline();
   CreateShaderBindingTable();
   CreateAS();
 }
 
-void ObjScene1::InitDX12Stuff() {
+void OneTriangleWithBorderScene::InitDX12Stuff() {
   printf("[ObjScene1::InitDX12Stuff]\n");
   CE(g_device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
     IID_PPV_ARGS(&command_allocator)));
@@ -117,7 +117,7 @@ void ObjScene1::InitDX12Stuff() {
   }
 }
 
-void ObjScene1::CreateRTPipeline() {
+void OneTriangleWithBorderScene::CreateRTPipeline() {
   // 1. Root signatures (global and local)
   {
     D3D12_ROOT_PARAMETER root_params[1];
@@ -270,7 +270,7 @@ void ObjScene1::CreateRTPipeline() {
   }
 }
 
-void ObjScene1::CreateAS() {
+void OneTriangleWithBorderScene::CreateAS() {
   // Triangle
   Vertex triangle_verts[] = {
     { {0.0f, 0.25f, 0.0f} },
@@ -445,7 +445,7 @@ void ObjScene1::CreateAS() {
   }
 }
 
-void ObjScene1::CreateShaderBindingTable() {
+void OneTriangleWithBorderScene::CreateShaderBindingTable() {
   void* raygen_shader_id = rt_state_object_props->GetShaderIdentifier(L"RayGen");
   void* hitgroup_id = rt_state_object_props->GetShaderIdentifier(L"HitGroup");
   void* miss_shader_id = rt_state_object_props->GetShaderIdentifier(L"Miss");
@@ -522,7 +522,7 @@ void ObjScene1::CreateShaderBindingTable() {
   miss_sbt_storage->Unmap(0, nullptr);
 }
 
-void ObjScene1::Render() {
+void OneTriangleWithBorderScene::Render() {
   // Just clear RTV
   CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
     g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
@@ -594,5 +594,5 @@ void ObjScene1::Render() {
   WaitForPreviousFrame();
 }
 
-void ObjScene1::Update(float secs) {
+void OneTriangleWithBorderScene::Update(float secs) {
 }

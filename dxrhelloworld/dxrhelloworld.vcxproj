@@ -151,9 +151,10 @@
     <ClCompile Include="..\textrender.cpp" />
     <ClCompile Include="..\util.cpp" />
     <ClCompile Include="DxrMoreTrianglesScene.cpp" />
+    <ClCompile Include="DxrMoreTrianglesScene2.cpp" />
     <ClCompile Include="DxrObjScene.cpp" />
-    <ClCompile Include="DxrObjScene1.cpp" />
-    <ClCompile Include="DxrTriangleScene.cpp" />
+    <ClCompile Include="DxrOneTriangleWithBorderScene.cpp" />
+    <ClCompile Include="DxrAtomicCounterScene.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -173,6 +174,16 @@
     <None Include="shaders\hellotriangle_rayquery.hlsl">
       <FileType>Document</FileType>
     </None>
+    <FxCompile Include="shaders\raytracing_moretriangles2.hlsl">
+      <VariableName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_ShadersMoreTrianglesScene2</VariableName>
+      <VariableName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_ShadersMoreTrianglesScene2</VariableName>
+      <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)CompiledShaders\%(Filename).hlsl.h</HeaderFileOutput>
+      <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)CompiledShaders\%(Filename).hlsl.h</HeaderFileOutput>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Library</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.5</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Library</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.5</ShaderModel>
+    </FxCompile>
     <FxCompile Include="shaders\raytracing_tutorial.hlsl">
       <FileType>Document</FileType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Library</ShaderType>
@@ -190,8 +201,6 @@
   <ItemGroup>
     <None Include="shaders\RayGen.hlsl">
       <FileType>Document</FileType>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </None>
   </ItemGroup>
   <ItemGroup>

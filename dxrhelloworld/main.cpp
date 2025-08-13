@@ -24,7 +24,7 @@ int WIN_W = 512, WIN_H = 512;
 std::string g_input_name;
 HWND g_hwnd;
 static long long g_last_ms;
-static Scene* g_scenes[4];
+static Scene* g_scenes[5];
 static int g_scene_idx = 0;
 ID3D12Fence* g_fence;
 int g_fence_value = 0;
@@ -80,7 +80,7 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
       ((ObjScene*)(g_scenes[0]))->ToggleIsRaster();
       break;
     case 1:
-      ((TriangleScene*)(g_scenes[1]))->ToggleUseCounter();
+      ((AtomicCounterScene*)(g_scenes[1]))->ToggleUseCounter();
       break;
     default:
       break;
@@ -90,7 +90,8 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
   case '0':
   case '1': 
   case '2':
-  case '3': {
+  case '3':
+  case '4': {
     printf("Current scene set to %c\n", wParam);
     g_scene_idx = wParam - '0'; break;
   }
@@ -358,9 +359,10 @@ int main(int argc, char** argv) {
   ShowWindow(g_hwnd, SW_RESTORE);
 
   g_scenes[0] = new ObjScene();
-  g_scenes[1] = new TriangleScene();
+  g_scenes[1] = new AtomicCounterScene();
   g_scenes[2] = new MoreTrianglesScene();
-  g_scenes[3] = new ObjScene1();
+  g_scenes[3] = new OneTriangleWithBorderScene();
+  g_scenes[4] = new MoreTrianglesScene2();
 
   // Main message loop
   g_last_ms = MillisecondsNow();
