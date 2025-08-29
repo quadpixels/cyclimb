@@ -38,6 +38,10 @@ namespace dxc {
 }
 
 MyFramework* g_myframework{};
+MyScene* g_scenes[1];
+uint32_t g_scene_idx = 0;
+HWND g_hwnd{};
+long long g_last_ms{ 0 };
 
 void InitNVAPI() {
   NvAPI_Status status = NvAPI_Initialize();
@@ -66,20 +70,95 @@ void InitDX12Stuff() {
   g_myframework = new MyFramework();
   g_myframework->InitWindow();
   g_myframework->InitDeviceAndCommandQ();
+  g_myframework->InitSwapchain();
+
 }
+
+long long MillisecondsNow() {
+  static LARGE_INTEGER s_frequency;
+  static BOOL s_use_qpc = QueryPerformanceFrequency(&s_frequency);
+  if (s_use_qpc) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return (1000LL * now.QuadPart) / s_frequency.QuadPart;
+  }
+  else {
+    return GetTickCount();
+  }
+}
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+  switch (message) {
+  case WM_CREATE:
+  {
+    LPCREATESTRUCT pCreateStruct = reinterpret_cast<LPCREATESTRUCT>(lParam);
+    SetWindowLongPtr(g_hwnd, GWLP_USERDATA, (LONG_PTR)pCreateStruct->lpCreateParams);
+    break;
+  }
+  case WM_KEYDOWN:
+    //OnKeyDown(wParam, lParam);
+    return 0;
+  case WM_KEYUP:
+    //OnKeyUp(wParam, lParam);
+    return 0;
+  case WM_PAINT: {
+    long long ms = MillisecondsNow();
+    MyScene* scene = g_scenes[g_scene_idx];
+    if (scene) {
+      scene->Update((ms - g_last_ms) / 1000.0f);
+      scene->Render();
+    }
+    g_last_ms = ms;
+    return 0;
+  }
+  case WM_DESTROY:
+    PostQuitMessage(0);
+    return 0;
+  default:
+    return DefWindowProc(hWnd, message, wParam, lParam);
+  }
+  return 0;
+}
+
 
 void CreateMyWindow() {
   AllocConsole();
   freopen_s((FILE**)stdin, "CONIN$", "r", stderr);
   freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
   freopen_s((FILE**)stderr, "CONOUT$", "w", stderr);
+
+  WNDCLASS windowClass = { 0 };
+  windowClass.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
+  windowClass.hCursor = LoadCursor(NULL, IDC_ARROW);
+  windowClass.hInstance = NULL;
+  windowClass.lpfnWndProc = WndProc;
+  windowClass.lpszClassName = L"Window in Console"; //needs to be the same name
+  //when creating the window as well
+  windowClass.style = CS_HREDRAW | CS_VREDRAW;
+
+  LPCWSTR window_name = L"DXR Questions";
+  LPCSTR class_name = "DXR_Questions_class";
+  HINSTANCE hinstance = GetModuleHandle(nullptr);
+
+  if (!RegisterClass(&windowClass)) {
+    printf("Cannot register window class\n");
+  }
+
+  g_hwnd = CreateWindow(
+    windowClass.lpszClassName,
+    window_name,
+    WS_OVERLAPPEDWINDOW,
+    16,
+    16,
+    MyFramework::WIN_W, MyFramework::WIN_H,
+    nullptr, nullptr,
+    hinstance, nullptr);
 }
 
 int main() {
-  CreateMyWindow();
-
   InitDX12Stuff();
   InitNVAPI();
+  g_scenes[0] = new MyParisIvyLeafScene(g_myframework);
 
   MSG msg = { 0 };
   while (msg.message != WM_QUIT) {

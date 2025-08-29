@@ -10,3 +10,6 @@ Release
 *.o
 cyclimb
 cyclimb_win.vcxproj.user
+CMakeLists.txt~
+cyclimb.7z
+Notes.odp
