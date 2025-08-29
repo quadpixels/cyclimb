@@ -59,6 +59,12 @@ void InitNVAPI() {
   printf("lssCaps = %u, %s\n",
     (uint32_t)(lssCaps),
     lssCaps == NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAP_NONE ? "LSS not supported" : "LSS supported");
+
+  NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAPS ommCaps = NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAP_NONE;
+  NvAPI_D3D12_GetRaytracingCaps(g_myframework->GetDevice(), NVAPI_D3D12_RAYTRACING_CAPS_TYPE_OPACITY_MICROMAP, &ommCaps, sizeof(ommCaps));
+  printf("ommCaps = %u, %s\n",
+    (uint32_t)(ommCaps),
+    ommCaps == NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAP_NONE ? "OMM not supported" : "OMM supported");
 }
 
 void InitDX12Stuff() {
@@ -71,7 +77,6 @@ void InitDX12Stuff() {
   g_myframework->InitWindow();
   g_myframework->InitDeviceAndCommandQ();
   g_myframework->InitSwapchain();
-
 }
 
 long long MillisecondsNow() {

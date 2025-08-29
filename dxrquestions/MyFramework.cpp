@@ -5,10 +5,13 @@
 
 #include <source_location>
 #include <stdexcept>
+#include <vector>
 
 #include <d3d12.h>
 #include "d3dx12.h"
 #include <dxgi1_4.h>
+
+#include "x64/Debug/CompiledShaders/raytracing_shaders.hlsl.h"
 
 // https://stackoverflow.com/questions/65315241/how-can-i-fix-requires-l-value
 template <class T>
@@ -186,7 +189,7 @@ void MyFramework::InitSwapchain() {
   WaitForPreviousFrame();
 }
 
-void MyFramework::CreateRtPipeline(ID3D12RootSignature** out_rootsig) {
+void MyFramework::CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig) {
   const int SRV_COUNT = 2;  // TLAS, texture
 
   D3D12_ROOT_PARAMETER root_params[2];
@@ -297,6 +300,116 @@ HRESULT MyFramework::Present() {
   return swapchain->Present(1, 0);
 }
 
+void MyFramework::CreateUAVTexture2D(ID3D12Resource* res, 
+  ID3D12DescriptorHeap* h, uint32_t idx) {
+  D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc{};
+  uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+  CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(h->GetCPUDescriptorHandleForHeapStart(), idx, cbvsrvuav_descriptor_size);
+  device12->CreateUnorderedAccessView(res, nullptr, &uav_desc, uav_handle);
+}
+
+uint32_t MyFramework::GetCBVSRVUAVDescriptorSize() {
+  return cbvsrvuav_descriptor_size;
+}
+
+void MyFramework::CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
+  ID3D12RootSignature* global_rootsig) {
+  // Params
+  std::vector<std::wstring> exports = {
+    L"MyRaygenShader"
+  };
+
+  std::vector<D3D12_STATE_SUBOBJECT> subobjects;
+  subobjects.reserve(16);
+
+  D3D12_DXIL_LIBRARY_DESC dxil_lib_desc{};
+  std::vector<D3D12_EXPORT_DESC> dxil_lib_exports(exports.size());
+  for (uint32_t i = 0; i < exports.size(); i++) {
+    dxil_lib_exports[i].Flags = D3D12_EXPORT_FLAG_NONE;
+    dxil_lib_exports[i].ExportToRename = nullptr;
+    dxil_lib_exports[i].Name = exports[i].c_str();
+  }
+
+  dxil_lib_desc.DXILLibrary.pShaderBytecode = g_RaytracingShaders;
+  dxil_lib_desc.DXILLibrary.BytecodeLength = sizeof(g_RaytracingShaders);
+  dxil_lib_desc.NumExports = exports.size();
+  dxil_lib_desc.pExports = dxil_lib_exports.data();
+
+  // DXIL library
+  D3D12_STATE_SUBOBJECT subobj_dxil_lib{};
+  subobj_dxil_lib.Type = D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY;
+  subobj_dxil_lib.pDesc = &dxil_lib_desc;
+  subobjects.push_back(subobj_dxil_lib);
+
+  // Hit group
+  D3D12_STATE_SUBOBJECT subobj_hitgroup{};
+  
+  // Shader config
+  D3D12_STATE_SUBOBJECT subobj_shaderconfig{};
+  subobj_shaderconfig.Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG;
+  D3D12_RAYTRACING_SHADER_CONFIG shader_config{};
+  shader_config.MaxPayloadSizeInBytes = 16;
+  shader_config.MaxAttributeSizeInBytes = 8;
+  subobj_shaderconfig.pDesc = &shader_config;
+  subobjects.push_back(subobj_shaderconfig);
+
+  // Global rootsignature
+  D3D12_STATE_SUBOBJECT subobj_global_rootsig{};
+  subobj_global_rootsig.Type = D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE;
+  subobj_global_rootsig.pDesc = &global_rootsig;
+  subobjects.push_back(subobj_global_rootsig);
+
+  // Pipeline config
+  D3D12_STATE_SUBOBJECT subobj_pipeline_config{
+    .Type = D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG };
+  D3D12_RAYTRACING_PIPELINE_CONFIG pipeline_config{};
+  pipeline_config.MaxTraceRecursionDepth = 1;
+  subobj_pipeline_config.pDesc = &pipeline_config;
+  subobjects.push_back(subobj_pipeline_config);
+
+  D3D12_STATE_OBJECT_DESC rtpso_desc{};
+  rtpso_desc.Type = D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE;
+  rtpso_desc.NumSubobjects = subobjects.size();
+  rtpso_desc.pSubobjects = subobjects.data();
+  CE(device12->CreateStateObject(&rtpso_desc, IID_PPV_ARGS(&(my_rt_pipeline->rt_state_object))));
+  my_rt_pipeline->rt_state_object->QueryInterface(IID_PPV_ARGS(&(my_rt_pipeline->rt_state_object_props)));
+
+  size_t sbt_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+  D3D12_RESOURCE_DESC sbt_desc{};
+  sbt_desc.DepthOrArraySize = 1;
+  sbt_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  sbt_desc.Format = DXGI_FORMAT_UNKNOWN;
+  sbt_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+  sbt_desc.Width = sbt_size;
+  sbt_desc.Height = 1;
+  sbt_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  sbt_desc.SampleDesc.Count = 1;
+  sbt_desc.SampleDesc.Quality = 0;
+  sbt_desc.MipLevels = 1;
+  CE(device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE, &sbt_desc,
+    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+    IID_PPV_ARGS(&(my_rt_pipeline->rt_sbt))));
+
+  // Construct SBT
+  void* raygen_shader_id = my_rt_pipeline->rt_state_object_props->GetShaderIdentifier(exports[0].c_str());
+  char* mapped{};
+
+  my_rt_pipeline->rt_sbt->Map(0, nullptr, (void**)&mapped);
+  memcpy(mapped, raygen_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  my_rt_pipeline->rt_sbt->Unmap(0, nullptr);
+
+  {
+    D3D12_DISPATCH_RAYS_DESC* drd = &(my_rt_pipeline->dispatch_rays_desc);
+    drd->Width = WIN_W;
+    drd->Height = WIN_H;
+    drd->Depth = 1;
+    drd->RayGenerationShaderRecord.StartAddress = my_rt_pipeline->rt_sbt->GetGPUVirtualAddress();
+    drd->RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+  }
+}
+
 // ======================================= Helper functions ===============
 static void ResourceBarrierTransition(ID3D12GraphicsCommandList4* cmdlist,
   ID3D12Resource* res,
@@ -310,9 +423,11 @@ static void ResourceBarrierTransition(ID3D12GraphicsCommandList4* cmdlist,
 
 // ======================================= Scenes ====================
 MyParisIvyLeafScene::MyParisIvyLeafScene(MyFramework* f) : MyScene(f) {
-  f->CreateRtPipeline(&global_rootsig);
+  f->CreateRtGlobalRootSig(&global_rootsig);
   f->CreateRtOutputResource(&rt_output_resource);
   f->CreateCBVSRVUAVHeap(&cbvsrvuav_heap, nullptr, 1);
+  f->CreateUAVTexture2D(rt_output_resource, cbvsrvuav_heap, 0);
+  f->CreateMyRtPipeline(&my_rt_pipeline, global_rootsig);
   printf("Created rootsig.\n");
 }
 
@@ -328,7 +443,17 @@ void MyParisIvyLeafScene::Render() {
   ID3D12Resource* rendertarget = framework->GetCurrentRenderTarget();
   ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
-  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+  ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+  command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)&cbvsrvuav_heap);
+  command_list->SetComputeRootSignature(global_rootsig);
+  CD3DX12_GPU_DESCRIPTOR_HANDLE handle_uav(cbvsrvuav_heap->GetGPUDescriptorHandleForHeapStart(), 0, framework->GetCBVSRVUAVDescriptorSize());
+  command_list->SetComputeRootDescriptorTable(0, handle_uav);
+  command_list->SetPipelineState1(my_rt_pipeline.rt_state_object);
+  command_list->DispatchRays(&(my_rt_pipeline.dispatch_rays_desc));
+  ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
+  command_list->CopyResource(rendertarget, rt_output_resource);
+  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
   CE(command_list->Close());
 
   ID3D12CommandQueue* command_queue = framework->GetCommandQueue();

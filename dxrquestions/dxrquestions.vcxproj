@@ -158,6 +158,16 @@
       <VariableName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_PixelShader</VariableName>
       <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(OutDir)g_PixelShader.h</HeaderFileOutput>
     </FxCompile>
+    <FxCompile Include="shaders\raytracing_shaders.hlsl">
+      <VariableName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_RaytracingShaders</VariableName>
+      <VariableName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_RaytracingShaders</VariableName>
+      <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)CompiledShaders\%(Filename).hlsl.h</HeaderFileOutput>
+      <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)CompiledShaders\%(Filename).hlsl.h</HeaderFileOutput>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Library</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.5</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Library</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.5</ShaderModel>
+    </FxCompile>
     <FxCompile Include="shaders\vertex_shader.hlsl">
       <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">VSMain</EntryPointName>
       <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">VSMain</EntryPointName>

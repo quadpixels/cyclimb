@@ -32,6 +32,9 @@
     <FxCompile Include="shaders\vertex_shader.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
+    <FxCompile Include="shaders\raytracing_shaders.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="MyScene.h">

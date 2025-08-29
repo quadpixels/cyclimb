@@ -605,7 +605,7 @@ MoreTrianglesScene::MoreTrianglesScene() {
     command_list->Reset(command_allocator, nullptr);
     command_list->BuildRaytracingAccelerationStructure(&blas0_build_desc, 0, nullptr);
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas0)));
-    // Need to have a barrier between building 2 BLAS's
+    // Need to have a barrier between building 2 BLAS'p
     command_list->BuildRaytracingAccelerationStructure(&blas1_build_desc, 0, nullptr);
     command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(blas1)));
     command_list->BuildRaytracingAccelerationStructure(&blas2_build_desc, 0, nullptr);

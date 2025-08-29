@@ -6,15 +6,21 @@
 
 class MyFramework;
 
+// All the stuff needed to do dispatch rays
+struct MyRtPipeline {
+  D3D12_DISPATCH_RAYS_DESC dispatch_rays_desc{};
+  ID3D12RootSignature* global_rootsig{};
+  ID3D12StateObject* rt_state_object{};
+  ID3D12StateObjectProperties* rt_state_object_props{};
+  ID3D12Resource* rt_sbt{};
+};
+
 class MyScene {
 public:
   MyScene(MyFramework* f) : framework(f) {}
   virtual void Render() = 0;
   virtual void Update(float secs) = 0;
 
-  ID3D12RootSignature* global_rootsig;
-  ID3D12Resource* rt_output_resource;
-  ID3D12DescriptorHeap* cbvsrvuav_heap;
   MyFramework* framework;
 };
 
@@ -23,6 +29,11 @@ public:
   MyParisIvyLeafScene(MyFramework* f);
   void Render() override;
   void Update(float secs) override;
+
+  ID3D12RootSignature* global_rootsig;
+  ID3D12Resource* rt_output_resource;
+  ID3D12DescriptorHeap* cbvsrvuav_heap;
+  MyRtPipeline my_rt_pipeline{};
 };
 
 class MyFramework {
@@ -33,14 +44,19 @@ public:
   void InitSwapchain();
   ID3D12Device5* GetDevice();
 
-  void CreateRtPipeline(ID3D12RootSignature** out_rootsig);
+  void CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig);
   void CreateRtOutputResource(ID3D12Resource** out_res);
   void CreateCBVSRVUAVHeap(ID3D12DescriptorHeap** h, ID3D12DescriptorHeap** h_cpu, uint32_t num_descriptors);
+  uint32_t GetCBVSRVUAVDescriptorSize();
+  void CreateUAVTexture2D(ID3D12Resource* res,
+    ID3D12DescriptorHeap* h, uint32_t idx);
 
   ID3D12CommandAllocator* GetCommandAllocator();
   ID3D12CommandQueue* GetCommandQueue();
   ID3D12GraphicsCommandList4* GetGraphicsCommandList();
   ID3D12Resource* GetCurrentRenderTarget();
+  void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
+    ID3D12RootSignature* global_rootsig);
 
   constexpr static uint32_t WIN_W = 512, WIN_H = 512;
   constexpr static uint32_t FRAME_COUNT = 2;
