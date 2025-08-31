@@ -10,14 +10,6 @@
 #include <dxcapi.h>
 #include "../dx12helloworld/dxcapi.use.h"
 
-#ifndef NDEBUG
-#include "x64\Debug\g_PixelShader.h"
-#include "x64\Debug\g_VertexShader.h"
-#else
-#include "x64\Release\g_PixelShader.h"
-#include "x64\Release\g_VertexShader.h"
-#endif
-
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <nvapi.h>
@@ -100,9 +92,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     SetWindowLongPtr(g_hwnd, GWLP_USERDATA, (LONG_PTR)pCreateStruct->lpCreateParams);
     break;
   }
-  case WM_KEYDOWN:
-    //OnKeyDown(wParam, lParam);
+  case WM_KEYDOWN: {
+    MyScene* scene = g_scenes[g_scene_idx];
+    scene->OnKeyDown(wParam);
     return 0;
+  }
   case WM_KEYUP:
     //OnKeyUp(wParam, lParam);
     return 0;

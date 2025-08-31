@@ -1,8 +1,11 @@
 #include <stdint.h>
 
+#include <vector>
+
 #include <d3d12.h>
 #include "d3dx12.h"
 #include <dxgi1_4.h>
+#include <glm/glm.hpp>
 
 class MyFramework;
 
@@ -20,6 +23,7 @@ public:
   MyScene(MyFramework* f) : framework(f) {}
   virtual void Render() = 0;
   virtual void Update(float secs) = 0;
+  virtual void OnKeyDown(uint32_t k) = 0;
 
   MyFramework* framework;
 };
@@ -29,11 +33,34 @@ public:
   MyParisIvyLeafScene(MyFramework* f);
   void Render() override;
   void Update(float secs) override;
+  void OnKeyDown(uint32_t k) override;
 
   ID3D12RootSignature* global_rootsig;
   ID3D12Resource* rt_output_resource;
-  ID3D12DescriptorHeap* cbvsrvuav_heap;
+  ID3D12DescriptorHeap* cbvsrvuav_heap, * texture_srv_heap;
+  ID3D12Resource* vertex_buffer;
+  D3D12_VERTEX_BUFFER_VIEW vbv;
   MyRtPipeline my_rt_pipeline{};
+  ID3D12RootSignature* rast_rootsig{};
+  ID3D12PipelineState* rast_pipeline{};
+  bool is_rt{ false };
+  struct Vertex {
+    alignas(16) glm::vec3 pos;
+    alignas(16) glm::vec3 color;
+    alignas(16) glm::vec2 uv; int mat_idx;
+    int pad{};
+  };
+  ID3D12Resource* diffuse_texture, * alpha_texture;
+
+  std::vector<Vertex> vertices = {
+    { { -0.5, -0.5, 0}, { 1, 0, 0 }, { 0, 1 }, -1 },
+    { {  0.5,  0.5, 0}, { 0, 1, 0 }, { 1, 0 }, -1 },
+    { { -0.5,  0.5, 0}, { 0, 0, 1 }, { 0, 0 }, -1 },
+
+    { { -0.5, -0.5, 0}, { 1, 0, 0 }, { 0, 1 }, -1 },
+    { {  0.5, -0.5, 0}, { 0, 0, 1 }, { 1, 1 }, -1 },
+    { {  0.5,  0.5, 0}, { 0, 1, 0 }, { 1, 0 }, -1 },
+  };
 };
 
 class MyFramework {
@@ -44,19 +71,24 @@ public:
   void InitSwapchain();
   ID3D12Device5* GetDevice();
 
+  // Resource creation helpers
   void CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig);
   void CreateRtOutputResource(ID3D12Resource** out_res);
   void CreateCBVSRVUAVHeap(ID3D12DescriptorHeap** h, ID3D12DescriptorHeap** h_cpu, uint32_t num_descriptors);
   uint32_t GetCBVSRVUAVDescriptorSize();
   void CreateUAVTexture2D(ID3D12Resource* res,
     ID3D12DescriptorHeap* h, uint32_t idx);
-
   ID3D12CommandAllocator* GetCommandAllocator();
   ID3D12CommandQueue* GetCommandQueue();
   ID3D12GraphicsCommandList4* GetGraphicsCommandList();
   ID3D12Resource* GetCurrentRenderTarget();
   void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
     ID3D12RootSignature* global_rootsig);
+  template<class T> void CreateVertexBuffer(std::vector<T>& verts, ID3D12Resource** res, D3D12_VERTEX_BUFFER_VIEW* vbv);
+  void CreateHelloTriangleRootSig(ID3D12RootSignature** out_rootsig);
+  void CreateMyPipelineState(ID3D12PipelineState** pso, ID3D12RootSignature* root_sig);
+  void LoadTextureFromImage(ID3D12Resource** res, const char* filename);
+  void CreateSRVTexture2D(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx);
 
   constexpr static uint32_t WIN_W = 512, WIN_H = 512;
   constexpr static uint32_t FRAME_COUNT = 2;
@@ -80,4 +112,14 @@ protected:
   ID3D12Fence* fence{};
 
   uint32_t cbvsrvuav_descriptor_size{};
+
+  // Just 2 Descriptor tables
+  // [0]: UAV
+  // [1]: SRV
+  void do_CreateRootSig(
+    ID3D12RootSignature** root_sig,
+    uint32_t num_uav, uint32_t num_srv,
+    D3D12_ROOT_SIGNATURE_FLAGS flag,
+    bool has_sampler
+    );
 };

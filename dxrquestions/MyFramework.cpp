@@ -11,7 +11,18 @@
 #include "d3dx12.h"
 #include <dxgi1_4.h>
 
+#ifndef NDEBUG
+#include "x64\Debug\g_PixelShaderIvyLeafTriangle.h"
+#include "x64\Debug\g_VertexShaderIvyLeafTriangle.h"
 #include "x64/Debug/CompiledShaders/raytracing_shaders.hlsl.h"
+#else
+#include "x64\Release\g_PixelShaderIvyLeafTriangle.h"
+#include "x64\Release\g_VertexShaderIvyLeafTriangle.h"
+#include "x64/Release/CompiledShaders/raytracing_shaders.hlsl.h"
+#endif
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "../dxrhelloworld/stb_image.h"
 
 // https://stackoverflow.com/questions/65315241/how-can-i-fix-requires-l-value
 template <class T>
@@ -189,46 +200,80 @@ void MyFramework::InitSwapchain() {
   WaitForPreviousFrame();
 }
 
-void MyFramework::CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig) {
-  const int SRV_COUNT = 2;  // TLAS, texture
+void MyFramework::do_CreateRootSig(
+  ID3D12RootSignature** root_sig,
+  uint32_t num_uav, uint32_t num_srv,
+  D3D12_ROOT_SIGNATURE_FLAGS flags, bool has_sampler) {
+  const uint32_t NTYPES = 2;
+  std::vector<D3D12_ROOT_PARAMETER> root_params;
+  std::vector<D3D12_DESCRIPTOR_RANGE> desc_ranges;
+  root_params.reserve(NTYPES);
+  desc_ranges.reserve(NTYPES);
 
-  D3D12_ROOT_PARAMETER root_params[2];
-  root_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-  root_params[0].DescriptorTable.NumDescriptorRanges = 1;
-  D3D12_DESCRIPTOR_RANGE desc_range{};
-  desc_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-  desc_range.NumDescriptors = 1;  // RT Output Buffer
-  desc_range.BaseShaderRegister = 0;
-  desc_range.RegisterSpace = 0;
-  desc_range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-  root_params[0].DescriptorTable.pDescriptorRanges = &desc_range;
-  root_params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+  D3D12_DESCRIPTOR_RANGE_TYPE range_types[] = {
+    D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
+    D3D12_DESCRIPTOR_RANGE_TYPE_SRV
+  };
+  uint32_t view_counts[] = {
+    num_uav,
+    num_srv
+  };
 
-  root_params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-  root_params[1].DescriptorTable.NumDescriptorRanges = 1;
-  D3D12_DESCRIPTOR_RANGE desc_range1{};
-  desc_range1.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-  desc_range1.NumDescriptors = 2;  // AS, texture
-  desc_range1.BaseShaderRegister = 0;
-  desc_range1.RegisterSpace = 0;
-  desc_range1.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-  root_params[1].DescriptorTable.pDescriptorRanges = &desc_range1;
-  root_params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+  //if (num_uav > 0) {
+  for (uint32_t i=0; i<NTYPES; i++) {
+    if (view_counts[i] > 0) {
+      root_params.push_back(D3D12_ROOT_PARAMETER());
+      desc_ranges.push_back(D3D12_DESCRIPTOR_RANGE());
+      D3D12_ROOT_PARAMETER& root_param = root_params.back();
+      D3D12_DESCRIPTOR_RANGE& desc_range = desc_ranges.back();
+
+      root_param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+      root_param.DescriptorTable.NumDescriptorRanges = 1;
+      desc_range.RangeType = range_types[i];
+      desc_range.NumDescriptors = view_counts[i];
+      desc_range.BaseShaderRegister = 0;
+      desc_range.RegisterSpace = 0;
+      desc_range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+      root_param.DescriptorTable.pDescriptorRanges = &desc_range;
+      root_param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+  }
 
   D3D12_ROOT_SIGNATURE_DESC rootsig_desc{};
-  rootsig_desc.NumStaticSamplers = 0;
-  rootsig_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
-  rootsig_desc.NumParameters = 2;
-  rootsig_desc.pParameters = root_params;
+  D3D12_STATIC_SAMPLER_DESC static_sampler{};
+  if (!has_sampler) {
+    rootsig_desc.NumStaticSamplers = 0;
+  }
+  else {
+    static_sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    static_sampler.AddressU = static_sampler.AddressV = static_sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    static_sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    static_sampler.ShaderRegister = 0; // s0
+    static_sampler.RegisterSpace = 0;
+    static_sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rootsig_desc.NumStaticSamplers = 1;
+    rootsig_desc.pStaticSamplers = &static_sampler;
+  }
+  rootsig_desc.Flags = flags;
+  rootsig_desc.NumParameters = root_params.size();
+  rootsig_desc.pParameters = root_params.data();
   ID3DBlob* signature, * error;
   CE(D3D12SerializeRootSignature(
     &rootsig_desc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
   CE(device12->CreateRootSignature(
     0, signature->GetBufferPointer(), signature->GetBufferSize(),
-    IID_PPV_ARGS(out_rootsig)));
+    IID_PPV_ARGS(root_sig)));
   signature->Release();
   if (error)
     error->Release();
+}
+
+void MyFramework::CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig) {
+  do_CreateRootSig(out_rootsig, 1, 2, D3D12_ROOT_SIGNATURE_FLAG_NONE, false);
+}
+
+void MyFramework::CreateHelloTriangleRootSig(ID3D12RootSignature** out_rootsig) {
+  do_CreateRootSig(out_rootsig, 0, 2, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT, true);
 }
 
 void MyFramework::CreateRtOutputResource(ID3D12Resource** out_res) {
@@ -306,6 +351,17 @@ void MyFramework::CreateUAVTexture2D(ID3D12Resource* res,
   uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
   CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(h->GetCPUDescriptorHandleForHeapStart(), idx, cbvsrvuav_descriptor_size);
   device12->CreateUnorderedAccessView(res, nullptr, &uav_desc, uav_handle);
+}
+
+void MyFramework::CreateSRVTexture2D(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx) {
+  D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{};
+  srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+  srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+  srv_desc.Texture2D.MipLevels = 1;
+  srv_desc.Texture2D.MostDetailedMip = 0;
+  srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(h->GetCPUDescriptorHandleForHeapStart(), idx, cbvsrvuav_descriptor_size);
+  device12->CreateShaderResourceView(res, &srv_desc, srv_handle);
 }
 
 uint32_t MyFramework::GetCBVSRVUAVDescriptorSize() {
@@ -410,6 +466,152 @@ void MyFramework::CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
   }
 }
 
+template<class T>
+void MyFramework::CreateVertexBuffer(std::vector<T>& verts, ID3D12Resource** res, D3D12_VERTEX_BUFFER_VIEW* vbv) {  // No index buffer
+  CE(device12->CreateCommittedResource(
+    &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+    D3D12_HEAP_FLAG_NONE,
+    &keep(CD3DX12_RESOURCE_DESC::Buffer(sizeof(T) * verts.size())),
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(res)));
+  void* mapped;
+  (*res)->Map(0, nullptr, &mapped);
+  memcpy(mapped, verts.data(), sizeof(T)*verts.size());
+  (*res)->Unmap(0, nullptr);
+
+  if (vbv) {
+    vbv->BufferLocation = (*res)->GetGPUVirtualAddress();
+    vbv->SizeInBytes = sizeof(T) * verts.size();
+    vbv->StrideInBytes = sizeof(T);
+  }
+}
+
+void MyFramework::CreateMyPipelineState(ID3D12PipelineState** pso,
+  ID3D12RootSignature* root_sig) {
+  /*
+  * {
+    LPCSTR SemanticName;
+    UINT SemanticIndex;
+    DXGI_FORMAT Format;
+    UINT InputSlot;
+    UINT AlignedByteOffset;
+    D3D12_INPUT_CLASSIFICATION InputSlotClass;
+    UINT InstanceDataStepRate;
+  */
+  D3D12_INPUT_ELEMENT_DESC input_descs[] = {
+    {
+      "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+      D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+    },
+    {
+      "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 16,
+      D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+    },
+    {
+      "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 32,
+      D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+    },
+    {
+      "DATA", 0, DXGI_FORMAT_R32_UINT, 0, 40,
+      D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0
+    },
+  };
+
+  D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+  psoDesc.InputLayout = { input_descs, _countof(input_descs) };
+  psoDesc.pRootSignature = root_sig;
+  psoDesc.VS.pShaderBytecode = g_VertexShaderIvyLeafTriangle;
+  psoDesc.VS.BytecodeLength = sizeof(g_VertexShaderIvyLeafTriangle);
+  psoDesc.PS.pShaderBytecode = g_PixelShaderIvyLeafTriangle;
+  psoDesc.PS.BytecodeLength = sizeof(g_PixelShaderIvyLeafTriangle);
+  psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+  psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+  psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+  //psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+  psoDesc.DepthStencilState.DepthEnable = false;
+  psoDesc.DepthStencilState.StencilEnable = false;
+  psoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+  psoDesc.SampleMask = UINT_MAX;
+  psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+  psoDesc.NumRenderTargets = 1;
+  psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+  psoDesc.SampleDesc.Count = 1;
+  CE(device12->CreateGraphicsPipelineState(
+    &psoDesc, IID_PPV_ARGS(pso)));
+}
+
+void MyFramework::LoadTextureFromImage(ID3D12Resource** res, const char* filename) {
+  int texHeight, texWidth, texChannels;
+  stbi_uc* pixels = stbi_load(filename, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+  assert(pixels != nullptr && "Error loading image.");
+  size_t imageSize = texHeight * texWidth * 4;
+  printf("Image %s size %d x %d x %d\n", filename, texWidth, texHeight, texChannels);
+
+  UINT64 rowPitch = static_cast<UINT64>(texWidth) * 4;
+  UINT64 slicePitch = rowPitch * texHeight;
+
+  D3D12_RESOURCE_DESC texDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+    DXGI_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, /*arraySize*/1, /*mipLevels*/1);
+
+  CD3DX12_HEAP_PROPERTIES defaultHeapProps(D3D12_HEAP_TYPE_DEFAULT);
+  HRESULT hr = device12->CreateCommittedResource(
+    &defaultHeapProps,
+    D3D12_HEAP_FLAG_NONE,
+    &texDesc,
+    D3D12_RESOURCE_STATE_COPY_DEST,   // 初始为 COPY_DEST，待会儿拷贝
+    nullptr,
+    IID_PPV_ARGS(res));
+  if (FAILED(hr)) {
+    stbi_image_free(pixels);
+    return;
+  }
+
+  UINT64 uploadSize = GetRequiredIntermediateSize(*res, 0, 1);
+  ID3D12Resource* upload{};
+  CD3DX12_HEAP_PROPERTIES uploadHeapProps(D3D12_HEAP_TYPE_UPLOAD);
+  auto uploadDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadSize);
+  hr = device12->CreateCommittedResource(
+    &uploadHeapProps, D3D12_HEAP_FLAG_NONE,
+    &uploadDesc,
+    D3D12_RESOURCE_STATE_GENERIC_READ,
+    nullptr,
+    IID_PPV_ARGS(&upload));
+  if (FAILED(hr)) {
+    stbi_image_free(pixels);
+    return;
+  }
+
+  D3D12_SUBRESOURCE_DATA subres{};
+  subres.pData = pixels;
+  subres.RowPitch = static_cast<LONG_PTR>(rowPitch);
+  subres.SlicePitch = static_cast<LONG_PTR>(slicePitch);
+
+  ID3D12CommandAllocator* command_allocator = GetCommandAllocator();
+  ID3D12GraphicsCommandList4* command_list = GetGraphicsCommandList();
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, nullptr));
+  
+  UpdateSubresources(command_list, *res, upload, 0, 0, 1, &subres);
+
+  // 3.2 拷贝完切换到着色器可读
+  auto toSRV = CD3DX12_RESOURCE_BARRIER::Transition(
+    *res, D3D12_RESOURCE_STATE_COPY_DEST,
+    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+  command_list->ResourceBarrier(1, &toSRV);
+
+  // 4) 提交命令并等待完成（演示用，实际可并到你的 frame 提交里）
+  command_list->Close();
+  ID3D12CommandList* lists[] = { command_list };
+  ID3D12CommandQueue* command_queue = GetCommandQueue();
+  command_queue->ExecuteCommandLists(1, lists);
+
+  WaitForPreviousFrame();
+  upload->Release();
+  
+  stbi_image_free(pixels);
+}
+
 // ======================================= Helper functions ===============
 static void ResourceBarrierTransition(ID3D12GraphicsCommandList4* cmdlist,
   ID3D12Resource* res,
@@ -426,8 +628,16 @@ MyParisIvyLeafScene::MyParisIvyLeafScene(MyFramework* f) : MyScene(f) {
   f->CreateRtGlobalRootSig(&global_rootsig);
   f->CreateRtOutputResource(&rt_output_resource);
   f->CreateCBVSRVUAVHeap(&cbvsrvuav_heap, nullptr, 1);
+  f->CreateCBVSRVUAVHeap(&texture_srv_heap, nullptr, 2);
   f->CreateUAVTexture2D(rt_output_resource, cbvsrvuav_heap, 0);
+  f->CreateVertexBuffer(vertices, &vertex_buffer, &vbv);
   f->CreateMyRtPipeline(&my_rt_pipeline, global_rootsig);
+  f->CreateHelloTriangleRootSig(&rast_rootsig);
+  f->CreateMyPipelineState(&rast_pipeline, rast_rootsig);
+  f->LoadTextureFromImage(&diffuse_texture, "textures/Paris_ivy_leaf_a_diff.png");
+  f->LoadTextureFromImage(&alpha_texture, "textures/Paris_ivy_leaf_a_mask.png");
+  f->CreateSRVTexture2D(diffuse_texture, texture_srv_heap, 0);
+  f->CreateSRVTexture2D(alpha_texture, texture_srv_heap, 1);
   printf("Created rootsig.\n");
 }
 
@@ -443,17 +653,37 @@ void MyParisIvyLeafScene::Render() {
   ID3D12Resource* rendertarget = framework->GetCurrentRenderTarget();
   ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
-  ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-  command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)&cbvsrvuav_heap);
-  command_list->SetComputeRootSignature(global_rootsig);
-  CD3DX12_GPU_DESCRIPTOR_HANDLE handle_uav(cbvsrvuav_heap->GetGPUDescriptorHandleForHeapStart(), 0, framework->GetCBVSRVUAVDescriptorSize());
-  command_list->SetComputeRootDescriptorTable(0, handle_uav);
-  command_list->SetPipelineState1(my_rt_pipeline.rt_state_object);
-  command_list->DispatchRays(&(my_rt_pipeline.dispatch_rays_desc));
-  ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
-  command_list->CopyResource(rendertarget, rt_output_resource);
-  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+  if (is_rt) {
+    ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)&cbvsrvuav_heap);
+    command_list->SetComputeRootSignature(global_rootsig);
+    CD3DX12_GPU_DESCRIPTOR_HANDLE handle_uav(cbvsrvuav_heap->GetGPUDescriptorHandleForHeapStart(), 0, framework->GetCBVSRVUAVDescriptorSize());
+    command_list->SetComputeRootDescriptorTable(0, handle_uav);
+    command_list->SetPipelineState1(my_rt_pipeline.rt_state_object);
+    command_list->DispatchRays(&(my_rt_pipeline.dispatch_rays_desc));
+    ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
+    command_list->CopyResource(rendertarget, rt_output_resource);
+    ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+  }
+  else {
+    command_list->SetPipelineState(rast_pipeline);
+    command_list->SetGraphicsRootSignature(rast_rootsig);
+    command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)&texture_srv_heap);
+    CD3DX12_GPU_DESCRIPTOR_HANDLE handle_srv(texture_srv_heap->GetGPUDescriptorHandleForHeapStart());
+    command_list->SetGraphicsRootDescriptorTable(0, handle_srv);
+    D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * (framework->WIN_W), 1.0f * (framework->WIN_H), 0.0f, 1.0f);
+    D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(framework->WIN_W), long(framework->WIN_H));
+    command_list->RSSetViewports(1, &viewport);
+    command_list->RSSetScissorRects(1, &scissor);
+    command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
+    float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    command_list->OMSetBlendFactor(blend_factor);
+    command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    command_list->IASetVertexBuffers(0, 1, &vbv);
+    command_list->DrawInstanced(6, 1, 0, 0);
+    ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+  }
   CE(command_list->Close());
 
   ID3D12CommandQueue* command_queue = framework->GetCommandQueue();
@@ -463,4 +693,10 @@ void MyParisIvyLeafScene::Render() {
 }
 
 void MyParisIvyLeafScene::Update(float secs) {
+}
+
+void MyParisIvyLeafScene::OnKeyDown(uint32_t k) {
+  if (k == VK_SPACE) {
+    is_rt = !is_rt;
+  }
 }

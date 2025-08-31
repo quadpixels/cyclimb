@@ -26,10 +26,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="shaders\pixel_shader.hlsl">
+    <FxCompile Include="shaders\pixel_shader_ivyleaf_triangle.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
-    <FxCompile Include="shaders\vertex_shader.hlsl">
+    <FxCompile Include="shaders\vertex_shader_ivyleaf_triangle.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
     <FxCompile Include="shaders\raytracing_shaders.hlsl">
