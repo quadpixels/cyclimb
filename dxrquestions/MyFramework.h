@@ -43,6 +43,8 @@ public:
   MyRtPipeline my_rt_pipeline{};
   ID3D12RootSignature* rast_rootsig{};
   ID3D12PipelineState* rast_pipeline{};
+  ID3D12Resource* blas_result{};
+  ID3D12Resource* tlas_result{};
   bool is_rt{ false };
   struct Vertex {
     alignas(16) glm::vec3 pos;
@@ -89,6 +91,13 @@ public:
   void CreateMyPipelineState(ID3D12PipelineState** pso, ID3D12RootSignature* root_sig);
   void LoadTextureFromImage(ID3D12Resource** res, const char* filename);
   void CreateSRVTexture2D(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx);
+  void CreateSRVAccelerationStructure(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx);
+  void CreateSRVBuffer(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx, uint32_t num_elts, uint32_t stride);
+  
+  void BuildBLAS(ID3D12Resource** blas_result,
+    ID3D12Resource* vertex_buffer, uint32_t stride, uint32_t vertex_count);  // Just 1 geom
+  void BuildTLAS(ID3D12Resource** tlas_result,
+    ID3D12Resource* blas_result);
 
   constexpr static uint32_t WIN_W = 512, WIN_H = 512;
   constexpr static uint32_t FRAME_COUNT = 2;
