@@ -24,6 +24,9 @@
     <ClCompile Include="MyFramework.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ommhelper.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shaders\pixel_shader_ivyleaf_triangle.hlsl">

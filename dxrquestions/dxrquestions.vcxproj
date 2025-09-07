@@ -71,12 +71,12 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(SolutionDir);$(ProjectDir)\nvapi;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir);$(ProjectDir)\nvapi;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(IncludePath)</IncludePath>
     <LibraryPath>$(ProjectDir)nvapi\amd64;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LibraryPath>$(ProjectDir)nvapi\amd64;$(LibraryPath)</LibraryPath>
-    <IncludePath>$(SolutionDir);$(ProjectDir)\nvapi;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir);$(ProjectDir)\nvapi;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -118,7 +118,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>nvapi64.lib;d3d12.lib;d3dcompiler.lib;dxgi.lib;dxguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>nvapi64.lib;d3d12.lib;d3dcompiler.lib;dxgi.lib;dxguid.lib;$(USERPROFILE)\Downloads\OMM\build\libraries\omm-lib\Debug\omm-lib.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -137,13 +137,14 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>nvapi64.lib;d3d12.lib;d3dcompiler.lib;dxgi.lib;dxguid.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>nvapi64.lib;d3d12.lib;d3dcompiler.lib;dxgi.lib;dxguid.lib;$(USERPROFILE)\Downloads\OMM\build\libraries\omm-lib\Release\omm-lib.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MyFramework.cpp" />
     <ClCompile Include="MyFramework.h" />
+    <ClCompile Include="ommhelper.cpp" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shaders\pixel_shader_ivyleaf_triangle.hlsl">

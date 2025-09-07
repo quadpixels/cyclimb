@@ -35,30 +35,6 @@ uint32_t g_scene_idx = 0;
 HWND g_hwnd{};
 long long g_last_ms{ 0 };
 
-void InitNVAPI() {
-  NvAPI_Status status = NvAPI_Initialize();
-  if (status == NVAPI_OK) {
-    printf("NVAPI inited.\n");
-  }
-  else {
-    printf("NVAPI init failed = %d\n", (int)status);
-    return;
-  }
-  size_t lss_data_size = sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC);
-  printf("sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC) = %zu\n", lss_data_size);
-  NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAPS lssCaps = NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAP_NONE;
-  NvAPI_D3D12_GetRaytracingCaps(g_myframework->GetDevice(), NVAPI_D3D12_RAYTRACING_CAPS_TYPE_LINEAR_SWEPT_SPHERES, &lssCaps, sizeof(NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAPS));
-  printf("lssCaps = %u, %s\n",
-    (uint32_t)(lssCaps),
-    lssCaps == NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAP_NONE ? "LSS not supported" : "LSS supported");
-
-  NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAPS ommCaps = NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAP_NONE;
-  NvAPI_D3D12_GetRaytracingCaps(g_myframework->GetDevice(), NVAPI_D3D12_RAYTRACING_CAPS_TYPE_OPACITY_MICROMAP, &ommCaps, sizeof(ommCaps));
-  printf("ommCaps = %u, %s\n",
-    (uint32_t)(ommCaps),
-    ommCaps == NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_CAP_NONE ? "OMM not supported" : "OMM supported");
-}
-
 void InitDX12Stuff() {
   g_dxc_support.Initialize();
   IDxcCompiler* dxc_compiler;
@@ -156,7 +132,10 @@ void CreateMyWindow() {
 
 int main() {
   InitDX12Stuff();
-  InitNVAPI();
+  g_myframework->InitNVAPI();
+#ifndef NDEBUG
+  g_myframework->InitRayTracingValidation();
+#endif
   g_scenes[0] = new MyParisIvyLeafScene(g_myframework);
 
   MSG msg = { 0 };

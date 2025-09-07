@@ -1,9 +1,15 @@
 RWTexture2D<float4> RenderTarget : register(u0);
+RWStructuredBuffer<uint> MyDebugBuffer : register(u1);
 RaytracingAccelerationStructure Scene : register(t0, space0);
 
 Texture2D DiffuseTexture : register(t1);
 Texture2D AlphaTexture : register(t2);
 SamplerState TextureSampler : register(s0);
+
+struct MyConstantBufferStruct {
+  uint is_dump_debuginfo;
+};
+ConstantBuffer<MyConstantBufferStruct> MyConstantBuffer : register(b0);
 
 struct VertexData
 {
@@ -21,6 +27,7 @@ struct MyAttributes {
 
 struct MyPayload {
   float4 color;
+  uint prim_idx;
 };
 
 [shader("raygeneration")]
@@ -30,6 +37,7 @@ void MyRaygenShader()
 
   MyPayload payload;
   payload.color = float4(lerpValues, 0, 1);
+  payload.prim_idx = 0xFFFFFFFF;
 
   RayDesc ray;
   float2 uv = (lerpValues - 0.5) * 2.0;
@@ -49,7 +57,12 @@ void MyRaygenShader()
     payload);
 
   // Render interpolated DispatchRaysIndex outside the stencil window
-  RenderTarget[DispatchRaysIndex().xy] = payload.color;
+  uint2 dri = DispatchRaysIndex().xy;
+  RenderTarget[dri] = payload.color;
+  if (MyConstantBuffer.is_dump_debuginfo != 0) {
+    uint idx = dri.y * DispatchRaysDimensions().x + dri.x;
+    MyDebugBuffer[idx] = payload.prim_idx;
+  }
 }
 
 [shader("miss")]
@@ -73,10 +86,17 @@ float2 GetQuadUV(in MyAttributes attr) {
 [shader("anyhit")]
 void MyAnyHitShader(inout MyPayload payload, in MyAttributes attr)
 {
+  if (MyConstantBuffer.is_dump_debuginfo != 0) {
+    payload.prim_idx = PrimitiveIndex();
+  }
   float2 uv = GetQuadUV(attr);
+  payload.color = float4(uv.x, uv.y, 1, 1);
   float alpha = AlphaTexture.SampleLevel(TextureSampler, uv, 0).x;
   if (alpha < 0.5) {
     IgnoreHit();
+  }
+  else {
+    AcceptHitAndEndSearch();
   }
 }
 
