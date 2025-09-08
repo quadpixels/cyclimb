@@ -8,6 +8,9 @@ SamplerState TextureSampler : register(s0);
 
 struct MyConstantBufferStruct {
   uint is_dump_debuginfo;
+  uint is_omm;
+  uint omm_primidx0;  // 0x9d58180 or 0x9d58190
+  uint omm_primidx1;
 };
 ConstantBuffer<MyConstantBufferStruct> MyConstantBuffer : register(b0);
 
@@ -73,6 +76,14 @@ void MyMissShader(inout MyPayload payload)
 
 float2 GetQuadUV(in MyAttributes attr) {
   int pidx = PrimitiveIndex();
+  if (MyConstantBuffer.is_omm) {
+    if (pidx == MyConstantBuffer.omm_primidx0) {
+      pidx = 0;
+    }
+    if (pidx == MyConstantBuffer.omm_primidx1) {
+      pidx = 1;
+    }
+  }
   int vidx = pidx * 3;
   VertexData v0 = Vertices[vidx];
   VertexData v1 = Vertices[vidx + 1];

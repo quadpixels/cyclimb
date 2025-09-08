@@ -902,7 +902,7 @@ void MyFramework::BuildDummyOMM(ID3D12Resource* vertex_buffer, uint32_t stride,
   ID3D12Resource* omm_array_data_resource, * omm_desc_array_resource;
   // Stolen from OpacityMicroMapsHelper
   // Fill input array
-  const omm::Cpu::BakeResultDesc* res_desc = bakeOmmForMask(3);
+  const omm::Cpu::BakeResultDesc* res_desc = bakeOmmForMask(5);
   printf("OMM data size:        %u\n", res_desc->arrayDataSize);
   printf("OMM desc array count: %u\n", res_desc->descArrayCount);
   static_assert(sizeof(NVAPI_D3D12_RAYTRACING_OPACITY_MICROMAP_DESC) == sizeof(omm::Cpu::OpacityMicromapDesc));
@@ -1309,16 +1309,61 @@ void MyParisIvyLeafScene::Render() {
     my_debug_resource_cpu->Map(0, nullptr, (void**)&mapped);
     printf("Print something\n");
     const uint32_t npixels = framework->WIN_H * framework->WIN_W;
-    for (uint32_t i = 0; i < npixels; i += npixels / 100) {
+    const uint32_t stepsize = npixels / 100;
+    for (uint32_t i = 0; i < npixels; i += stepsize) {
       printf("[%u] = %x\n", i, mapped[i]);
     }
+    if (prim_idx_mapping_state == PrimIdxMappingState::GetNonOMMResult) {
+      prim_idxes_non_omm.clear();
+      prim_idxes_omm.clear();
+      for (uint32_t i = 0; i < npixels; i += stepsize) {
+        prim_idxes_non_omm.push_back(mapped[i]);
+      }
+      prim_idx_mapping_state = PrimIdxMappingState::GetOMMResult;
+      is_omm = true;
+    } else if (prim_idx_mapping_state == PrimIdxMappingState::GetOMMResult) {
+      for (uint32_t i = 0; i < npixels; i += stepsize) {
+        prim_idxes_omm.push_back(mapped[i]);
+      }
+      int mapped_miss = -999, mapped_prim0 = -999, mapped_prim1 = -999;
+      for (uint32_t i = 0; i < prim_idxes_omm.size(); i ++) {
+        int pidx_nonomm = prim_idxes_non_omm[i];
+        int pidx_omm = prim_idxes_omm[i];
+        auto do_update_map = [&](int& mapped_pidx, int target) {
+          printf("nonomm=%d  omm=%d  tgt=%d\n",
+            pidx_nonomm, pidx_omm, target);
+          if (pidx_omm == -1) return;  // HACK
+          if (pidx_nonomm == target) {
+            if (mapped_pidx == -999) {
+              mapped_pidx = pidx_omm;
+            }
+            else {
+              if (mapped_pidx != pidx_omm) {
+                mapped_pidx = -998;
+              }
+            }
+          }
+        };
+        do_update_map(mapped_miss, -1);
+        do_update_map(mapped_prim0, 0);
+        do_update_map(mapped_prim1, 1);
+      }
+      printf("[mapping] miss=0x%x, prim0=0x%x, prim1=0x%x\n",
+        mapped_miss, mapped_prim0, mapped_prim1);
+      my_cb_cpu.omm_primidx0 = mapped_prim0;
+      my_cb_cpu.omm_primidx1 = mapped_prim1;
+      prim_idx_mapping_state = PrimIdxMappingState::NotStarted;
+    }
     my_debug_resource_cpu->Unmap(0, nullptr);
-    my_cb_cpu.is_dump_debuginfo = false;
+    if (prim_idx_mapping_state == PrimIdxMappingState::NotStarted) {
+      my_cb_cpu.is_dump_debuginfo = false;
+    }
   }
 }
 
 void MyParisIvyLeafScene::Update(float secs) {
   void* mapped;
+  my_cb_cpu.is_omm = is_omm;
   my_cb_resource->Map(0, nullptr, &mapped);
   memcpy(mapped, &my_cb_cpu, sizeof(MyConstantBufferStruct));
   my_cb_resource->Unmap(0, nullptr);
@@ -1332,7 +1377,9 @@ void MyParisIvyLeafScene::OnKeyDown(uint32_t k) {
     is_omm = !(is_omm);
     printf("is_omm = %d\n", is_omm);
   }
-  else if (k == 'd' || k == 'D') {  // Dump
+  else if (k == 'd' || k == 'D') {  // Dump + Debug (map OMM's primidx to normal idx)
+    is_omm = false;
     my_cb_cpu.is_dump_debuginfo = true;
+    prim_idx_mapping_state = PrimIdxMappingState::GetNonOMMResult;
   }
 }

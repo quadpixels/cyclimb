@@ -37,6 +37,9 @@ public:
 
   struct MyConstantBufferStruct {
     uint32_t is_dump_debuginfo;
+    uint32_t is_omm;
+    uint32_t omm_primidx0;  // 0x9d58180 or 0x9d58190
+    uint32_t omm_primidx1;
   };
   MyConstantBufferStruct my_cb_cpu{};
   ID3D12Resource* my_cb_resource;
@@ -75,6 +78,16 @@ public:
     { {  0.5, -0.5, 0}, { 0, 0, 1 }, { 1, 1 }, -1 },
     { {  0.5,  0.5, 0}, { 0, 1, 0 }, { 1, 0 }, -1 },
   };
+
+  enum PrimIdxMappingState {
+    NotStarted,
+    GetNonOMMResult,
+    GetOMMResult,
+    Done
+  };
+  PrimIdxMappingState prim_idx_mapping_state{ PrimIdxMappingState::NotStarted };
+  std::vector<int> prim_idxes_non_omm;
+  std::vector<int> prim_idxes_omm;
 };
 
 class MyFramework {
