@@ -116,13 +116,13 @@ public:
   ID3D12Resource* blas_result, * tlas_result;
 
   std::vector<glm::vec3> lss_poses = {
-    { 0.1, 0.1, 0.0 },
-    { 0.3, 0.3, 0.0 }
+    { -0.5, 0.0, 0.0 },
+    { 0.5, 0.0, 0.0 }
   };
   std::vector<float> lss_radii = {
-    0.1, 0.1
+    0.1, 0.3
   };
-  std::vector<uint32_t> lss_indices = { 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 };
+  std::vector<uint32_t> lss_indices = { 0, 1 };
 };
 
 class MyFramework {

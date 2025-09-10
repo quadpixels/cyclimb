@@ -1146,14 +1146,14 @@ void MyFramework::BuildDummyLSS(
 
   NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC lss_desc{};
   lss_desc.endcapMode = endcap_mode;
-  //lss_desc.indexBuffer.StartAddress = indices_buffer->GetGPUVirtualAddress();
-  //lss_desc.indexBuffer.StrideInBytes = sizeof(uint32_t);
-  //lss_desc.indexFormat = DXGI_FORMAT_R32_UINT;
-  //lss_desc.indexCount = index_count;
-  lss_desc.indexBuffer.StartAddress = NULL;
-  lss_desc.indexBuffer.StrideInBytes = 0;
-  lss_desc.indexFormat = DXGI_FORMAT_UNKNOWN;
-  lss_desc.indexCount = 0;
+  lss_desc.indexBuffer.StartAddress = lss_indices_resource->GetGPUVirtualAddress();
+  lss_desc.indexBuffer.StrideInBytes = sizeof(uint32_t);
+  lss_desc.indexFormat = DXGI_FORMAT_R32_UINT;
+  lss_desc.indexCount = index_count;
+  //lss_desc.indexBuffer.StartAddress = NULL;
+  //lss_desc.indexBuffer.StrideInBytes = 0;
+  //lss_desc.indexFormat = DXGI_FORMAT_UNKNOWN;
+  //lss_desc.indexCount = 0;
   lss_desc.primitiveCount = prim_count;
   lss_desc.primitiveFormat = prim_format;
   lss_desc.vertexCount = vert_count;

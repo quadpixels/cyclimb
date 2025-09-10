@@ -71,7 +71,7 @@ MyLssScene::MyLssScene(MyFramework* f) : MyScene(f) {
     2,  // vert count
     1,  // prim count
     2,  // index count, 1=TDR, 2=nsight says invalid ?
-    NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED,
+    NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_NONE,
     NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_LIST);
   f->CreateSRVAccelerationStructure(tlas_result, cbvsrvuav_heap, 2);
   f->CreateNullUAV(cbvsrvuav_heap, 1);

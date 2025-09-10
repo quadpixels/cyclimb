@@ -55,5 +55,12 @@ void MyMissShader(inout MyPayload payload)
 [shader("closesthit")]
 void MyClosestHitShader(inout MyPayload payload, in MyAttributes attr)
 {
-    payload.color = float4(1.0, 1.0, 0.0, 1.0);
+    if (NvRtIsLssHit())
+    {
+        payload.color = float4(1.0, 0.8, 0.0, 1.0);
+    }
+    else
+    {
+        payload.color = float4(1.0, 1.0, 0.0, 1.0);
+    }
 }
