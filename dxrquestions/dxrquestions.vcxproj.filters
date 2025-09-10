@@ -27,6 +27,9 @@
     <ClCompile Include="ommhelper.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MyLssScene.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shaders\pixel_shader_ivyleaf_triangle.hlsl">
@@ -36,6 +39,9 @@
       <Filter>Resource Files</Filter>
     </FxCompile>
     <FxCompile Include="shaders\raytracing_shaders.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
+    <FxCompile Include="shaders\raytracing_shaders_lss.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
   </ItemGroup>

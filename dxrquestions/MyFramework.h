@@ -7,6 +7,13 @@
 #include <dxgi1_4.h>
 #include <glm/glm.hpp>
 
+#include <nvapi.h>
+
+void ResourceBarrierTransition(ID3D12GraphicsCommandList4* cmdlist,
+  ID3D12Resource* res,
+  D3D12_RESOURCE_STATES from,
+  D3D12_RESOURCE_STATES to);
+
 class MyFramework;
 
 // All the stuff needed to do dispatch rays
@@ -90,6 +97,34 @@ public:
   std::vector<int> prim_idxes_omm;
 };
 
+class MyLssScene : public MyScene {
+public:
+  struct LssSphere {
+    glm::vec3 pos;
+    float radius;
+  };
+  MyLssScene(MyFramework* f);
+  void Render() override;
+  void Update(float secs) override;
+  void OnKeyDown(uint32_t k) override;
+
+  ID3D12RootSignature* global_rootsig;
+  ID3D12Resource* rt_output_resource;
+  ID3D12DescriptorHeap* cbvsrvuav_heap;
+  MyRtPipeline my_rt_pipeline{};
+  ID3D12Resource* lss_pos_resource, *lss_radii_resource, *lss_indices_resource;
+  ID3D12Resource* blas_result, * tlas_result;
+
+  std::vector<glm::vec3> lss_poses = {
+    { 0.1, 0.1, 0.0 },
+    { 0.3, 0.3, 0.0 }
+  };
+  std::vector<float> lss_radii = {
+    0.1, 0.1
+  };
+  std::vector<uint32_t> lss_indices = { 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 };
+};
+
 class MyFramework {
 public:
   // Shared by all scenes.
@@ -100,9 +135,21 @@ public:
   void InitRayTracingValidation();
   bool IsOMMSupported();
   ID3D12Device5* GetDevice();
+  struct MyRtShaderListInfo {
+    const wchar_t* raygen_shader{};
+    const wchar_t* closest_hit_shader{};
+    const wchar_t* miss_shader{};
+    const wchar_t* anyhit_shader{};
+    
+    void* dxil_lib_bytecode{};
+    uint32_t dxil_lib_length{ 0 };
+
+    const wchar_t* hitgroup_name;
+  };
 
   // Resource creation helpers
-  void CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig);
+  void CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv,
+    bool add_nvapi_uav, uint32_t nvapi_uav_idx);
   void CreateRtOutputResource(ID3D12Resource** out_res);
   void CreateCBVSRVUAVHeap(ID3D12DescriptorHeap** h, ID3D12DescriptorHeap** h_cpu, uint32_t num_descriptors);
   uint32_t GetCBVSRVUAVDescriptorSize();
@@ -110,12 +157,13 @@ public:
   void CreateUAVUintBuffer(ID3D12Resource* res,
     uint32_t num_elts, uint32_t stride,
     ID3D12DescriptorHeap* h, uint32_t idx);
+  void CreateNullUAV(ID3D12DescriptorHeap* h, uint32_t idx);
   ID3D12CommandAllocator* GetCommandAllocator();
   ID3D12CommandQueue* GetCommandQueue();
   ID3D12GraphicsCommandList4* GetGraphicsCommandList();
   ID3D12Resource* GetCurrentRenderTarget();
   void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
-    ID3D12RootSignature* global_rootsig);
+    ID3D12RootSignature* global_rootsig, const struct MyRtShaderListInfo& my_shaders);
   template<class T> void CreateVertexBuffer(std::vector<T>& verts, ID3D12Resource** res, D3D12_VERTEX_BUFFER_VIEW* vbv);
   void CreateBufferForCPUSideData(void* data, uint32_t len, ID3D12Resource** res);
   void CreateBufferForUAVAccess(uint32_t len, ID3D12Resource** res);
@@ -131,6 +179,16 @@ public:
   
   void BuildDummyOMM(ID3D12Resource* vertex_buffer, uint32_t stride,
     ID3D12Resource** blas_result_omm, ID3D12Resource** tlas_result_omm);
+  void BuildDummyLSS(
+    ID3D12Resource** blas_result,
+    ID3D12Resource** tlas_result, 
+    ID3D12Resource* lss_pos_resource,
+    ID3D12Resource* lss_radii_resource,
+    ID3D12Resource* lss_indices_resource,
+    uint32_t vert_count, uint32_t prim_count, uint32_t index_count,
+    NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE endcap_mode,  // none or chained
+    NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT prim_format);  // list or successive
+    
 
   void BuildBLAS(ID3D12Resource** blas_result,
     ID3D12Resource* vertex_buffer, uint32_t stride, uint32_t vertex_count);  // Just 1 geom
@@ -158,6 +216,7 @@ protected:
   HANDLE fence_event;
   ID3D12Fence* fence{};
   bool is_nvapi_available{ false };
+  bool is_lss_available{ false };
   bool is_omm_available{ false };
   bool use_rt_validation{ false };
 
@@ -174,6 +233,7 @@ protected:
     ID3D12RootSignature** root_sig,
     uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv,
     D3D12_ROOT_SIGNATURE_FLAGS flag,
-    bool has_sampler
+    bool has_sampler,
+    bool add_nvapi_uav, uint32_t nvapi_uav_idx
     );
 };

@@ -30,10 +30,11 @@ namespace dxc {
 }
 
 MyFramework* g_myframework{};
-MyScene* g_scenes[1];
-uint32_t g_scene_idx = 0;
+MyScene* g_scenes[2];
+uint32_t g_scene_idx = 1;
 HWND g_hwnd{};
 long long g_last_ms{ 0 };
+static bool g_init_done = false;
 
 void InitDX12Stuff() {
   g_dxc_support.Initialize();
@@ -69,14 +70,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     break;
   }
   case WM_KEYDOWN: {
-    MyScene* scene = g_scenes[g_scene_idx];
-    scene->OnKeyDown(wParam);
+    if (wParam == VK_ESCAPE) {
+      exit(0);
+    }
+    else if (wParam >= '1' && wParam <= '1' + _countof(g_scenes)) {
+      g_scene_idx = wParam - '1';
+    }
+    else {
+      MyScene* scene = g_scenes[g_scene_idx];
+      scene->OnKeyDown(wParam);
+    }
     return 0;
   }
   case WM_KEYUP:
     //OnKeyUp(wParam, lParam);
     return 0;
   case WM_PAINT: {
+    if (!g_init_done) return 0;
     long long ms = MillisecondsNow();
     MyScene* scene = g_scenes[g_scene_idx];
     if (scene) {
@@ -137,6 +147,8 @@ int main() {
   g_myframework->InitRayTracingValidation();
 #endif
   g_scenes[0] = new MyParisIvyLeafScene(g_myframework);
+  g_scenes[1] = new MyLssScene(g_myframework);
+  g_init_done = true;
 
   MSG msg = { 0 };
   while (msg.message != WM_QUIT) {
