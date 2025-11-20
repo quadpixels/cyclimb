@@ -72,7 +72,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IncludePath>$(SolutionDir);$(ProjectDir)\nvapi;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(IncludePath)</IncludePath>
-    <LibraryPath>$(ProjectDir)nvapi\amd64;$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(ProjectDir)nvapi\amd64;$(USERPROFILE)\Downloads\OMM\build\libraries\omm-lib\Debug;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LibraryPath>$(ProjectDir)nvapi\amd64;$(LibraryPath)</LibraryPath>
@@ -145,6 +145,7 @@
     <ClCompile Include="MyFramework.cpp" />
     <ClCompile Include="MyFramework.h" />
     <ClCompile Include="MyLssScene.cpp" />
+    <ClCompile Include="MySphereScene.cpp" />
     <ClCompile Include="ommhelper.cpp" />
   </ItemGroup>
   <ItemGroup>

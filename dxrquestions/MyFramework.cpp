@@ -45,6 +45,21 @@ static constexpr auto& keep(T&& x) noexcept {
 }
 #endif
 
+size_t AlignUp(uint32_t s, uint32_t a) {
+    return a * ((s - 1) / a + 1);
+}
+
+void GlmMat4ToDirectXMatrixColMajor(DirectX::XMMATRIX* out, const glm::mat4& m)
+{
+    for (int r = 0; r < 4; r++)
+    {
+        for (int c = 0; c < 4; c++)
+        {
+            out->r[c].m128_f32[r] = m[c][r];
+        }
+    }
+}
+
 // in main.cpp
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -370,7 +385,10 @@ void MyFramework::WaitForPreviousFrame() {
       NvAPI_D3D12_FlushRaytracingValidationMessages(device12);
     }
   }
-  frame_index = swapchain->GetCurrentBackBufferIndex();
+
+  if (swapchain) {
+    frame_index = swapchain->GetCurrentBackBufferIndex();
+  }
 }
 
 HRESULT MyFramework::Present() {
@@ -498,6 +516,7 @@ void MyFramework::CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
   subobjects.push_back(subobj_dxil_lib);
 
   // Hit group
+
   D3D12_STATE_SUBOBJECT subobj_hitgroup{};
   D3D12_HIT_GROUP_DESC hitgroup_desc{};
   hitgroup_desc.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
@@ -1137,25 +1156,27 @@ void MyFramework::BuildDummyOMM(ID3D12Resource* vertex_buffer, uint32_t stride,
 void MyFramework::BuildDummyLSS(
   ID3D12Resource** blas_result,
   ID3D12Resource** tlas_result,
-  ID3D12Resource* lss_pos_resource,
+  ID3D12Resource* lss_pos_resource, ID3D12Resource* lss_pos_resource1,
   ID3D12Resource* lss_radii_resource,
-  ID3D12Resource* lss_indices_resource,
-  uint32_t vert_count, uint32_t prim_count, uint32_t index_count,
+  ID3D12Resource* lss_indices_list_resource,
+  ID3D12Resource* lss_indices_successive_resource,
+  uint32_t vert_count,
   NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE endcap_mode,
-  NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT prim_format) {
+  NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT prim_format,
+  int case_idx) {
 
   NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC lss_desc{};
   lss_desc.endcapMode = endcap_mode;
-  lss_desc.indexBuffer.StartAddress = lss_indices_resource->GetGPUVirtualAddress();
+  lss_desc.indexBuffer.StartAddress = lss_indices_list_resource->GetGPUVirtualAddress();
   lss_desc.indexBuffer.StrideInBytes = sizeof(uint32_t);
   lss_desc.indexFormat = DXGI_FORMAT_R32_UINT;
-  lss_desc.indexCount = index_count;
+  lss_desc.indexCount = ((vert_count) - 1) * 2;
   //lss_desc.indexBuffer.StartAddress = NULL;
   //lss_desc.indexBuffer.StrideInBytes = 0;
   //lss_desc.indexFormat = DXGI_FORMAT_UNKNOWN;
   //lss_desc.indexCount = 0;
-  lss_desc.primitiveCount = prim_count;
-  lss_desc.primitiveFormat = prim_format;
+  lss_desc.primitiveCount = vert_count - 1;
+  lss_desc.primitiveFormat = NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_LIST;
   lss_desc.vertexCount = vert_count;
   lss_desc.vertexPositionBuffer.StartAddress = lss_pos_resource->GetGPUVirtualAddress();
   lss_desc.vertexPositionBuffer.StrideInBytes = sizeof(float) * 3;
@@ -1177,16 +1198,29 @@ void MyFramework::BuildDummyLSS(
     lss_desc.vertexCount,
     lss_desc.primitiveFormat,
     lss_desc.endcapMode);
+
+  NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC lss_desc1 = lss_desc;
+  lss_desc1.indexBuffer.StartAddress = lss_indices_successive_resource->GetGPUVirtualAddress();
+  lss_desc1.indexCount = vert_count - 1;
+  lss_desc1.vertexPositionBuffer.StartAddress = lss_pos_resource1->GetGPUVirtualAddress();
+  lss_desc1.primitiveFormat = NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_SUCCESSIVE_IMPLICIT;
  
-  NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX geom_descs[1]{};
+  NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX geom_descs[2]{};
   geom_descs[0].flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
   geom_descs[0].type = NVAPI_D3D12_RAYTRACING_GEOMETRY_TYPE_LSS_EX;
   geom_descs[0].lss = lss_desc;
+  geom_descs[1] = geom_descs[0];
+  geom_descs[1].lss = lss_desc1;
 
   NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX blas_input_ex{};
   blas_input_ex.type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
   blas_input_ex.flags = NVAPI_D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE_EX;
-  blas_input_ex.numDescs = 1;
+  switch (case_idx) {
+  case 0:
+    blas_input_ex.numDescs = 2; break;
+  case 1:
+    blas_input_ex.numDescs = 1; break;
+  }
   blas_input_ex.descsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
   blas_input_ex.geometryDescStrideInBytes = sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX);
   blas_input_ex.pGeometryDescs = &(geom_descs[0]);
@@ -1300,6 +1334,12 @@ void MyFramework::InitNVAPI() {
   }
   else {
     printf("Oh! could not set pipeline creation options.\n");
+  }
+}
+
+void MyFramework::Deinit() {
+  if (device12) {
+    device12->Release();
   }
 }
 

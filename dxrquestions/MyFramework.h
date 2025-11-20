@@ -6,6 +6,7 @@
 #include "d3dx12.h"
 #include <dxgi1_4.h>
 #include <glm/glm.hpp>
+#include <DirectXMath.h>
 
 #include <nvapi.h>
 
@@ -15,6 +16,10 @@ void ResourceBarrierTransition(ID3D12GraphicsCommandList4* cmdlist,
   D3D12_RESOURCE_STATES to);
 
 class MyFramework;
+
+size_t AlignUp(uint32_t s, uint32_t a);
+
+void GlmMat4ToDirectXMatrixColMajor(DirectX::XMMATRIX* out, const glm::mat4& m);
 
 // All the stuff needed to do dispatch rays
 struct MyRtPipeline {
@@ -31,6 +36,7 @@ public:
   virtual void Render() = 0;
   virtual void Update(float secs) = 0;
   virtual void OnKeyDown(uint32_t k) = 0;
+  virtual void OnKeyUp(uint32_t k) {}
 
   MyFramework* framework;
 };
@@ -99,30 +105,49 @@ public:
 
 class MyLssScene : public MyScene {
 public:
-  struct LssSphere {
-    glm::vec3 pos;
-    float radius;
-  };
-  MyLssScene(MyFramework* f);
-  void Render() override;
-  void Update(float secs) override;
-  void OnKeyDown(uint32_t k) override;
+    struct LssSphere {
+        glm::vec3 pos;
+        float radius;
+    };
+    MyLssScene(MyFramework* f);
+    void Render() override;
+    void Update(float secs) override;
+    void OnKeyDown(uint32_t k) override;
+    void OnKeyUp(uint32_t k) override;
 
-  ID3D12RootSignature* global_rootsig;
-  ID3D12Resource* rt_output_resource;
-  ID3D12DescriptorHeap* cbvsrvuav_heap;
-  MyRtPipeline my_rt_pipeline{};
-  ID3D12Resource* lss_pos_resource, *lss_radii_resource, *lss_indices_resource;
-  ID3D12Resource* blas_result, * tlas_result;
+    ID3D12RootSignature* global_rootsig;
+    ID3D12Resource* rt_output_resource;
+    ID3D12DescriptorHeap* cbvsrvuav_heap;
+    MyRtPipeline my_rt_pipeline{};
+    ID3D12Resource* lss_pos_resource, * lss_pos_resource1;
+    ID3D12Resource* lss_radii_resource;
+    ID3D12Resource* lss_indices_list_resource, *lss_indices_successive_resource;
+    ID3D12Resource* blas_result, * tlas_result;
+    ID3D12Resource* my_debug_resource;
+    ID3D12Resource* my_debug_resource_cpu;
+    struct PerSceneCB {
+        DirectX::XMMATRIX inverse_view;
+        DirectX::XMMATRIX inverse_proj;
+        int viz_mode;
+        int cam_mode;  // 0 = perspective, 1 = orthogonal
+    };
+    ID3D12Resource* per_scene_cb;
 
-  std::vector<glm::vec3> lss_poses = {
-    { -0.5, 0.0, 0.0 },
-    { 0.5, 0.0, 0.0 }
-  };
-  std::vector<float> lss_radii = {
-    0.1, 0.3
-  };
-  std::vector<uint32_t> lss_indices = { 0, 1 };
+    std::vector<glm::vec3> lss_poses;
+    std::vector<float> lss_radii;
+    std::vector<uint32_t> lss_indices;
+    std::vector<uint32_t> lss_indices_successive;
+    glm::vec3 cam_pos{ 0, 0, 2.0 };
+    glm::vec3 cam_lookdir{ 0, 0, -1.0 };
+    glm::vec3 cam_up{ 0, 1, 0 };
+    glm::mat4 cam_view_matrix;
+    char axes[3]{};
+    char rot_axes[2]{};
+    float cam_azimuth{};
+    float cam_elevation{};
+    int viz_mode{ 1 };
+    int cam_mode{ 0 };
+    int case_idx{ 0 };
 };
 
 class MyFramework {
@@ -146,6 +171,7 @@ public:
 
     const wchar_t* hitgroup_name;
   };
+  void Deinit();
 
   // Resource creation helpers
   void CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv,
@@ -181,13 +207,15 @@ public:
     ID3D12Resource** blas_result_omm, ID3D12Resource** tlas_result_omm);
   void BuildDummyLSS(
     ID3D12Resource** blas_result,
-    ID3D12Resource** tlas_result, 
-    ID3D12Resource* lss_pos_resource,
+    ID3D12Resource** tlas_result,
+    ID3D12Resource* lss_pos_resource, ID3D12Resource* lss_pos_resource1,
     ID3D12Resource* lss_radii_resource,
-    ID3D12Resource* lss_indices_resource,
-    uint32_t vert_count, uint32_t prim_count, uint32_t index_count,
+    ID3D12Resource* lss_indices_list_resource,
+    ID3D12Resource* lss_indices_successive_resource,
+    uint32_t vert_count,
     NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE endcap_mode,  // none or chained
-    NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT prim_format);  // list or successive
+    NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT prim_format,  // list or successive
+    int case_idx);
     
 
   void BuildBLAS(ID3D12Resource** blas_result,

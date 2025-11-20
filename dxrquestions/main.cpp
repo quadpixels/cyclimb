@@ -82,16 +82,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
   }
-  case WM_KEYUP:
-    //OnKeyUp(wParam, lParam);
+  case WM_KEYUP: {
+    MyScene* scene = g_scenes[g_scene_idx];
+    scene->OnKeyUp(wParam);
     return 0;
+  }
   case WM_PAINT: {
     if (!g_init_done) return 0;
     long long ms = MillisecondsNow();
     MyScene* scene = g_scenes[g_scene_idx];
     if (scene) {
-      scene->Update((ms - g_last_ms) / 1000.0f);
-      scene->Render();
+      if (g_last_ms > 0) {
+        scene->Update((ms - g_last_ms) / 1000.0f);
+        scene->Render();
+      }
     }
     g_last_ms = ms;
     return 0;
