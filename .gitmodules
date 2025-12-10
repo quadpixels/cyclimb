@@ -16,3 +16,6 @@
 [submodule "dxrquestions/nvapi"]
 	path = dxrquestions/nvapi
 	url = https://github.com/NVIDIA/nvapi.git
+[submodule "imgui"]
+	path = imgui
+	url = https://github.com/ocornut/imgui.git

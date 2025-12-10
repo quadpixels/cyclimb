@@ -26,8 +26,10 @@
 #include "../dxrhelloworld/stb_image.h"
 
 #include <nvapi.h>
+#ifndef NO_OMM
 #include <omm.hpp>
 const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t level);
+#endif
 
 // https://stackoverflow.com/questions/65315241/how-can-i-fix-requires-l-value
 template <class T>
@@ -176,12 +178,16 @@ ID3D12Device5* MyFramework::GetDevice() {
 }
 
 void MyFramework::InitSwapchain() {
+  InitSwapchain(WIN_W, WIN_H);
+}
+
+void MyFramework::InitSwapchain(uint32_t w, uint32_t h) {
   // Swapchain
   {
     DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
     swapChainDesc.BufferCount = FRAME_COUNT;
-    swapChainDesc.Width = WIN_W;
-    swapChainDesc.Height = WIN_H;
+    swapChainDesc.Width = w;
+    swapChainDesc.Height = h;
     swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
@@ -320,14 +326,14 @@ void MyFramework::CreateHelloTriangleRootSig(ID3D12RootSignature** out_rootsig) 
   do_CreateRootSig(out_rootsig, 0, 2, 0, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT, true, false, 0);
 }
 
-void MyFramework::CreateRtOutputResource(ID3D12Resource** out_res) {
+void MyFramework::CreateRtOutputResource(ID3D12Resource** out_res, uint32_t w, uint32_t h) {
   D3D12_RESOURCE_DESC desc{};
   desc.DepthOrArraySize = 1;
   desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
   desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
   desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-  desc.Width = WIN_W;
-  desc.Height = WIN_H;
+  desc.Width = w;
+  desc.Height = h;
   desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
   desc.MipLevels = 1;
   desc.SampleDesc.Count = 1;
@@ -336,6 +342,10 @@ void MyFramework::CreateRtOutputResource(ID3D12Resource** out_res) {
     D3D12_HEAP_FLAG_NONE, &desc,
     D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr,
     IID_PPV_ARGS(out_res)));
+}
+
+void MyFramework::CreateRtOutputResource(ID3D12Resource** out_res) {
+  CreateRtOutputResource(out_res, WIN_W, WIN_H);
 }
 
 void MyFramework::CreateCBVSRVUAVHeap(ID3D12DescriptorHeap** h, ID3D12DescriptorHeap** h_cpu, uint32_t num_descriptors) {
@@ -847,9 +857,6 @@ void MyFramework::BuildTLAS(ID3D12Resource** tlas_result,
 
   D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info{};
   device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &info);
-  printf("TLAS prebuild info:\n");
-  printf("  Scratch: %d\n", int(info.ScratchDataSizeInBytes));
-  printf("  Result : %d\n", int(info.ResultDataMaxSizeInBytes));
   int instance_desc_size = sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 1;  // only 1 inst
 
   ID3D12Resource* tlas_scratch{};
@@ -870,7 +877,6 @@ void MyFramework::BuildTLAS(ID3D12Resource** tlas_result,
   DirectX::XMMATRIX m = DirectX::XMMatrixIdentity();
   memcpy(instance_desc->Transform, &m, sizeof(instance_desc->Transform));
   instance_desc->AccelerationStructure = blas_result->GetGPUVirtualAddress();
-  printf("blas_result's GPUVA is %p\n", blas_result->GetGPUVirtualAddress());
   instance_desc->InstanceMask = 0xFF;
   tlas_instance->Unmap(0, nullptr);
 
@@ -963,6 +969,7 @@ void MyFramework::CreateBufferForAS(uint32_t len, ID3D12Resource** res) {
 
 void MyFramework::BuildDummyOMM(ID3D12Resource* vertex_buffer, uint32_t stride,
   ID3D12Resource** blas_result_omm, ID3D12Resource** tlas_result_omm) {
+#ifndef NO_OMM
   ID3D12Resource* omm_index_data_resource;
   ID3D12Resource* omm_array_data_resource, * omm_desc_array_resource;
   // Stolen from OpacityMicroMapsHelper
@@ -1151,6 +1158,7 @@ void MyFramework::BuildDummyOMM(ID3D12Resource* vertex_buffer, uint32_t stride,
   omm_desc_array_resource->Release();
   omm_array_resource->Release();
   scratch_resource->Release();
+#endif
 }
 
 void MyFramework::BuildDummyLSS(
@@ -1163,18 +1171,24 @@ void MyFramework::BuildDummyLSS(
   uint32_t vert_count,
   NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE endcap_mode,
   NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT prim_format,
-  int case_idx) {
+  int case_idx,
+  bool is_update
+) {
 
   NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC lss_desc{};
   lss_desc.endcapMode = endcap_mode;
-  lss_desc.indexBuffer.StartAddress = lss_indices_list_resource->GetGPUVirtualAddress();
-  lss_desc.indexBuffer.StrideInBytes = sizeof(uint32_t);
-  lss_desc.indexFormat = DXGI_FORMAT_R32_UINT;
-  lss_desc.indexCount = ((vert_count) - 1) * 2;
-  //lss_desc.indexBuffer.StartAddress = NULL;
-  //lss_desc.indexBuffer.StrideInBytes = 0;
-  //lss_desc.indexFormat = DXGI_FORMAT_UNKNOWN;
-  //lss_desc.indexCount = 0;
+  if (case_idx == 2) {
+      lss_desc.indexBuffer.StartAddress = NULL;
+      lss_desc.indexBuffer.StrideInBytes = 0;
+      lss_desc.indexFormat = DXGI_FORMAT_UNKNOWN;
+      lss_desc.indexCount = 0;
+  }
+  else {
+    lss_desc.indexBuffer.StartAddress = lss_indices_list_resource->GetGPUVirtualAddress();
+    lss_desc.indexBuffer.StrideInBytes = sizeof(uint32_t);
+    lss_desc.indexFormat = DXGI_FORMAT_R32_UINT;
+    lss_desc.indexCount = ((vert_count)-1) * 2;
+  }
   lss_desc.primitiveCount = vert_count - 1;
   lss_desc.primitiveFormat = NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_LIST;
   lss_desc.vertexCount = vert_count;
@@ -1185,32 +1199,20 @@ void MyFramework::BuildDummyLSS(
   lss_desc.vertexRadiusBuffer.StrideInBytes = sizeof(float);
   lss_desc.vertexRadiusFormat = DXGI_FORMAT_R32_FLOAT;
 
-  printf("LSS desc idx stride=%u  pos stride=%u  rad stride=%u  idx fmt=%u  pos fmt=%u  rad fmt=%u\n",
-    lss_desc.indexBuffer.StrideInBytes,
-    lss_desc.vertexPositionBuffer.StrideInBytes,
-    lss_desc.vertexRadiusBuffer.StrideInBytes,
-    lss_desc.indexFormat,
-    lss_desc.vertexPositionFormat,
-    lss_desc.vertexRadiusFormat);
-  printf("         idx dnt=%u  prim cnt=%u  vert cnt=%u  prim fmt=%u  endcapmode=%u\n",
-    lss_desc.indexCount,
-    lss_desc.primitiveCount,
-    lss_desc.vertexCount,
-    lss_desc.primitiveFormat,
-    lss_desc.endcapMode);
-
-  NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC lss_desc1 = lss_desc;
-  lss_desc1.indexBuffer.StartAddress = lss_indices_successive_resource->GetGPUVirtualAddress();
-  lss_desc1.indexCount = vert_count - 1;
-  lss_desc1.vertexPositionBuffer.StartAddress = lss_pos_resource1->GetGPUVirtualAddress();
-  lss_desc1.primitiveFormat = NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_SUCCESSIVE_IMPLICIT;
- 
   NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX geom_descs[2]{};
-  geom_descs[0].flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+  geom_descs[0].flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
   geom_descs[0].type = NVAPI_D3D12_RAYTRACING_GEOMETRY_TYPE_LSS_EX;
   geom_descs[0].lss = lss_desc;
-  geom_descs[1] = geom_descs[0];
-  geom_descs[1].lss = lss_desc1;
+
+  if (case_idx == 0) {
+    geom_descs[1] = geom_descs[0];
+    NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC lss_desc1 = lss_desc;
+    lss_desc1.indexBuffer.StartAddress = lss_indices_successive_resource->GetGPUVirtualAddress();
+    lss_desc1.indexCount = vert_count - 1;
+    lss_desc1.vertexPositionBuffer.StartAddress = lss_pos_resource1->GetGPUVirtualAddress();
+    lss_desc1.primitiveFormat = NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_SUCCESSIVE_IMPLICIT;
+    geom_descs[1].lss = lss_desc1;
+  }
 
   NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX blas_input_ex{};
   blas_input_ex.type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
@@ -1218,7 +1220,7 @@ void MyFramework::BuildDummyLSS(
   switch (case_idx) {
   case 0:
     blas_input_ex.numDescs = 2; break;
-  case 1:
+  case 1: case 2:
     blas_input_ex.numDescs = 1; break;
   }
   blas_input_ex.descsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
@@ -1236,9 +1238,6 @@ void MyFramework::BuildDummyLSS(
     printf("[FAIL]: NvAPI_D3D12_GetRaytracingAccelerationStructurePrebuildInfoEx\n");
     std::abort();
   }
-  printf("[LSS] BLAS: scratch=%u, result=%u\n",
-    (uint32_t)(blas_prebuild_info.ScratchDataSizeInBytes),
-    (uint32_t)(blas_prebuild_info.ResultDataMaxSizeInBytes));
 
   ID3D12Resource* scratch_resource{};
   CreateBufferForUAVAccess(blas_prebuild_info.ScratchDataSizeInBytes, &scratch_resource);
@@ -1269,8 +1268,6 @@ void MyFramework::BuildDummyLSS(
   command_list->Close();
   command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
   WaitForPreviousFrame();
-  printf("Successfully built BLAS.\n");
-
   BuildTLAS(tlas_result, *blas_result);
 
   scratch_resource->Release();
@@ -1299,6 +1296,11 @@ void MyFramework::InitNVAPI() {
     printf("NVAPI init failed = %d\n", (int)status);
     return;
   }
+
+#ifndef NDEBUG
+  InitRayTracingValidation();
+#endif
+
   size_t lss_data_size = sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC);
   printf("sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC) = %zu\n", lss_data_size);
   NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAPS lssCaps = NVAPI_D3D12_RAYTRACING_LINEAR_SWEPT_SPHERES_CAP_NONE;
@@ -1343,11 +1345,18 @@ void MyFramework::Deinit() {
   }
 }
 
+void MyFramework::SetHwnd(HWND h) {
+  this->hwnd = h;
+}
+
 void MyFramework::InitRayTracingValidation() {
   if (!is_nvapi_available) return;
   void* myCallbackData;
   void* handle;
-  NvAPI_D3D12_EnableRaytracingValidation(device12, NVAPI_D3D12_RAYTRACING_VALIDATION_FLAG_NONE);
+  NvAPI_Status ret = NvAPI_D3D12_EnableRaytracingValidation(device12, NVAPI_D3D12_RAYTRACING_VALIDATION_FLAG_NONE);
+  if (ret != NVAPI_OK) {
+    printf("Error enabling RT validation: %d\n", ret);
+  }
   NvAPI_D3D12_RegisterRaytracingValidationMessageCallback(
     device12, &myValidationMessageCallback,
     (void*)&myCallbackData, &handle);
@@ -1357,6 +1366,86 @@ void MyFramework::InitRayTracingValidation() {
 bool MyFramework::IsOMMSupported() {
   return is_omm_available;
 }
+
+// Stolen from https://github.com/ocornut/imgui/blob/master/examples/example_win32_directx12/main.cpp
+// Simple free list based allocator
+struct ExampleDescriptorHeapAllocator
+{
+  ID3D12DescriptorHeap* Heap = nullptr;
+  D3D12_DESCRIPTOR_HEAP_TYPE  HeapType = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
+  D3D12_CPU_DESCRIPTOR_HANDLE HeapStartCpu;
+  D3D12_GPU_DESCRIPTOR_HANDLE HeapStartGpu;
+  UINT                        HeapHandleIncrement;
+  ImVector<int>               FreeIndices;
+
+  void Create(ID3D12Device* device, ID3D12DescriptorHeap* heap)
+  {
+    IM_ASSERT(Heap == nullptr && FreeIndices.empty());
+    Heap = heap;
+    D3D12_DESCRIPTOR_HEAP_DESC desc = heap->GetDesc();
+    HeapType = desc.Type;
+    HeapStartCpu = Heap->GetCPUDescriptorHandleForHeapStart();
+    HeapStartGpu = Heap->GetGPUDescriptorHandleForHeapStart();
+    HeapHandleIncrement = device->GetDescriptorHandleIncrementSize(HeapType);
+    FreeIndices.reserve((int)desc.NumDescriptors);
+    for (int n = desc.NumDescriptors; n > 0; n--)
+      FreeIndices.push_back(n - 1);
+  }
+  void Destroy()
+  {
+    Heap = nullptr;
+    FreeIndices.clear();
+  }
+  void Alloc(D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu_desc_handle, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu_desc_handle)
+  {
+    IM_ASSERT(FreeIndices.Size > 0);
+    int idx = FreeIndices.back();
+    FreeIndices.pop_back();
+    out_cpu_desc_handle->ptr = HeapStartCpu.ptr + (idx * HeapHandleIncrement);
+    out_gpu_desc_handle->ptr = HeapStartGpu.ptr + (idx * HeapHandleIncrement);
+  }
+  void Free(D3D12_CPU_DESCRIPTOR_HANDLE out_cpu_desc_handle, D3D12_GPU_DESCRIPTOR_HANDLE out_gpu_desc_handle)
+  {
+    int cpu_idx = (int)((out_cpu_desc_handle.ptr - HeapStartCpu.ptr) / HeapHandleIncrement);
+    int gpu_idx = (int)((out_gpu_desc_handle.ptr - HeapStartGpu.ptr) / HeapHandleIncrement);
+    IM_ASSERT(cpu_idx == gpu_idx);
+    FreeIndices.push_back(cpu_idx);
+  }
+};
+struct ExampleDescriptorHeapAllocator g_imguiSrvDescHeapAlloc;
+
+void MyFramework::InitImGUIForGLFW(GLFWwindow* w)
+{
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
+
+  // Setup Platform/Renderer backends
+  ImGui_ImplDX12_InitInfo init_info = {};
+  init_info.Device = this->device12;
+  init_info.CommandQueue = this->command_queue;
+  init_info.NumFramesInFlight = FRAME_COUNT;
+  init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;  // Or your render target format.
+
+  D3D12_DESCRIPTOR_HEAP_DESC desc{};
+  desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+  desc.NumDescriptors = 64;
+  desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+  device12->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&imgui_heap));
+  g_imguiSrvDescHeapAlloc.Create(device12, imgui_heap);
+
+  init_info.SrvDescriptorHeap = imgui_heap;
+  init_info.SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu_handle) {
+    return g_imguiSrvDescHeapAlloc.Alloc(out_cpu_handle, out_gpu_handle);
+    };
+  init_info.SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) {
+    return g_imguiSrvDescHeapAlloc.Free(cpu_handle, gpu_handle);
+    };
+  ImGui_ImplDX12_Init(&init_info);
+  ImGui_ImplGlfw_InitForOther(w, true);
+}
+
 
 // ======================================= Helper functions ===============
 void ResourceBarrierTransition(ID3D12GraphicsCommandList4* cmdlist,

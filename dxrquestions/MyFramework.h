@@ -10,6 +10,12 @@
 
 #include <nvapi.h>
 
+#ifdef USE_IMGUI
+#include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_dx12.h"
+#endif
+
 void ResourceBarrierTransition(ID3D12GraphicsCommandList4* cmdlist,
   ID3D12Resource* res,
   D3D12_RESOURCE_STATES from,
@@ -156,9 +162,13 @@ public:
   void InitWindow();
   void InitDeviceAndCommandQ();
   void InitSwapchain();
+  void InitSwapchain(uint32_t w, uint32_t h);
   void InitNVAPI();
   void InitRayTracingValidation();
   bool IsOMMSupported();
+#ifdef USE_IMGUI
+  void InitImGUIForGLFW(GLFWwindow* w);
+#endif
   ID3D12Device5* GetDevice();
   struct MyRtShaderListInfo {
     const wchar_t* raygen_shader{};
@@ -172,11 +182,13 @@ public:
     const wchar_t* hitgroup_name;
   };
   void Deinit();
+  void SetHwnd(HWND h);
 
   // Resource creation helpers
   void CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv,
     bool add_nvapi_uav, uint32_t nvapi_uav_idx);
   void CreateRtOutputResource(ID3D12Resource** out_res);
+  void CreateRtOutputResource(ID3D12Resource** out_res, uint32_t w, uint32_t h);
   void CreateCBVSRVUAVHeap(ID3D12DescriptorHeap** h, ID3D12DescriptorHeap** h_cpu, uint32_t num_descriptors);
   uint32_t GetCBVSRVUAVDescriptorSize();
   void CreateUAVTexture2D(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx);
@@ -202,6 +214,7 @@ public:
   void CreateSRVAccelerationStructure(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx);
   void CreateSRVBuffer(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx, uint32_t num_elts, uint32_t stride);
   void CreateCBVBuffer(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx, uint32_t len);
+  void EnableRayTracingValidation();
   
   void BuildDummyOMM(ID3D12Resource* vertex_buffer, uint32_t stride,
     ID3D12Resource** blas_result_omm, ID3D12Resource** tlas_result_omm);
@@ -215,7 +228,9 @@ public:
     uint32_t vert_count,
     NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE endcap_mode,  // none or chained
     NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT prim_format,  // list or successive
-    int case_idx);
+    int case_idx,
+    bool is_update
+  );
     
 
   void BuildBLAS(ID3D12Resource** blas_result,
@@ -228,6 +243,8 @@ public:
   D3D12_CPU_DESCRIPTOR_HANDLE GetCurrRenderTargetCPUDescriptor();
   void WaitForPreviousFrame();
   HRESULT Present();
+
+  ID3D12DescriptorHeap* imgui_heap{};
 protected:
   ID3D12Device5* device12{};
   IDXGIFactory4* dxgi_factory{};
@@ -247,6 +264,7 @@ protected:
   bool is_lss_available{ false };
   bool is_omm_available{ false };
   bool use_rt_validation{ false };
+
 
   uint32_t cbvsrvuav_descriptor_size{};
 
