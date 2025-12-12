@@ -1,9 +1,7 @@
 RWTexture2D<float4> RenderTarget : register(u0);
 RaytracingAccelerationStructure Scene : register(t0, space0);
-
-#define NV_SHADER_EXTN_SLOT u999
-#define NV_SHADER_EXTN_REGISTER_SPACE space0
-#include "../../dxrquestions/nvapi/nvHLSLExtns.h"
+StructuredBuffer<float3> LssPositions : register(t1);
+StructuredBuffer<float> LssRadii : register(t2);
 
 struct MyPayload
 {
@@ -68,11 +66,6 @@ void RayGen()
         ray,
         payload
     );
-    
-    if (payload.t > 0)
-    {
-        RenderTarget[dri.xy] = float4(1, 1, 0, 1);
-    }
 }
 
 [shader("miss")]
@@ -84,8 +77,25 @@ void Miss(inout MyPayload payload)
 [shader("closesthit")]
 void ClosestHit(inout MyPayload payload, in MyAttributes attr)
 {
-    if (NvRtIsLssHit())
-    {
-        payload.t = RayTCurrent();
-    }
+    payload.t = RayTCurrent();
+    uint pidx = PrimitiveIndex();
+    float3 c0 = LssPositions[pidx * 2];
+    float3 c1 = LssPositions[pidx * 2 + 1];
+    float r0 = LssRadii[pidx * 2];
+    float r1 = LssRadii[pidx * 2 + 1];
+    
+    uint3 dri = DispatchRaysIndex();
+    RenderTarget[dri.xy] = float4(r0 * 0.3f, r1 * 0.3f, 0, 1);
+}
+
+[shader("intersection")]
+void Intersection()
+{
+    MyAttributes attr;
+    uint pidx = PrimitiveIndex();
+    float3 c0 = LssPositions[pidx * 2];
+    float3 c1 = LssPositions[pidx * 2 + 1];
+    float r0 = LssRadii[pidx * 2];
+    float r1 = LssRadii[pidx * 2 + 1];
+    ReportHit(1.0f, 0, attr);
 }

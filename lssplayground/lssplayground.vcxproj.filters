@@ -47,5 +47,8 @@
     <FxCompile Include="shaders\lss_nvapi.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
+    <FxCompile Include="shaders\lss_procedural.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>
