@@ -1,8 +1,6 @@
 RWStructuredBuffer<uint> MyDebugBuffer : register(u0);
 RaytracingAccelerationStructure Scene : register(t0, space0);
 
-const static float NaN = 0.0f / 0.0f;
-
 #define NV_SHADER_EXTN_SLOT u100
 #define NV_SHADER_EXTN_REGISTER_SPACE space0
 #include "../../dxrquestions/nvapi/nvHLSLExtns.h"
@@ -35,6 +33,7 @@ void MyRayGenShader()
     ray.TMax = tmax;
     
     MyPayload payload;
+    payload.t = -3.0;
 
     TraceRay(
         Scene,
@@ -53,13 +52,17 @@ void MyRayGenShader()
 [shader("miss")]
 void MyMissShader(inout MyPayload payload)
 {
-    payload.t = -1.0;
+    payload.t = -2.0;
 }
 
 [shader("closesthit")]
 void MyClosestHitShader(inout MyPayload payload, in MyAttributes attr)
 {
     if (NvRtIsLssHit())
+    {
+        payload.t = RayTCurrent();
+    }
+    else
     {
         payload.t = RayTCurrent();
     }

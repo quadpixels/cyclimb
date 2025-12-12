@@ -74,13 +74,28 @@ std::vector<std::pair<glm::vec3, glm::vec3>> g_lss_pos_pairs = {
 std::vector<std::pair<float, float>> g_lss_radii_pairs = {
   { 1.0f, 1.0f }
 };
+
+std::vector<std::vector<glm::vec3>> g_tri_verts = {
+  {
+    { -1, 0, 0 },
+    {  0, 1, 0 },
+    {  1, 0, 0 }
+  }
+};
+
 std::vector<PerSceneCB> g_per_scene_cbs = {
   {
     { 0, 0, 10 },
     0.0f,
     { 0, 0, -1 },
     10000.0f
-  }
+  },
+  {
+    { 0, 0, 10 },
+    0.0f,
+    { 0, 0, -1 },
+    10000.0f
+  },
 };
 
 const float TMIN_DEFAULT = 0.0f;
@@ -88,14 +103,15 @@ const float TMAX_DEFAULT = 10000.0f;
 
 static uint32_t GetInputSize() {
   assert(g_lss_pos_pairs.size() == g_lss_radii_pairs.size());
-  assert(g_lss_radii_pairs.size() == g_per_scene_cbs.size());
-  return g_lss_pos_pairs.size();
+  assert(g_lss_radii_pairs.size() + g_tri_verts.size()  == g_per_scene_cbs.size());
+  return g_lss_pos_pairs.size() + g_tri_verts.size();
 }
 
 static void ClearInputs() {
   g_lss_pos_pairs.clear();
   g_lss_radii_pairs.clear();
   g_per_scene_cbs.clear();
+  g_tri_verts.clear();
 }
 
 void ReadInputFile(const char* fn) {
@@ -153,6 +169,10 @@ void ReadInputFile(const char* fn) {
 }
 
 int main(int argc, char** argv) {
+  g_lss_pos_pairs.clear();
+  g_lss_radii_pairs.clear();
+  g_tri_verts.clear();
+
   for (uint32_t i = 0; i < argc; i++) {
     float x1, x2, x3, x4;
     if (i + 1 < argc) {
@@ -166,6 +186,10 @@ int main(int argc, char** argv) {
       x4 = std::atof(argv[i + 4]);
     }
     if (!strcmp(argv[i], "-lss0") && i + 4 < argc) {
+      if (g_lss_pos_pairs.empty()) {
+        g_lss_pos_pairs.push_back(std::make_pair(glm::vec3(0), glm::vec3(0)));
+        g_lss_radii_pairs.push_back(std::make_pair(0, 0));
+      }
       g_lss_pos_pairs[0].first.x = x1;
       g_lss_pos_pairs[0].first.y = x2;
       g_lss_pos_pairs[0].first.z = x3;
@@ -173,11 +197,39 @@ int main(int argc, char** argv) {
       printf("LSS0 pos set to (%g,%g,%g) r=%g\n", x1, x2, x3, x4);
     }
     if (!strcmp(argv[i], "-lss1") && i + 4 < argc) {
+      if (g_lss_pos_pairs.empty()) {
+        g_lss_pos_pairs.push_back(std::make_pair(glm::vec3(0), glm::vec3(0)));
+        g_lss_radii_pairs.push_back(std::make_pair(0, 0));
+      }
       g_lss_pos_pairs[0].second.x = x1;
       g_lss_pos_pairs[0].second.y = x2;
       g_lss_pos_pairs[0].second.z = x3;
       g_lss_radii_pairs[0].second = x4;
       printf("LSS1 pos set to (%g,%g,%g) r=%g\n", x1, x2, x3, x4);
+    }
+    if (!strcmp(argv[i], "-tri0") && i + 3 < argc) {
+      if (g_tri_verts.empty()) {
+        g_tri_verts.push_back(std::vector<glm::vec3>{glm::vec3(0), glm::vec3(0), glm::vec3(0)});
+      }
+      g_tri_verts[0][0].x = x1;
+      g_tri_verts[0][0].y = x2;
+      g_tri_verts[0][0].z = x3;
+    }
+    if (!strcmp(argv[i], "-tri1") && i + 3 < argc) {
+      if (g_tri_verts.empty()) {
+        g_tri_verts.push_back(std::vector<glm::vec3>{glm::vec3(0), glm::vec3(0), glm::vec3(0)});
+      }
+      g_tri_verts[0][1].x = x1;
+      g_tri_verts[0][1].y = x2;
+      g_tri_verts[0][1].z = x3;
+    }
+    if (!strcmp(argv[i], "-tri2") && i + 3 < argc) {
+      if (g_tri_verts.empty()) {
+        g_tri_verts.push_back(std::vector<glm::vec3>{glm::vec3(0), glm::vec3(0), glm::vec3(0)});
+      }
+      g_tri_verts[0][2].x = x1;
+      g_tri_verts[0][2].y = x2;
+      g_tri_verts[0][2].z = x3;
     }
     if (!strcmp(argv[i], "-ro") && i + 3 < argc) {
       g_per_scene_cbs[0].ray_origin.x = x1;
@@ -269,32 +321,64 @@ int main(int argc, char** argv) {
   g_myframework->CreateBufferForCPUSideData(nullptr, 256, &g_perscene_cb_cpu);
   g_myframework->CreateCBVBuffer(g_perscene_cb_cpu, g_cbvsrvuav_heap, 3, 256);
   
-  uint32_t num_tests = g_lss_pos_pairs.size();
+  enum TestType {
+    TEST_TYPE_LSS,
+    TEST_TYPE_TRIANGLE
+  };
+  
+  std::vector<std::pair<TestType, uint32_t>> test_idxes;
+  for (uint32_t i = 0; i < g_tri_verts.size(); i++) {
+    test_idxes.emplace_back(TestType::TEST_TYPE_TRIANGLE, i);
+  }
+  for (uint32_t i = 0; i < g_lss_pos_pairs.size(); i++) {
+    test_idxes.emplace_back(TestType::TEST_TYPE_LSS, i);
+  }
+  uint32_t num_tests = test_idxes.size();
 
   for (uint32_t i = 0; i < num_tests; i++) {
+    const auto [test_type, pertest_idx] = test_idxes.at(i);
 
-    std::pair<glm::vec3, glm::vec3> pos_pair = g_lss_pos_pairs.at(i);
-    std::pair<float, float> radii_pair = g_lss_radii_pairs.at(i);
-
-    // BVH
+    // Resources that might be used
     ID3D12Resource* lss_poses_resource{};
     ID3D12Resource* lss_radii_resource{};
     ID3D12Resource* lss_indices_list_resource{};
-    g_myframework->CreateBufferForCPUSideData(&pos_pair, sizeof(pos_pair), &lss_poses_resource);
-    g_myframework->CreateBufferForCPUSideData(&radii_pair, sizeof(radii_pair), &lss_radii_resource);
-    g_myframework->CreateBufferForCPUSideData(g_lss_indices.data(), g_lss_indices.size() * sizeof(g_lss_indices[0]), &lss_indices_list_resource);
-    g_myframework->BuildDummyLSS(
-      &g_blas_result, &g_tlas_result,
-      lss_poses_resource, nullptr,
-      lss_radii_resource,
-      lss_indices_list_resource, nullptr,
-      2,  // vert count
-      NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED,
-      NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_LIST,
-      2,
-      false
-    );
-    g_myframework->CreateSRVAccelerationStructure(g_tlas_result, g_cbvsrvuav_heap, 2);
+    std::pair<glm::vec3, glm::vec3> pos_pair;
+    std::pair<float, float> radii_pair;
+    ID3D12Resource* tri_verts_resource{};
+    std::vector<glm::vec3> tri_verts;
+
+    switch (test_type) {
+      case TestType::TEST_TYPE_LSS: {
+        pos_pair = g_lss_pos_pairs.at(pertest_idx);
+        radii_pair = g_lss_radii_pairs.at(pertest_idx);
+
+        // BVH
+        g_myframework->CreateBufferForCPUSideData(&pos_pair, sizeof(pos_pair), &lss_poses_resource);
+        g_myframework->CreateBufferForCPUSideData(&radii_pair, sizeof(radii_pair), &lss_radii_resource);
+        g_myframework->CreateBufferForCPUSideData(g_lss_indices.data(), g_lss_indices.size() * sizeof(g_lss_indices[0]), &lss_indices_list_resource);
+        g_myframework->BuildDummyLSS(
+          &g_blas_result, &g_tlas_result,
+          lss_poses_resource, nullptr,
+          lss_radii_resource,
+          lss_indices_list_resource, nullptr,
+          2,  // vert count
+          NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED,
+          NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_LIST,
+          2,
+          false
+        );
+        g_myframework->CreateSRVAccelerationStructure(g_tlas_result, g_cbvsrvuav_heap, 2);
+        break;
+      }
+      case TestType::TEST_TYPE_TRIANGLE: {
+        tri_verts = g_tri_verts.at(pertest_idx);
+        g_myframework->CreateBufferForCPUSideData(tri_verts.data(), sizeof(glm::vec3) * 3, &tri_verts_resource);
+        g_myframework->BuildDummyTriNVAPI(&g_blas_result, &g_tlas_result, tri_verts_resource, 3);
+        g_myframework->CreateSRVAccelerationStructure(g_tlas_result, g_cbvsrvuav_heap, 2);
+        break;
+      }
+    }
+
 
     MyFramework::MyRtShaderListInfo info{};
     info.raygen_shader = L"MyRayGenShader";
@@ -303,6 +387,7 @@ int main(int argc, char** argv) {
     info.hitgroup_name = L"MyHitGroup";
     info.dxil_lib_bytecode = (void*)g_lssShader;
     info.dxil_lib_length = sizeof(g_lssShader);
+    info.hitgroup_type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     g_myframework->CreateMyRtPipeline(&g_my_rtpipeline, g_global_rootsig, info);
     D3D12_DISPATCH_RAYS_DESC* drd = &(g_my_rtpipeline.dispatch_rays_desc);
     drd->Width = 1;
@@ -340,21 +425,23 @@ int main(int argc, char** argv) {
     command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
     g_myframework->WaitForPreviousFrame();
 
-    {
+    uint32_t* mapped;
+    g_uav_resource_cpu->Map(0, nullptr, (void**)&mapped);
+    g_uav_resource_cpu->Unmap(0, nullptr);
+    float t_hit = *((float*)mapped);
+
+    switch (test_type) {
+    case TestType::TEST_TYPE_LSS: {
       printf("#%u: lss0=(%g,%g,%g,%g), lss1=(%g,%g,%g,%g), ray=(%g,%g,%g)-(%g,%g,%g), tmin=%g, tmax=%g, ",
         i,
-        pos_pair.first.x,  pos_pair.first.y,  pos_pair.first.z,  radii_pair.first,
+        pos_pair.first.x, pos_pair.first.y, pos_pair.first.z, radii_pair.first,
         pos_pair.second.x, pos_pair.second.y, pos_pair.second.z, radii_pair.second,
         h_perscene_cb.ray_origin.x, h_perscene_cb.ray_origin.y, h_perscene_cb.ray_origin.z,
         h_perscene_cb.ray_dir.x, h_perscene_cb.ray_dir.y, h_perscene_cb.ray_dir.z,
         h_perscene_cb.tmin, h_perscene_cb.tmax
       );
 
-      uint32_t* mapped;
-      g_uav_resource_cpu->Map(0, nullptr, (void**)&mapped);
-      g_uav_resource_cpu->Unmap(0, nullptr);
-      float t = *((float*)mapped);
-      if (t < 0) {
+      if (t_hit < 0) {
         printf("Miss");
         if (g_outfile) {
           (*g_outfile) << "Miss";
@@ -362,7 +449,7 @@ int main(int argc, char** argv) {
       }
       else {
         char buf[100];
-        snprintf(buf, sizeof(buf), "Hit, t=%g (0x%08x)", t, *mapped);
+        snprintf(buf, sizeof(buf), "Hit, t=%g (0x%08x)", t_hit, *mapped);
         printf("%s", buf);
         if (g_outfile) {
           (*g_outfile) << buf;
@@ -393,11 +480,46 @@ int main(int argc, char** argv) {
       if (g_outfile) {
         (*g_outfile) << "\n";
       }
+
+      lss_poses_resource->Release();
+      lss_radii_resource->Release();
+      lss_indices_list_resource->Release();
+      break;
+    }
+    case TestType::TEST_TYPE_TRIANGLE: {
+      printf("#%u: tri0=(%g,%g,%g), tr1=(%g,%g,%g), tri2=(%g,%g,%g), ray=(%g,%g,%g)-(%g,%g,%g), tmin=%g, tmax=%g, ",
+        i,
+        tri_verts[0].x, tri_verts[0].y, tri_verts[0].z,
+        tri_verts[1].x, tri_verts[1].y, tri_verts[1].z,
+        tri_verts[2].x, tri_verts[2].y, tri_verts[2].z,
+        h_perscene_cb.ray_origin.x, h_perscene_cb.ray_origin.y, h_perscene_cb.ray_origin.z,
+        h_perscene_cb.ray_dir.x, h_perscene_cb.ray_dir.y, h_perscene_cb.ray_dir.z,
+        h_perscene_cb.tmin, h_perscene_cb.tmax
+      );
+
+      if (t_hit < 0) {
+        printf("Miss");
+        if (g_outfile) {
+          (*g_outfile) << "Miss";
+        }
+      }
+      else {
+        char buf[100];
+        snprintf(buf, sizeof(buf), "Hit, t=%g (0x%08x)", t_hit, *mapped);
+        printf("%s", buf);
+        if (g_outfile) {
+          (*g_outfile) << buf;
+        }
+      }
+
+      tri_verts_resource->Release();
+      break;
+    }
+    default: {
+      assert(0 && "Unimplemented");
+    }
     }
 
-    lss_poses_resource->Release();
-    lss_radii_resource->Release();
-    lss_indices_list_resource->Release();
     g_blas_result->Release();
     g_tlas_result->Release();
   }
