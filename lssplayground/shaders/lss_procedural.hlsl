@@ -41,13 +41,14 @@ void RayGen()
 {
     uint3 dri = DispatchRaysIndex();
     uint3 drd = DispatchRaysDimensions();
-    RenderTarget[dri.xy] = float4(dri.xy * 1.0f / drd.xy, 0, 1);
+    RenderTarget[dri.xy] = float4(0.1, 0.1, 0.1, 1);
     
     MyPayload payload;
     payload.t = -1;
     
     RayDesc ray;
     float2 d = (((DispatchRaysIndex().xy + 0.5f) / DispatchRaysDimensions().xy) * 2.f - 1.f);
+    d.y *= -1;
     if (cam_mode == 0)
     {
         float3 target = TransformPosition(inverse_proj, float3(d.x, d.y, 1));
@@ -89,11 +90,12 @@ void ClosestHit(inout MyPayload payload, in MyAttributes attr)
     RenderTarget[dri.xy] = float4(1, 1, 0, 1);
 }
 
-bool IntersectLSS(
+precise bool IntersectLSS(
     in float3 pa, in float ra,
     in float3 pb, in float rb,
     in float3 ro, in float3 rd, in float tmin, in float tmax, out float thit)
 {
+    thit = -1;
     float3 ba = pb - pa;
     float3 oa = ro - pa;
     float3 ob = ro - pb;
@@ -202,6 +204,8 @@ bool IntersectLSS(
 void Intersection()
 {
     MyAttributes attr;
+    //ReportHit(1, 0, attr);
+    //return;
     uint pidx = PrimitiveIndex();
     float3 c0 = LssPositions[pidx * 2];
     float3 c1 = LssPositions[pidx * 2 + 1];
@@ -218,6 +222,6 @@ void Intersection()
     bool hit = IntersectLSS(c0, r0, c1, r1, ro, rd, tmin, tmax, thit);
     if (hit)
     {
-        ReportHit(hit, 0, attr);
+        ReportHit(thit, 0, attr);
     }
 }

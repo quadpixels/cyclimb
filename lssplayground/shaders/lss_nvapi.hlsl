@@ -43,13 +43,14 @@ void RayGen()
 {
     uint3 dri = DispatchRaysIndex();
     uint3 drd = DispatchRaysDimensions();
-    RenderTarget[dri.xy] = float4(dri.xy * 1.0f / drd.xy, 0, 1);
+    RenderTarget[dri.xy] = float4(0.1, 0.1, 0.1, 1);
     
     MyPayload payload;
     payload.t = -1;
     
     RayDesc ray;
     float2 d = (((DispatchRaysIndex().xy + 0.5f) / DispatchRaysDimensions().xy) * 2.f - 1.f);
+    d.y *= -1;
     if (cam_mode == 0)
     {
         float3 target = TransformPosition(inverse_proj, float3(d.x, d.y, 1));
@@ -68,11 +69,6 @@ void RayGen()
         ray,
         payload
     );
-    
-    if (payload.t > 0)
-    {
-        RenderTarget[dri.xy] = float4(1, 1, 0, 1);
-    }
 }
 
 [shader("miss")]
@@ -87,5 +83,10 @@ void ClosestHit(inout MyPayload payload, in MyAttributes attr)
     if (NvRtIsLssHit())
     {
         payload.t = RayTCurrent();
+        float t = attr.bary.x;
+        
+        
+        uint3 dri = DispatchRaysIndex();
+        RenderTarget[dri.xy] = float4(1, 1, 0, 1);
     }
 }

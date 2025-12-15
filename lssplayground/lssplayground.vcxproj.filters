@@ -50,5 +50,8 @@
     <FxCompile Include="shaders\lss_procedural.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
+    <FxCompile Include="shaders\showdiff_cs.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>

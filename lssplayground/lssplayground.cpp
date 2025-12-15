@@ -1,5 +1,5 @@
 // LSS PLAYGROUND.
-
+#include <algorithm>
 #include <iostream>
 #include <source_location>
 
@@ -28,7 +28,7 @@
 
 MyFramework* g_myframework{};
 GLFWwindow* g_window{};
-uint32_t WIN_W = 960, WIN_H = 480;
+uint32_t WIN_W = 960, WIN_H = 520;
 uint32_t VIEW_W = 320, VIEW_H = 320;
 
 ID3D12RootSignature* g_lss_rootsig{};
@@ -48,6 +48,15 @@ ID3D12Resource* g_perscene_cb{};
 ID3D12Resource* g_lss_poses_resource{};
 ID3D12Resource* g_lss_radii_resource{};
 
+ID3D12PipelineState* g_showdiff_cs_pipeline{};
+ID3D12RootSignature* g_showdiff_rootsig{};
+ID3D12DescriptorHeap* g_showdiff_srv_uav_cbv_heap{}, *g_showdiff_srv_uav_cbv_heap_cpu{};
+ID3D12Resource* g_showdiff_output_resource{};
+ImTextureID g_showdiff_imgui_texid{};
+
+bool g_dirty{ false };
+bool g_dir_dirty{ true };
+
 struct PerSceneCB {
   DirectX::XMMATRIX inverse_view;
   DirectX::XMMATRIX inverse_proj;
@@ -55,13 +64,15 @@ struct PerSceneCB {
 };
 PerSceneCB h_perscene_cb;
 
+constexpr const float lss_len = 3000;
 static std::vector<glm::vec3> g_lss_poses = {
-    { 0, 2,0 },
-    { 0,-2,0 }
+    { 0, 0, -9.0 },
+    { -lss_len, 0, -9.0 - lss_len }
 };
 static std::vector<float> g_lss_radii = {
-  1,1
+  1,8
 };
+bool g_should_update_as{ false };
 
 #ifndef CE
 #define CE(x) { \
@@ -80,9 +91,30 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
 char g_axes[6]{};
 glm::mat4 g_view;
 glm::mat4 g_proj;
-glm::vec3 g_cam_pos(10.0f, 0.0f, 0.0f);
+glm::vec3 g_cam_pos(20.0f, 0.0f, 0.0f);
 float g_azimuth = 180.0;
 float g_elevation = 0.0;
+glm::vec3 g_cam_dir(-1, 0, 0);
+
+std::pair<float, float> RayDirToAzimuthAndElevation(const glm::vec3& dir) {
+  float elevation = glm::degrees(asin(dir.y));
+  float azimuth{};
+
+  float x_proj = dir.x;
+  float z_proj = dir.z;
+
+  float proj_len = sqrt(x_proj * x_proj + z_proj * z_proj);
+
+  if (proj_len < 1e-6f) {
+    azimuth = 0.0f;
+  }
+  else {
+    float azimuth_rad = atan2(-z_proj, x_proj);
+    azimuth = glm::degrees(azimuth_rad);
+    if (azimuth < 0.0f) azimuth += 360.0f;
+  }
+  return std::make_pair(azimuth, elevation);
+}
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -102,8 +134,8 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     case GLFW_KEY_Q: g_axes[1] = 1; break;
     case GLFW_KEY_J: g_axes[3] = 1; break;
     case GLFW_KEY_L: g_axes[3] = -1; break;
-    case GLFW_KEY_I: g_axes[4] = -1; break;
-    case GLFW_KEY_K: g_axes[4] = 1; break;
+    case GLFW_KEY_I: g_axes[4] = 1; break;
+    case GLFW_KEY_K: g_axes[4] = -1; break;
     }
   }
   else if (action == GLFW_RELEASE) {
@@ -136,24 +168,70 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
+  ImGui::SetNextWindowSize(ImVec2(480, 160), ImGuiCond_Once);
+  ImGui::SetNextWindowPos(ImVec2(0, 360), ImGuiCond_Once);
+
+  ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize
+    | ImGuiWindowFlags_NoMove
+    | ImGuiWindowFlags_NoCollapse;
+
+  ImGui::Begin("LSS Playground.", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
+  ImGui::Text("LSS in right-hand coords");
+  ImGui::SameLine();
+  if (ImGui::Button("Update##1")) {
+    g_should_update_as = true;
+  }
+  ImGui::SetNextItemWidth(240.0f);
+  ImGui::InputFloat3("pa", &g_lss_poses[0][0], "%g");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(80.0f);
+  ImGui::InputFloat("ra", &g_lss_radii[0]);
+
+  ImGui::SetNextItemWidth(240.0f);
+  ImGui::InputFloat3("pb", &g_lss_poses[1][0], "%g");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(80.0f);
+  ImGui::InputFloat("rb", &g_lss_radii[1]);
+
+  ImGui::Text("Camera");
+  ImGui::SameLine();
+  if (ImGui::Button("Update##2")) {
+    std::tie(g_azimuth, g_elevation) = RayDirToAzimuthAndElevation(glm::normalize(g_cam_dir));
+  }
+  ImGui::SetNextItemWidth(240.0f);
+  ImGui::InputFloat3("pos", &g_cam_pos[0], "%g");
+  ImGui::SetNextItemWidth(240.0f);
+  ImGui::InputFloat3("dir", &g_cam_dir[0], "%g");
+  ImGui::End();
+
+  ImGui::SetNextWindowSize(ImVec2(480, 160), ImGuiCond_Once);
+  ImGui::SetNextWindowPos(ImVec2(480, 360), ImGuiCond_Once);
+  ImGui::Begin("Test case list.", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
+  const char* items[] = { "Apple", "Banana", "Cherry", "Kiwi", "Mango", "Orange", "Pineapple", "Strawberry", "Watermelon" };
+  static int item_current = 1;
+  ImGui::ListBox("Test cases", &item_current, items, IM_ARRAYSIZE(items), 5);
+  ImGui::End();
+
+  window_flags = window_flags | ImGuiWindowFlags_NoScrollbar
+    | ImGuiWindowFlags_NoScrollWithMouse;
+
   ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Once);
 
-  ImGui::Begin("RRA Playground.");
-  ImGui::Text("Hey.");
-  ImGui::End();
-
-  ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_Once);
-  ImGui::SetNextWindowPos(ImVec2(320, 0), ImGuiCond_Once);
-
-  ImGui::Begin("LSS NVAPI");
+  ImGui::Begin("LSS NVAPI", nullptr, window_flags);
   ImGui::Image(g_lss_output_imgui_texid, ImVec2(300, 300));
   ImGui::End();
 
   ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_Once);
-  ImGui::SetNextWindowPos(ImVec2(640, 0), ImGuiCond_Once);
-  ImGui::Begin("Intersection shader");
+  ImGui::SetNextWindowPos(ImVec2(320, 0), ImGuiCond_Once);
+  ImGui::Begin("Intersection shader", nullptr, window_flags);
   ImGui::Image(g_proc_output_imgui_texid, ImVec2(300, 300));
+  ImGui::End();
+
+  ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_Once);
+  ImGui::SetNextWindowPos(ImVec2(640, 0), ImGuiCond_Once);
+  ImGui::Begin("Difference", nullptr, window_flags);
+  ImGui::Image(g_showdiff_imgui_texid, ImVec2(300, 300));
   ImGui::End();
   
   ImGui::Render();
@@ -177,6 +255,8 @@ void Update() {
     g_elevation += 90.0f * delta_sec * g_axes[4];
   }
 
+  g_dirty = std::any_of(std::begin(g_axes), std::end(g_axes), [](int x) { return x != 0; });
+
   if (g_azimuth > 360.0f) g_azimuth -= 360.0f;
   if (g_azimuth < 0.0f) g_azimuth += 360.0f;
   if (g_elevation > 89.9f) g_elevation = 89.9f;
@@ -185,6 +265,10 @@ void Update() {
   glm::vec3 x_axis(1, 0, 0);
   x_axis = glm::mat3(glm::rotate(glm::mat4(1), glm::radians(g_elevation), glm::vec3(0, 0, 1)))* x_axis;
   x_axis = glm::mat3(glm::rotate(glm::mat4(1), glm::radians(g_azimuth), glm::vec3(0, 1, 0))) * x_axis;
+  if (g_axes[3] != 0 || g_axes[4] != 0) {  // feedback to UI
+    g_dir_dirty = true;
+    g_cam_dir = x_axis;
+  }
 
   g_view = glm::lookAt(g_cam_pos, g_cam_pos + x_axis, glm::vec3(0, 1, 0));
 
@@ -220,9 +304,9 @@ void Render() {
     drd->Width = VIEW_W;
     drd->Height = VIEW_H;
     drd->Depth = 1;
-    ResourceBarrierTransition(command_list, g_lss_output_resource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    ResourceBarrierTransition(command_list, g_lss_output_resource, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     command_list->DispatchRays(drd);
-    ResourceBarrierTransition(command_list, g_lss_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    ResourceBarrierTransition(command_list, g_lss_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
   }
 
   // Render target 2
@@ -232,13 +316,25 @@ void Render() {
     D3D12_GPU_DESCRIPTOR_HANDLE handle_table = g_proc_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart();
     command_list->SetComputeRootDescriptorTable(0, handle_table);
     command_list->SetPipelineState1(g_proc_pipeline.rt_state_object);
-    ResourceBarrierTransition(command_list, g_proc_output_resource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    ResourceBarrierTransition(command_list, g_proc_output_resource, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     D3D12_DISPATCH_RAYS_DESC* drd = &(g_proc_pipeline.dispatch_rays_desc);
     drd->Width = VIEW_W;
     drd->Height = VIEW_H;
     drd->Depth = 1;
     command_list->DispatchRays(drd);
-    ResourceBarrierTransition(command_list, g_proc_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    ResourceBarrierTransition(command_list, g_proc_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+  }
+
+  // Overall
+  {
+    command_list->SetComputeRootSignature(g_showdiff_rootsig);
+    command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)(&g_showdiff_srv_uav_cbv_heap));
+    D3D12_GPU_DESCRIPTOR_HANDLE handle_table = g_showdiff_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart();
+    command_list->SetComputeRootDescriptorTable(0, handle_table);
+    command_list->SetPipelineState(g_showdiff_cs_pipeline);
+    ResourceBarrierTransition(command_list, g_showdiff_output_resource, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    command_list->Dispatch(VIEW_W / 8, VIEW_H / 8, 1);
+    ResourceBarrierTransition(command_list, g_showdiff_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
   }
 
   // Overall render target
@@ -280,6 +376,9 @@ void InitPipeline() {
   sli.intersection_shader = L"Intersection";
   sli.hitgroup_type = D3D12_HIT_GROUP_TYPE_PROCEDURAL_PRIMITIVE;
   g_myframework->CreateMyRtPipeline(&g_proc_pipeline, g_proc_rootsig, sli);
+
+  g_myframework->CreateLSSPlaygroundCSRootSig(&g_showdiff_rootsig);
+  g_myframework->CreateLSSPlaygroundCSPipeline(&g_showdiff_cs_pipeline, g_showdiff_rootsig);
 }
 
 void InitResources() {
@@ -309,9 +408,25 @@ void InitResources() {
   g_myframework->CreateBufferForCPUSideData(nullptr, sz, &g_perscene_cb);
   g_myframework->CreateCBVBuffer(g_perscene_cb, g_lss_srv_uav_cbv_heap, 3, sz);
   g_myframework->CreateCBVBuffer(g_perscene_cb, g_proc_srv_uav_cbv_heap, 4, sz);
+
+  // Diff view
+  g_myframework->CreateRtOutputResource(&g_showdiff_output_resource, VIEW_W, VIEW_H);
+  // [RenderTarget UAV] [Output1 SRV] [Output2 SRV] | [Rendertarget SRV]
+  g_myframework->CreateCBVSRVUAVHeap(&g_showdiff_srv_uav_cbv_heap, &g_showdiff_srv_uav_cbv_heap_cpu, 4);
+  g_myframework->CreateUAVTexture2D(g_showdiff_output_resource, g_showdiff_srv_uav_cbv_heap, 0);
+  g_myframework->CreateSRVTexture2D(g_lss_output_resource, g_showdiff_srv_uav_cbv_heap, 1);
+  g_myframework->CreateSRVTexture2D(g_proc_output_resource, g_showdiff_srv_uav_cbv_heap, 2);
+  g_myframework->CreateSRVTexture2D(g_showdiff_output_resource, g_showdiff_srv_uav_cbv_heap, 3);
+  g_showdiff_imgui_texid = g_showdiff_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr + 3ULL * srv_uav_cbv_descriptor_size;
 }
 
 void InitSceneLSS() {
+  if (g_lss_poses_resource) {
+    g_lss_poses_resource->Release();
+    g_lss_radii_resource->Release();
+    g_lss_blas_resource->Release();
+    g_lss_tlas_resource->Release();
+  }
   g_myframework->CreateBufferForCPUSideData(g_lss_poses.data(), sizeof(g_lss_poses[0]) * g_lss_poses.size(), &g_lss_poses_resource);
   g_myframework->CreateBufferForCPUSideData(g_lss_radii.data(), sizeof(g_lss_radii[0]) * g_lss_radii.size(), &g_lss_radii_resource);
   g_myframework->BuildDummyLSS(&g_lss_blas_resource, &g_lss_tlas_resource,
@@ -330,9 +445,37 @@ void InitSceneLSS() {
 }
 
 void InitSceneProcedural() {
+  glm::vec3 lb(1e20, 1e20, 1e20), ub(-1e20, -1e20, -1e20);
+  for (uint32_t i = 0; i < g_lss_poses.size(); i++) {
+    glm::vec3 c = g_lss_poses[i];
+    float r = g_lss_radii[i];
+    glm::vec3 clch[] = {
+      c - glm::vec3(r, r, r),
+      c + glm::vec3(r, r, r)
+    };
+    for (uint32_t j = 0; j < 2; j++) {
+      glm::vec3 x = clch[j];
+      lb.x = std::min(lb.x, x.x);
+      lb.y = std::min(lb.y, x.y);
+      lb.z = std::min(lb.z, x.z);
+      ub.x = std::max(ub.x, x.x);
+      ub.y = std::max(ub.y, x.y);
+      ub.z = std::max(ub.z, x.z);
+    }
+  }
+  const float PAD = 0.0;
+  lb -= glm::vec3(PAD, PAD, PAD);
+  ub += glm::vec3(PAD, PAD, PAD);
+  printf("[InitSceneProcedural] lb=(%g,%g,%g), ub=(%g,%g,%g)\n", lb.x, lb.y, lb.z, ub.x, ub.y, ub.z);
   std::vector<D3D12_RAYTRACING_AABB> aabbs = {
-    { -1,-3,-1, 1, 3, 1 }
+    { lb.x, lb.y, lb.z, ub.x, ub.y, ub.z }
   };
+
+  if (g_proc_blas_resource) {
+    g_proc_blas_resource->Release();
+    g_proc_tlas_resource->Release();
+  }
+
   ID3D12Resource* aabbs_buffer{};
   g_myframework->CreateBufferForCPUSideData(aabbs.data(),
     sizeof(aabbs[0]) * aabbs.size(), &aabbs_buffer);
@@ -348,8 +491,8 @@ void InitPerSceneCB() {
   g_proj = glm::perspectiveRH_ZO(
     glm::radians(60.0f),
     1.0f * VIEW_W / VIEW_H,
-    -0.01f,
-    -49999.0f
+    0.01f,
+    49999.0f
   );
 }
 
@@ -374,6 +517,13 @@ int main()
   {
     Update();
     Render();
+    if (g_should_update_as) {
+      g_should_update_as = false;
+      InitSceneLSS();
+      InitSceneProcedural();
+    }
+    g_dirty = false;
+    g_dir_dirty = false;
     glfwPollEvents();
   }
   delete g_myframework;
