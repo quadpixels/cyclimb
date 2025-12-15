@@ -77,6 +77,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
   return 0;
 };
 
+char g_axes[6]{};
+glm::mat4 g_view;
+glm::mat4 g_proj;
+glm::vec3 g_cam_pos(10.0f, 0.0f, 0.0f);
+float g_azimuth = 180.0;
+float g_elevation = 0.0;
+
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
   if (action == GLFW_PRESS)
@@ -87,6 +94,25 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
       glfwTerminate();
       exit(0);
       break;
+    case GLFW_KEY_W: g_axes[2] = -1; break;
+    case GLFW_KEY_S: g_axes[2] = 1; break;
+    case GLFW_KEY_A: g_axes[0] = -1; break;
+    case GLFW_KEY_D: g_axes[0] = 1; break;
+    case GLFW_KEY_E: g_axes[1] = -1; break;
+    case GLFW_KEY_Q: g_axes[1] = 1; break;
+    case GLFW_KEY_J: g_axes[3] = 1; break;
+    case GLFW_KEY_L: g_axes[3] = -1; break;
+    case GLFW_KEY_I: g_axes[4] = -1; break;
+    case GLFW_KEY_K: g_axes[4] = 1; break;
+    }
+  }
+  else if (action == GLFW_RELEASE) {
+    switch (key) {
+    case GLFW_KEY_W: case GLFW_KEY_S: g_axes[2] = 0; break;
+    case GLFW_KEY_A: case GLFW_KEY_D: g_axes[0] = 0; break;
+    case GLFW_KEY_Q: case GLFW_KEY_E: g_axes[1] = 0; break;
+    case GLFW_KEY_J: case GLFW_KEY_L: g_axes[3] = 0; break;
+    case GLFW_KEY_I: case GLFW_KEY_K: g_axes[4] = 0; break;
     }
   }
 }
@@ -133,6 +159,47 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui::Render();
   command_list->SetDescriptorHeaps(1, &(g_myframework->imgui_heap));
   ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), command_list);
+}
+
+void Update() {
+  static double last_sec{};
+  double sec = glfwGetTime();
+  float delta_sec = sec - last_sec;
+  last_sec = sec;
+
+  float dist = delta_sec * 10.0;
+  {
+    glm::mat3 inv_view = glm::transpose(g_view);
+    g_cam_pos += glm::vec3(inv_view[0]) * static_cast<float>(g_axes[0]) * dist;
+    g_cam_pos += glm::vec3(inv_view[1]) * static_cast<float>(g_axes[1]) * dist;
+    g_cam_pos += glm::vec3(inv_view[2]) * static_cast<float>(g_axes[2]) * dist;
+    g_azimuth += 90.0f * delta_sec * g_axes[3];
+    g_elevation += 90.0f * delta_sec * g_axes[4];
+  }
+
+  if (g_azimuth > 360.0f) g_azimuth -= 360.0f;
+  if (g_azimuth < 0.0f) g_azimuth += 360.0f;
+  if (g_elevation > 89.9f) g_elevation = 89.9f;
+  if (g_elevation < -89.9f) g_elevation = -89.9f;
+
+  glm::vec3 x_axis(1, 0, 0);
+  x_axis = glm::mat3(glm::rotate(glm::mat4(1), glm::radians(g_elevation), glm::vec3(0, 0, 1)))* x_axis;
+  x_axis = glm::mat3(glm::rotate(glm::mat4(1), glm::radians(g_azimuth), glm::vec3(0, 1, 0))) * x_axis;
+
+  g_view = glm::lookAt(g_cam_pos, g_cam_pos + x_axis, glm::vec3(0, 1, 0));
+
+  // UPD
+
+  glm::mat4 inv_view = glm::inverse(g_view);
+  glm::mat4 inv_proj = glm::inverse(g_proj);
+  GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_view, inv_view);
+  GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_proj, inv_proj);
+  h_perscene_cb.cam_mode = 0;
+
+  void* mapped{};
+  g_perscene_cb->Map(0, nullptr, &mapped);
+  memcpy(mapped, &h_perscene_cb, sizeof(PerSceneCB));
+  g_perscene_cb->Unmap(0, nullptr);
 }
 
 void Render() {
@@ -230,7 +297,7 @@ void InitResources() {
   // Procedural path
   g_myframework->CreateRtOutputResource(&g_proc_output_resource, VIEW_W, VIEW_H);
   //
-  //  [Rendertarget 2 UAV] [AS SRV] [PerScene CBV] [LSS pos] [LSS radii] [Rendertarget 2 SRV]
+  //  [Rendertarget 2 UAV] [AS SRV] [LSS pos] [LSS radii]  [PerScene CBV] | [Rendertarget 2 SRV]
   g_myframework->CreateCBVSRVUAVHeap(&g_proc_srv_uav_cbv_heap, &g_proc_srv_uav_cbv_heap_cpu, 6);
   g_myframework->CreateSRVTexture2D(g_proc_output_resource, g_proc_srv_uav_cbv_heap, 5);
   g_proc_output_imgui_texid = g_proc_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr + 5ULL * srv_uav_cbv_descriptor_size;
@@ -241,7 +308,7 @@ void InitResources() {
   size_t sz = AlignUp(sizeof(PerSceneCB), 256);
   g_myframework->CreateBufferForCPUSideData(nullptr, sz, &g_perscene_cb);
   g_myframework->CreateCBVBuffer(g_perscene_cb, g_lss_srv_uav_cbv_heap, 3, sz);
-  g_myframework->CreateCBVBuffer(g_perscene_cb, g_proc_srv_uav_cbv_heap, 2, sz);
+  g_myframework->CreateCBVBuffer(g_perscene_cb, g_proc_srv_uav_cbv_heap, 4, sz);
 }
 
 void InitSceneLSS() {
@@ -258,8 +325,8 @@ void InitSceneLSS() {
     false);
 
   g_myframework->CreateSRVAccelerationStructure(g_lss_tlas_resource, g_lss_srv_uav_cbv_heap, 2);
-  g_myframework->CreateSRVBuffer(g_lss_poses_resource, g_proc_srv_uav_cbv_heap, 3, g_lss_poses.size(), sizeof(g_lss_poses[0]));
-  g_myframework->CreateSRVBuffer(g_lss_radii_resource, g_proc_srv_uav_cbv_heap, 4, g_lss_radii.size(), sizeof(g_lss_radii[0]));
+  g_myframework->CreateSRVBuffer(g_lss_poses_resource, g_proc_srv_uav_cbv_heap, 2, g_lss_poses.size(), sizeof(g_lss_poses[0]));
+  g_myframework->CreateSRVBuffer(g_lss_radii_resource, g_proc_srv_uav_cbv_heap, 3, g_lss_radii.size(), sizeof(g_lss_radii[0]));
 }
 
 void InitSceneProcedural() {
@@ -278,27 +345,12 @@ void InitSceneProcedural() {
 }
 
 void InitPerSceneCB() {
-  glm::mat4 view = glm::lookAt(
-    glm::vec3(10, 0, 0),
-    glm::vec3(0, 0, 0),
-    glm::vec3(0, 1, 0)
-  );
-  glm::mat4 proj = glm::perspectiveRH_ZO(
+  g_proj = glm::perspectiveRH_ZO(
     glm::radians(60.0f),
     1.0f * VIEW_W / VIEW_H,
     -0.01f,
     -49999.0f
   );
-  glm::mat4 inv_view = glm::inverse(view);
-  glm::mat4 inv_proj = glm::inverse(proj);
-  GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_view, inv_view);
-  GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_proj, inv_proj);
-  h_perscene_cb.cam_mode = 0;
-
-  void* mapped{};
-  g_perscene_cb->Map(0, nullptr, &mapped);
-  memcpy(mapped, &h_perscene_cb, sizeof(PerSceneCB));
-  g_perscene_cb->Unmap(0, nullptr);
 }
 
 int main()
@@ -320,6 +372,7 @@ int main()
 
   while (!glfwWindowShouldClose(g_window))
   {
+    Update();
     Render();
     glfwPollEvents();
   }
