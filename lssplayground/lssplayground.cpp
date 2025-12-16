@@ -89,8 +89,8 @@ ImTextureID g_showdiff_imgui_texid{};
 RenderMethod g_render_method_1{RenderMethod::RENDER_METHOD_LSS_NVAPI};
 RenderMethod g_render_method_2{RenderMethod::RENDER_METHOD_INTERSECTION_SHADER};
 
-bool g_dirty{ false };
-bool g_cpu_dirty{ false };
+bool g_dirty{ true };
+bool g_cpu_dirty{ true };
 bool g_dir_dirty{ true };
 
 struct PerSceneCB {
@@ -99,6 +99,42 @@ struct PerSceneCB {
   int cam_mode;  // 0 = perspective, 1 = orthogonal
 };
 PerSceneCB h_perscene_cb;
+
+struct MyLssTestCase {
+  std::vector<glm::vec3> lss_poses;
+  std::vector<float> lss_radii;
+  glm::vec3 ro, rd;
+  std::string title;
+
+  std::string ToString() {
+    char buf[100];
+    snprintf(buf, sizeof(buf), "lss:(%g,%g,%g,%g)-(%g,%g,%g,%g),ro=(%g,%g,%g),rd=(%g,%g,%g)",
+      lss_poses[0].x, lss_poses[0].y, lss_poses[0].z, lss_radii[0],
+      lss_poses[1].x, lss_poses[1].y, lss_poses[1].z, lss_radii[1],
+      ro.x, ro.y, ro.z, rd.x, rd.y, rd.z);
+    return std::string(buf);
+  }
+  
+  std::string GetTitle() {
+    if (title.empty()) return ToString();
+    return title;
+  }
+
+  MyLssTestCase(const glm::vec3& pa, float ra, const glm::vec3& pb, float rb, const glm::vec3 ro, const glm::vec3 rd, std::string titel = "") {
+    lss_poses.push_back(pa); lss_poses.push_back(pb);
+    lss_radii.push_back(ra); lss_radii.push_back(rb);
+    this->ro = ro; this->rd = rd;
+    this->title = titel;
+  }
+};
+bool g_testcases_dirty{ true };
+bool g_testcases_show_title{ false };
+std::vector<MyLssTestCase> g_testcases = {
+  MyLssTestCase(glm::vec3(0, 0, -9.0f), 1.0f, glm::vec3(-3000.0f, 0.0f, -3009.0f), 8.0f, glm::vec3(23.8f, 0.0f, -10.8f), glm::vec3(-0.954947f, 0.0f, -0.296775f), "nv glitch1"),
+  MyLssTestCase(glm::vec3(0, -5.0f, 0.0f), 1.0f, glm::vec3(0.0f, 5.0f, -0.0f), 1.0f, glm::vec3(10.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f), "small capsule"),
+  MyLssTestCase(glm::vec3(0, -2000.0f, 0.0f), 1.0f, glm::vec3(0.0f, 2000.0f, -0.0f), 1.0f, glm::vec3(10.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f), "long capsule"),
+};
+std::vector<std::string> g_testcase_names;
 
 constexpr const float lss_len = 3000;
 std::vector<glm::vec3> g_lss_poses = {
@@ -243,9 +279,34 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui::SetNextWindowSize(ImVec2(480, 160), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(480, 360), ImGuiCond_Once);
   ImGui::Begin("Test case list.", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
-  const char* items[] = { "Apple", "Banana", "Cherry", "Kiwi", "Mango", "Orange", "Pineapple", "Strawberry", "Watermelon" };
-  static int item_current = 1;
-  ImGui::ListBox("Test cases", &item_current, items, IM_ARRAYSIZE(items), 5);
+  std::vector<const char*> items;
+  for (uint32_t i = 0; i < g_testcase_names.size(); i++) {
+    items.push_back(g_testcase_names[i].c_str());
+  }
+  
+  static int showtitle = 0, last_showtitle = -999;
+  ImGui::Text("Test cases"); ImGui::SameLine();
+  ImGui::RadioButton("Title", &showtitle, 0); ImGui::SameLine();
+  ImGui::RadioButton("Detail", &showtitle, 1);
+  if (showtitle != last_showtitle) {
+    g_testcases_dirty = true;  // Update name list
+    g_testcases_show_title = (showtitle == 0);
+    last_showtitle = showtitle;
+  }
+
+  static int item_current = 0, item_last = -99;
+  ImGui::SetNextItemWidth(460);
+  ImGui::ListBox("##Test cases", &item_current, items.data(), items.size(), 5);
+  if (item_last != item_current) {
+    const MyLssTestCase& tc = g_testcases.at(item_current);
+    g_lss_poses = tc.lss_poses;
+    g_lss_radii = tc.lss_radii;
+    g_cam_pos = tc.ro;
+    g_cam_dir = tc.rd;
+    std::tie(g_azimuth, g_elevation) = RayDirToAzimuthAndElevation(glm::normalize(g_cam_dir));
+    g_cpu_dirty = g_dirty = g_dir_dirty = g_should_update_as =true;
+    item_last = item_current;
+  }
   ImGui::End();
 
   window_flags = window_flags | ImGuiWindowFlags_NoScrollbar
@@ -364,6 +425,18 @@ void Update() {
   };
   g_myframework->CreateSRVTexture2D(outputs[static_cast<int>(g_render_method_1)], g_showdiff_srv_uav_cbv_heap, 1);
   g_myframework->CreateSRVTexture2D(outputs[static_cast<int>(g_render_method_2)], g_showdiff_srv_uav_cbv_heap, 2);
+
+  // Test case list
+  if (g_testcases_dirty) {
+    g_testcase_names.clear();
+    for (uint32_t i = 0; i < g_testcases.size(); i++) {
+      g_testcase_names.push_back(
+        g_testcases_show_title ?
+        g_testcases[i].GetTitle() :
+        g_testcases[i].ToString()
+      );
+    }
+  }
 }
 
 void Render() {
