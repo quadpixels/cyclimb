@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <iostream>
 #include <source_location>
+#include <unordered_set>
 
 #include <GLFW/glfw3.h>
 #include <glfw/glfw3.h>
@@ -21,15 +22,26 @@
 #ifdef NDEBUG
 #include "x64/Release/lss_nvapi.hlsl.h"
 #include "x64/Release/lss_procedural.hlsl.h"
+#include "x64/Release/showdiff_cs.hlsl.h"
+#include "x64/Release/lss_cs.hlsl.h"
 #else
 #include "x64/Debug/lss_nvapi.hlsl.h"
 #include "x64/Debug/lss_procedural.hlsl.h"
+#include "x64/Debug/showdiff_cs.hlsl.h"
+#include "x64/Debug/lss_cs.hlsl.h"
 #endif
 
 MyFramework* g_myframework{};
 GLFWwindow* g_window{};
 uint32_t WIN_W = 960, WIN_H = 520;
 uint32_t VIEW_W = 320, VIEW_H = 320;
+
+enum RenderMethod {
+  RENDER_METHOD_LSS_NVAPI,
+  RENDER_METHOD_INTERSECTION_SHADER,
+  RENDER_METHOD_COMPUTE_SHADER,
+  RENDER_METHOD_CPU
+};
 
 ID3D12RootSignature* g_lss_rootsig{};
 ID3D12RootSignature* g_proc_rootsig{};
@@ -48,13 +60,37 @@ ID3D12Resource* g_perscene_cb{};
 ID3D12Resource* g_lss_poses_resource{};
 ID3D12Resource* g_lss_radii_resource{};
 
+// Completely compute shader path.
+ID3D12PipelineState* g_lss_cs_pipeline{};
+ID3D12RootSignature* g_lss_cs_rootsig{};
+ID3D12DescriptorHeap* g_lss_cs_srv_uav_cbv_heap{}, * g_lss_cs_srv_uav_cbv_heap_cpu{};
+ID3D12Resource* g_lss_cs_output_resource{};
+ImTextureID g_lss_cs_imgui_texid{};
+
+// CPU path.
+ID3D12DescriptorHeap* g_cpu_output_srv_uav_cbv_heap{};
+ID3D12Resource* g_cpu_output_resource_cpuvsible{};
+ID3D12Resource* g_cpu_output_resource_viz{};
+extern void InitCPURender(uint32_t w, uint32_t h,
+  std::vector<glm::vec3> ps,
+  std::vector<float> rs,
+  glm::mat4 iv, glm::mat4 ip
+);
+void UpdateCPURenderResults(ID3D12Resource* res);
+bool IsCPUDone();
+ImTextureID g_cpu_output_imgui_texid;
+
 ID3D12PipelineState* g_showdiff_cs_pipeline{};
 ID3D12RootSignature* g_showdiff_rootsig{};
 ID3D12DescriptorHeap* g_showdiff_srv_uav_cbv_heap{}, *g_showdiff_srv_uav_cbv_heap_cpu{};
 ID3D12Resource* g_showdiff_output_resource{};
 ImTextureID g_showdiff_imgui_texid{};
 
+RenderMethod g_render_method_1{RenderMethod::RENDER_METHOD_LSS_NVAPI};
+RenderMethod g_render_method_2{RenderMethod::RENDER_METHOD_INTERSECTION_SHADER};
+
 bool g_dirty{ false };
+bool g_cpu_dirty{ false };
 bool g_dir_dirty{ true };
 
 struct PerSceneCB {
@@ -65,11 +101,11 @@ struct PerSceneCB {
 PerSceneCB h_perscene_cb;
 
 constexpr const float lss_len = 3000;
-static std::vector<glm::vec3> g_lss_poses = {
+std::vector<glm::vec3> g_lss_poses = {
     { 0, 0, -9.0 },
     { -lss_len, 0, -9.0 - lss_len }
 };
-static std::vector<float> g_lss_radii = {
+std::vector<float> g_lss_radii = {
   1,8
 };
 bool g_should_update_as{ false };
@@ -89,8 +125,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
 };
 
 char g_axes[6]{};
-glm::mat4 g_view;
-glm::mat4 g_proj;
+glm::mat4 g_view, g_inv_view;
+glm::mat4 g_proj, g_inv_proj;
 glm::vec3 g_cam_pos(20.0f, 0.0f, 0.0f);
 float g_azimuth = 180.0;
 float g_elevation = 0.0;
@@ -218,14 +254,48 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Once);
 
-  ImGui::Begin("LSS NVAPI", nullptr, window_flags);
-  ImGui::Image(g_lss_output_imgui_texid, ImVec2(300, 300));
+  const char* items_render_methods[] = {
+    "LSS NVAPI",
+    "Intersection Shader",
+    "Compute Shader",
+    "CPU"
+  };
+
+  ImTextureID texture_ids[] = {
+    g_lss_output_imgui_texid,
+    g_proc_output_imgui_texid,
+    g_lss_cs_imgui_texid,
+    g_cpu_output_imgui_texid,
+  };
+
+  ImGui::Begin("##input1", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
+  if (ImGui::BeginCombo("Output 1", items_render_methods[g_render_method_1], 0)) {
+    for (uint32_t i = 0; i < _countof(items_render_methods); i++) {
+      const bool is_selected = (i == static_cast<int>(g_render_method_1));
+      if (ImGui::Selectable(items_render_methods[i], is_selected)) {
+        g_render_method_1 = static_cast<RenderMethod>(i);
+      }
+      if (is_selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::Image(texture_ids[g_render_method_1], ImVec2(300, 300));
   ImGui::End();
 
   ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(320, 0), ImGuiCond_Once);
-  ImGui::Begin("Intersection shader", nullptr, window_flags);
-  ImGui::Image(g_proc_output_imgui_texid, ImVec2(300, 300));
+  ImGui::Begin("##input2", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
+  if (ImGui::BeginCombo("Output 2", items_render_methods[g_render_method_2], 0)) {
+    for (uint32_t i = 0; i < _countof(items_render_methods); i++) {
+      const bool is_selected = (i == static_cast<int>(g_render_method_2));
+      if (ImGui::Selectable(items_render_methods[i], is_selected)) {
+        g_render_method_2 = static_cast<RenderMethod>(i);
+      }
+      if (is_selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::Image(texture_ids[g_render_method_2], ImVec2(300, 300));
   ImGui::End();
 
   ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_Once);
@@ -256,6 +326,7 @@ void Update() {
   }
 
   g_dirty = std::any_of(std::begin(g_axes), std::end(g_axes), [](int x) { return x != 0; });
+  g_cpu_dirty |= g_dirty;
 
   if (g_azimuth > 360.0f) g_azimuth -= 360.0f;
   if (g_azimuth < 0.0f) g_azimuth += 360.0f;
@@ -273,17 +344,26 @@ void Update() {
   g_view = glm::lookAt(g_cam_pos, g_cam_pos + x_axis, glm::vec3(0, 1, 0));
 
   // UPD
-
-  glm::mat4 inv_view = glm::inverse(g_view);
-  glm::mat4 inv_proj = glm::inverse(g_proj);
-  GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_view, inv_view);
-  GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_proj, inv_proj);
+  g_inv_view = glm::inverse(g_view);
+  g_inv_proj = glm::inverse(g_proj);
+  GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_view, g_inv_view);
+  GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_proj, g_inv_proj);
   h_perscene_cb.cam_mode = 0;
 
   void* mapped{};
   g_perscene_cb->Map(0, nullptr, &mapped);
   memcpy(mapped, &h_perscene_cb, sizeof(PerSceneCB));
   g_perscene_cb->Unmap(0, nullptr);
+
+  // Which two outputs are diff'ed?
+  ID3D12Resource* outputs[] = {
+    g_lss_output_resource,
+    g_proc_output_resource,
+    g_lss_cs_output_resource,
+    g_cpu_output_resource_viz
+  };
+  g_myframework->CreateSRVTexture2D(outputs[static_cast<int>(g_render_method_1)], g_showdiff_srv_uav_cbv_heap, 1);
+  g_myframework->CreateSRVTexture2D(outputs[static_cast<int>(g_render_method_2)], g_showdiff_srv_uav_cbv_heap, 2);
 }
 
 void Render() {
@@ -293,8 +373,12 @@ void Render() {
   CE(command_allocator->Reset());
   CE(command_list->Reset(command_allocator, nullptr));
   
+  std::unordered_set<RenderMethod> used_methods;
+  used_methods.insert(g_render_method_1);
+  used_methods.insert(g_render_method_2);
+
   // Render target 1
-  {
+  if (used_methods.count(RenderMethod::RENDER_METHOD_LSS_NVAPI) > 0) {
     command_list->SetComputeRootSignature(g_lss_rootsig);
     command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)(&g_lss_srv_uav_cbv_heap));
     D3D12_GPU_DESCRIPTOR_HANDLE handle_table = g_lss_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart();
@@ -310,7 +394,7 @@ void Render() {
   }
 
   // Render target 2
-  {
+  if (used_methods.count(RenderMethod::RENDER_METHOD_INTERSECTION_SHADER) > 0) {
     command_list->SetComputeRootSignature(g_proc_rootsig);
     command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)(&g_proc_srv_uav_cbv_heap));
     D3D12_GPU_DESCRIPTOR_HANDLE handle_table = g_proc_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart();
@@ -325,7 +409,62 @@ void Render() {
     ResourceBarrierTransition(command_list, g_proc_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
   }
 
-  // Overall
+  // Render target 3
+  if (used_methods.count(RenderMethod::RENDER_METHOD_COMPUTE_SHADER) > 0) {
+    command_list->SetComputeRootSignature(g_lss_cs_rootsig);
+    command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)(&g_lss_cs_srv_uav_cbv_heap));
+    D3D12_GPU_DESCRIPTOR_HANDLE handle_table = g_lss_cs_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart();
+    command_list->SetComputeRootDescriptorTable(0, handle_table);
+    command_list->SetPipelineState(g_lss_cs_pipeline);
+    ResourceBarrierTransition(command_list, g_lss_cs_output_resource, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    command_list->Dispatch(VIEW_W / 8, VIEW_H / 8, 1);
+    ResourceBarrierTransition(command_list, g_lss_cs_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+  }
+
+  // C.P.U.
+  if (used_methods.count(RenderMethod::RENDER_METHOD_CPU) > 0) {
+    static double last_update_secs{ 0 };
+    double secs = glfwGetTime();
+    if (secs - last_update_secs > 0.1) {
+      last_update_secs = secs;
+
+      // Kick off refreshment
+      // CPU
+      if (g_cpu_dirty && IsCPUDone()) {
+        if (IsCPUDone()) {
+          InitCPURender(VIEW_W, VIEW_H, g_lss_poses, g_lss_radii, g_inv_view, g_inv_proj);
+          g_cpu_dirty = false;
+        }
+      }
+
+      UpdateCPURenderResults(g_cpu_output_resource_cpuvsible);
+      ResourceBarrierTransition(command_list, g_cpu_output_resource_cpuvsible, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE);
+      ResourceBarrierTransition(command_list, g_cpu_output_resource_viz, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+
+      D3D12_TEXTURE_COPY_LOCATION dstLoc{};
+      dstLoc.pResource = g_cpu_output_resource_viz;
+      dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      dstLoc.SubresourceIndex = 0;
+
+      D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+      srcLoc.pResource = g_cpu_output_resource_cpuvsible;
+      srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+      srcLoc.PlacedFootprint = {
+          .Offset = 0, .Footprint = {
+              .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+              .Width = (uint32_t)VIEW_W,
+              .Height = (uint32_t)VIEW_H,
+              .Depth = 1,
+              .RowPitch = (uint32_t)(4 * VIEW_W),
+          }
+      };
+      command_list->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+      ResourceBarrierTransition(command_list, g_cpu_output_resource_cpuvsible, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_GENERIC_READ);
+      ResourceBarrierTransition(command_list, g_cpu_output_resource_viz, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+    }
+  }
+
+  // DIFF
   {
     command_list->SetComputeRootSignature(g_showdiff_rootsig);
     command_list->SetDescriptorHeaps(1, (ID3D12DescriptorHeap* const*)(&g_showdiff_srv_uav_cbv_heap));
@@ -356,7 +495,7 @@ void Render() {
 }
 
 void InitPipeline() {
-  g_myframework->CreateRtGlobalRootSig(&g_lss_rootsig, 1, 1, 1, true, 999);
+  g_myframework->CreateNvapiEnabledGlobalRootSig(&g_lss_rootsig, 1, 1, 1, true, 999);
   MyFramework::MyRtShaderListInfo sli{};
   sli.dxil_lib_bytecode = static_cast<void*>(const_cast<uint8_t*>(g_LssNvapiShader));
   sli.dxil_lib_length = sizeof(g_LssNvapiShader);
@@ -366,7 +505,7 @@ void InitPipeline() {
   sli.hitgroup_name = L"HitGroup";
   g_myframework->CreateMyRtPipeline(&g_lss_pipeline, g_lss_rootsig, sli);
 
-  g_myframework->CreateRtGlobalRootSig(&g_proc_rootsig, 1, 3, 1, false, 0);
+  g_myframework->CreateNvapiEnabledGlobalRootSig(&g_proc_rootsig, 1, 3, 1, false, 0);
   sli.dxil_lib_bytecode = static_cast<void*>(const_cast<uint8_t*>(g_LssProceduralShader));
   sli.dxil_lib_length = sizeof(g_LssProceduralShader);
   sli.raygen_shader = L"RayGen";
@@ -377,8 +516,13 @@ void InitPipeline() {
   sli.hitgroup_type = D3D12_HIT_GROUP_TYPE_PROCEDURAL_PRIMITIVE;
   g_myframework->CreateMyRtPipeline(&g_proc_pipeline, g_proc_rootsig, sli);
 
-  g_myframework->CreateLSSPlaygroundCSRootSig(&g_showdiff_rootsig);
-  g_myframework->CreateLSSPlaygroundCSPipeline(&g_showdiff_cs_pipeline, g_showdiff_rootsig);
+  g_myframework->CreateGlobalRootSig(&g_showdiff_rootsig, 1, 2, 0);
+  g_myframework->CreateComputePipeline(&g_showdiff_cs_pipeline, g_showdiff_rootsig,
+    static_cast<const void*>(g_ShowDiffComputeShader), sizeof(g_ShowDiffComputeShader));
+
+  g_myframework->CreateGlobalRootSig(&g_lss_cs_rootsig, 1, 2, 1);
+  g_myframework->CreateComputePipeline(&g_lss_cs_pipeline, g_lss_cs_rootsig,
+    static_cast<const void*>(g_LssComputeShader), sizeof(g_LssComputeShader));
 }
 
 void InitResources() {
@@ -403,19 +547,33 @@ void InitResources() {
   g_myframework->CreateUAVTexture2D(g_proc_output_resource, g_proc_srv_uav_cbv_heap, 0);
   g_proc_srv_uav_cbv_heap->SetName(L"proc_srv_uav_cbv_heap");
 
-  // Same CB used for both paths
+  // CS path
+  // [Rendertarget 3 UAV] [LSS pos SRV] [LSS radii SRV] [PerScene CBV] | [Rendertarget 3 SRV]
+  g_myframework->CreateRtOutputResource(&g_lss_cs_output_resource, VIEW_W, VIEW_H);
+  g_myframework->CreateCBVSRVUAVHeap(&g_lss_cs_srv_uav_cbv_heap, &g_lss_cs_srv_uav_cbv_heap_cpu, 5);
+  g_myframework->CreateUAVTexture2D(g_lss_cs_output_resource, g_lss_cs_srv_uav_cbv_heap, 0);
+  g_myframework->CreateSRVTexture2D(g_lss_cs_output_resource, g_lss_cs_srv_uav_cbv_heap, 4);
+  g_lss_cs_imgui_texid = g_lss_cs_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr + 4ULL * srv_uav_cbv_descriptor_size;
+
+  // CPU path
+  g_myframework->CreateCBVSRVUAVHeap(&g_cpu_output_srv_uav_cbv_heap, nullptr, 1);
+  g_myframework->CreateBufferForCPUSideData(nullptr, VIEW_W * VIEW_H * 4, &g_cpu_output_resource_cpuvsible);
+  g_myframework->CreateRtOutputResource(&g_cpu_output_resource_viz, VIEW_W, VIEW_H);
+  g_myframework->CreateSRVTexture2D(g_cpu_output_resource_viz, g_cpu_output_srv_uav_cbv_heap, 0);
+  g_cpu_output_imgui_texid = g_cpu_output_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr;
+
+  // Same CB used for all paths
   size_t sz = AlignUp(sizeof(PerSceneCB), 256);
   g_myframework->CreateBufferForCPUSideData(nullptr, sz, &g_perscene_cb);
   g_myframework->CreateCBVBuffer(g_perscene_cb, g_lss_srv_uav_cbv_heap, 3, sz);
   g_myframework->CreateCBVBuffer(g_perscene_cb, g_proc_srv_uav_cbv_heap, 4, sz);
+  g_myframework->CreateCBVBuffer(g_perscene_cb, g_lss_cs_srv_uav_cbv_heap, 3, sz);
 
   // Diff view
   g_myframework->CreateRtOutputResource(&g_showdiff_output_resource, VIEW_W, VIEW_H);
   // [RenderTarget UAV] [Output1 SRV] [Output2 SRV] | [Rendertarget SRV]
   g_myframework->CreateCBVSRVUAVHeap(&g_showdiff_srv_uav_cbv_heap, &g_showdiff_srv_uav_cbv_heap_cpu, 4);
   g_myframework->CreateUAVTexture2D(g_showdiff_output_resource, g_showdiff_srv_uav_cbv_heap, 0);
-  g_myframework->CreateSRVTexture2D(g_lss_output_resource, g_showdiff_srv_uav_cbv_heap, 1);
-  g_myframework->CreateSRVTexture2D(g_proc_output_resource, g_showdiff_srv_uav_cbv_heap, 2);
   g_myframework->CreateSRVTexture2D(g_showdiff_output_resource, g_showdiff_srv_uav_cbv_heap, 3);
   g_showdiff_imgui_texid = g_showdiff_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr + 3ULL * srv_uav_cbv_descriptor_size;
 }
@@ -440,8 +598,12 @@ void InitSceneLSS() {
     false);
 
   g_myframework->CreateSRVAccelerationStructure(g_lss_tlas_resource, g_lss_srv_uav_cbv_heap, 2);
+
+  // SRVs used by intersection shader pass and CS pass
   g_myframework->CreateSRVBuffer(g_lss_poses_resource, g_proc_srv_uav_cbv_heap, 2, g_lss_poses.size(), sizeof(g_lss_poses[0]));
   g_myframework->CreateSRVBuffer(g_lss_radii_resource, g_proc_srv_uav_cbv_heap, 3, g_lss_radii.size(), sizeof(g_lss_radii[0]));
+  g_myframework->CreateSRVBuffer(g_lss_poses_resource, g_lss_cs_srv_uav_cbv_heap, 1, g_lss_radii.size(), sizeof(g_lss_radii[0]));
+  g_myframework->CreateSRVBuffer(g_lss_radii_resource, g_lss_cs_srv_uav_cbv_heap, 2, g_lss_radii.size(), sizeof(g_lss_radii[0]));
 }
 
 void InitSceneProcedural() {

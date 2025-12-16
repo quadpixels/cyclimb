@@ -5,6 +5,8 @@ RaytracingAccelerationStructure Scene : register(t0, space0);
 #define NV_SHADER_EXTN_REGISTER_SPACE space0
 #include "../../dxrquestions/nvapi/nvHLSLExtns.h"
 
+#include "includes.hlsli"
+
 struct MyPayload
 {
     float t;
@@ -20,22 +22,6 @@ cbuffer PerSceneCb : register(b0)
     float4x4 inverse_view;
     float4x4 inverse_proj;
     int cam_mode;  // 0=perspective, 1=orthogonal
-}
-
-// My boilerplates
-float3 TransformPosition(float4x4 m, float3 x)
-{
-    float4 x4 = float4(x, 0.0f);
-    x4 = mul(m, x4);
-    x4.x += m[0][3]; // [Col] [Row]
-    x4.y += m[1][3];
-    x4.z += m[2][3];
-    return x4.xyz;
-}
-
-float3 TransformDirection(float4x4 m, float3 x)
-{
-    return (mul(m, float4(x, 0.0f))).xyz;
 }
 
 [shader("raygeneration")]
