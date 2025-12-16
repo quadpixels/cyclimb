@@ -1,5 +1,6 @@
 // LSS PLAYGROUND.
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <source_location>
 #include <unordered_set>
@@ -13,6 +14,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <nlohmann/json.hpp>
 
 #include "../dxrquestions/MyFramework.h"
 #include "imgui.h"
@@ -33,14 +35,15 @@
 
 MyFramework* g_myframework{};
 GLFWwindow* g_window{};
-uint32_t WIN_W = 960, WIN_H = 520;
+uint32_t WIN_W = 960, WIN_H = 600;
 uint32_t VIEW_W = 320, VIEW_H = 320;
 
 enum RenderMethod {
   RENDER_METHOD_LSS_NVAPI,
   RENDER_METHOD_INTERSECTION_SHADER,
   RENDER_METHOD_COMPUTE_SHADER,
-  RENDER_METHOD_CPU
+  RENDER_METHOD_CPU_SP,
+  RENDER_METHOD_CPU_DP,
 };
 
 ID3D12RootSignature* g_lss_rootsig{};
@@ -68,17 +71,27 @@ ID3D12Resource* g_lss_cs_output_resource{};
 ImTextureID g_lss_cs_imgui_texid{};
 
 // CPU path.
+ID3D12Resource* g_cpu_sp_output_resource_cpuvsible{};
+ID3D12Resource* g_cpu_sp_output_resource_viz{};
+ID3D12Resource* g_cpu_dp_output_resource_cpuvsible{};
+ID3D12Resource* g_cpu_dp_output_resource_viz{};
 ID3D12DescriptorHeap* g_cpu_output_srv_uav_cbv_heap{};
-ID3D12Resource* g_cpu_output_resource_cpuvsible{};
-ID3D12Resource* g_cpu_output_resource_viz{};
-extern void InitCPURender(uint32_t w, uint32_t h,
+
+template<typename Vec3, typename Float>
+void InitCPURender(uint32_t w, uint32_t h,
   std::vector<glm::vec3> ps,
   std::vector<float> rs,
   glm::mat4 iv, glm::mat4 ip
 );
+
+template<typename Vec3, typename Float>
 void UpdateCPURenderResults(ID3D12Resource* res);
+
+template<typename Vec3, typename Float>
 bool IsCPUDone();
-ImTextureID g_cpu_output_imgui_texid;
+
+ImTextureID g_cpu_sp_output_imgui_texid;
+ImTextureID g_cpu_dp_output_imgui_texid;
 
 ID3D12PipelineState* g_showdiff_cs_pipeline{};
 ID3D12RootSignature* g_showdiff_rootsig{};
@@ -90,7 +103,8 @@ RenderMethod g_render_method_1{RenderMethod::RENDER_METHOD_LSS_NVAPI};
 RenderMethod g_render_method_2{RenderMethod::RENDER_METHOD_INTERSECTION_SHADER};
 
 bool g_dirty{ true };
-bool g_cpu_dirty{ true };
+bool g_cpu_sp_dirty{ true };
+bool g_cpu_dp_dirty{ true };
 bool g_dir_dirty{ true };
 
 struct PerSceneCB {
@@ -120,11 +134,77 @@ struct MyLssTestCase {
     return title;
   }
 
+  MyLssTestCase() = default;
+
   MyLssTestCase(const glm::vec3& pa, float ra, const glm::vec3& pb, float rb, const glm::vec3 ro, const glm::vec3 rd, std::string titel = "") {
     lss_poses.push_back(pa); lss_poses.push_back(pb);
     lss_radii.push_back(ra); lss_radii.push_back(rb);
     this->ro = ro; this->rd = rd;
     this->title = titel;
+  }
+
+  std::string ToJSONString() const {
+    nlohmann::json ret{};
+    nlohmann::json poses = nlohmann::json::array();
+    for (uint32_t i = 0; i < lss_poses.size(); i++) {
+      nlohmann::json p = nlohmann::json::array();
+      p.push_back(lss_poses[i].x);
+      p.push_back(lss_poses[i].y);
+      p.push_back(lss_poses[i].z);
+      poses.push_back(p);
+    }
+    ret["poses"] = poses;
+    nlohmann::json radii = nlohmann::json::array();
+    for (uint32_t i = 0; i < lss_radii.size(); i++) {
+      radii.push_back(lss_radii[i]);
+    }
+    ret["radii"] = radii;
+    nlohmann::json jro = nlohmann::json::array();
+    jro.push_back(ro.x);
+    jro.push_back(ro.y);
+    jro.push_back(ro.z);
+    ret["ro"] = jro;
+    nlohmann::json jrd = nlohmann::json::array();
+    jrd.push_back(rd.x);
+    jrd.push_back(rd.y);
+    jrd.push_back(rd.z);
+    ret["rd"] = jrd;
+    ret["title"] = title;
+
+    return ret.dump();
+  }
+
+  static bool FromJSONString(const std::string& s, MyLssTestCase* parsed) {
+    nlohmann::json j = nlohmann::json::parse(s);
+    if (j.is_discarded()) {
+      printf("Oh! could not parse.\n");
+    }
+    
+    nlohmann::json& poses = j["poses"];
+    for (uint32_t i = 0; i < poses.size(); i++) {
+      nlohmann::json& p = poses[i];
+      float x = p[0], y = p[1], z = p[2];
+      parsed->lss_poses.push_back(glm::vec3(x, y, z));
+    }
+
+    nlohmann::json& radii = j["radii"];
+    for (uint32_t i = 0; i < radii.size(); i++) {
+      float x = radii[i];
+      parsed->lss_radii.push_back(x);
+    }
+
+    nlohmann::json& jro = j["ro"];
+    parsed->ro.x = jro[0];
+    parsed->ro.y = jro[1];
+    parsed->ro.z = jro[2];
+
+    nlohmann::json& jrd = j["rd"];
+    parsed->rd.x = jrd[0];
+    parsed->rd.y = jrd[1];
+    parsed->rd.z = jrd[2];
+
+    parsed->title = j["title"];
+    return true;
   }
 };
 bool g_testcases_dirty{ true };
@@ -135,6 +215,34 @@ std::vector<MyLssTestCase> g_testcases = {
   MyLssTestCase(glm::vec3(0, -2000.0f, 0.0f), 1.0f, glm::vec3(0.0f, 2000.0f, -0.0f), 1.0f, glm::vec3(10.0f, 0.0f, 0.0f), glm::vec3(-1.0f, 0.0f, 0.0f), "long capsule"),
 };
 std::vector<std::string> g_testcase_names;
+constexpr const char* FILE_NAME = "lssplayground.txt";
+void LoadTestCasesFromFile() {
+  std::string txt("");
+  std::ifstream ifs(FILE_NAME);
+  uint32_t num_loaded = 0;
+  if (ifs.is_open()) {
+    std::string line("");
+    while (getline(ifs, line)) {
+      MyLssTestCase tc;
+      if (MyLssTestCase::FromJSONString(line, &tc)) {
+        if (num_loaded == 0) {
+          g_testcases.clear();
+        }
+        g_testcases.push_back(tc);
+        num_loaded++;
+      }
+    }
+    ifs.close();
+  }
+  printf("Loaded %u testcases.\n", num_loaded);
+}
+void SaveTestCasesToFile() {
+  std::ofstream ofs(FILE_NAME, std::ios::trunc);
+  for (uint32_t i = 0; i < g_testcases.size(); i++) {
+    ofs << g_testcases[i].ToJSONString() << "\n";
+  }
+  ofs.close();
+}
 
 constexpr const float lss_len = 3000;
 std::vector<glm::vec3> g_lss_poses = {
@@ -240,7 +348,7 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  ImGui::SetNextWindowSize(ImVec2(480, 160), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(480, 240), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(0, 360), ImGuiCond_Once);
 
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize
@@ -248,6 +356,10 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
     | ImGuiWindowFlags_NoCollapse;
 
   ImGui::Begin("LSS Playground.", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
+
+  static char test_case_name[128] = "";
+  ImGui::InputText("testcasename", test_case_name, sizeof(test_case_name));
+
   ImGui::Text("LSS in right-hand coords");
   ImGui::SameLine();
   if (ImGui::Button("Update##1")) {
@@ -265,7 +377,7 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui::SetNextItemWidth(80.0f);
   ImGui::InputFloat("rb", &g_lss_radii[1]);
 
-  ImGui::Text("Camera");
+  ImGui::Text("Camera (use WASDQEIJKL to move & look)");
   ImGui::SameLine();
   if (ImGui::Button("Update##2")) {
     std::tie(g_azimuth, g_elevation) = RayDirToAzimuthAndElevation(glm::normalize(g_cam_dir));
@@ -276,7 +388,7 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui::InputFloat3("dir", &g_cam_dir[0], "%g");
   ImGui::End();
 
-  ImGui::SetNextWindowSize(ImVec2(480, 160), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(480, 240), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(480, 360), ImGuiCond_Once);
   ImGui::Begin("Test case list.", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
   std::vector<const char*> items;
@@ -293,20 +405,78 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
     g_testcases_show_title = (showtitle == 0);
     last_showtitle = showtitle;
   }
+  ImGui::SameLine();
+  if (ImGui::Button("Load from file")) {
+    LoadTestCasesFromFile();
+    g_testcases_dirty = true;
+    g_cpu_sp_dirty = g_cpu_dp_dirty = g_dirty = g_dir_dirty = g_should_update_as = true;
+  }
+  
+  ImGui::SameLine();
+  if (ImGui::Button("Save to file")) {
+    SaveTestCasesToFile();
+  }
 
   static int item_current = 0, item_last = -99;
   ImGui::SetNextItemWidth(460);
   ImGui::ListBox("##Test cases", &item_current, items.data(), items.size(), 5);
   if (item_last != item_current) {
-    const MyLssTestCase& tc = g_testcases.at(item_current);
-    g_lss_poses = tc.lss_poses;
-    g_lss_radii = tc.lss_radii;
-    g_cam_pos = tc.ro;
-    g_cam_dir = tc.rd;
-    std::tie(g_azimuth, g_elevation) = RayDirToAzimuthAndElevation(glm::normalize(g_cam_dir));
-    g_cpu_dirty = g_dirty = g_dir_dirty = g_should_update_as =true;
+    if (item_current >= 0 && item_current < g_testcases.size()) {
+      const MyLssTestCase& tc = g_testcases.at(item_current);
+      g_lss_poses = tc.lss_poses;
+      g_lss_radii = tc.lss_radii;
+      g_cam_pos = tc.ro;
+      g_cam_dir = tc.rd;
+      std::tie(g_azimuth, g_elevation) = RayDirToAzimuthAndElevation(glm::normalize(g_cam_dir));
+      g_cpu_sp_dirty = g_cpu_dp_dirty = g_dirty = g_dir_dirty = g_should_update_as = true;
+      memset(test_case_name, 0x00, sizeof(test_case_name));
+      memcpy(test_case_name, tc.title.c_str(), tc.title.size());
+    }
     item_last = item_current;
   }
+
+  if (ImGui::Button("Append")) {
+    MyLssTestCase tc{};
+    tc.lss_poses = g_lss_poses;
+    tc.lss_radii = g_lss_radii;
+    tc.ro = g_cam_pos;
+    tc.rd = g_cam_dir;
+    tc.title = std::string(test_case_name);
+    g_testcases.push_back(tc);
+    g_testcases_dirty = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Update")) {
+    MyLssTestCase& tc = g_testcases.at(item_current);
+    tc.lss_poses = g_lss_poses;
+    tc.lss_radii = g_lss_radii;
+    tc.ro = g_cam_pos;
+    tc.rd = g_cam_dir;
+    tc.title = std::string(test_case_name);
+    g_testcases_dirty = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Delete")) {
+    if (item_current >= 0 && item_current < g_testcases.size()) {
+      g_testcases.erase(g_testcases.begin() + item_current);
+      if (item_current >= g_testcases.size()) {
+        item_current = g_testcases.size() - 1;
+      }
+      if (item_current < g_testcases.size()) {
+        MyLssTestCase& tc = g_testcases.at(item_current);
+        g_lss_poses = tc.lss_poses;
+        g_lss_radii = tc.lss_radii;
+        g_cam_pos = tc.ro;
+        g_cam_dir = tc.rd;
+        std::tie(g_azimuth, g_elevation) = RayDirToAzimuthAndElevation(glm::normalize(g_cam_dir));
+        g_cpu_sp_dirty = g_cpu_dp_dirty = g_dirty = g_dir_dirty = g_should_update_as = true;
+        memset(test_case_name, 0x00, sizeof(test_case_name));
+        memcpy(test_case_name, tc.title.c_str(), tc.title.size());
+        item_last = item_current;
+      }
+    }
+  }
+
   ImGui::End();
 
   window_flags = window_flags | ImGuiWindowFlags_NoScrollbar
@@ -319,14 +489,16 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
     "LSS NVAPI",
     "Intersection Shader",
     "Compute Shader",
-    "CPU"
+    "CPU (single precision)",
+    "CPU (double precision)"
   };
 
   ImTextureID texture_ids[] = {
     g_lss_output_imgui_texid,
     g_proc_output_imgui_texid,
     g_lss_cs_imgui_texid,
-    g_cpu_output_imgui_texid,
+    g_cpu_sp_output_imgui_texid,
+    g_cpu_dp_output_imgui_texid,
   };
 
   ImGui::Begin("##input1", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
@@ -387,7 +559,8 @@ void Update() {
   }
 
   g_dirty = std::any_of(std::begin(g_axes), std::end(g_axes), [](int x) { return x != 0; });
-  g_cpu_dirty |= g_dirty;
+  g_cpu_sp_dirty |= g_dirty;
+  g_cpu_dp_dirty |= g_dirty;
 
   if (g_azimuth > 360.0f) g_azimuth -= 360.0f;
   if (g_azimuth < 0.0f) g_azimuth += 360.0f;
@@ -421,7 +594,8 @@ void Update() {
     g_lss_output_resource,
     g_proc_output_resource,
     g_lss_cs_output_resource,
-    g_cpu_output_resource_viz
+    g_cpu_sp_output_resource_viz,
+    g_cpu_dp_output_resource_viz
   };
   g_myframework->CreateSRVTexture2D(outputs[static_cast<int>(g_render_method_1)], g_showdiff_srv_uav_cbv_heap, 1);
   g_myframework->CreateSRVTexture2D(outputs[static_cast<int>(g_render_method_2)], g_showdiff_srv_uav_cbv_heap, 2);
@@ -494,8 +668,40 @@ void Render() {
     ResourceBarrierTransition(command_list, g_lss_cs_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
   }
 
-  // C.P.U.
-  if (used_methods.count(RenderMethod::RENDER_METHOD_CPU) > 0) {
+  auto update_cpu_results = [&](ID3D12Resource* res_cpu, ID3D12Resource* res_gpu, bool is_dp) {
+    if (is_dp) {
+      UpdateCPURenderResults<glm::dvec3, double>(res_cpu);
+    }
+    else {
+      UpdateCPURenderResults<glm::vec3, float>(res_cpu);
+    }
+    ResourceBarrierTransition(command_list, res_cpu, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    ResourceBarrierTransition(command_list, res_gpu, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+
+    D3D12_TEXTURE_COPY_LOCATION dstLoc{};
+    dstLoc.pResource = res_gpu;
+    dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dstLoc.SubresourceIndex = 0;
+
+    D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+    srcLoc.pResource = res_cpu;
+    srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    srcLoc.PlacedFootprint = {
+        .Offset = 0, .Footprint = {
+            .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+            .Width = (uint32_t)VIEW_W,
+            .Height = (uint32_t)VIEW_H,
+            .Depth = 1,
+            .RowPitch = (uint32_t)(4 * VIEW_W),
+        }
+    };
+    command_list->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+    ResourceBarrierTransition(command_list, res_cpu, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_GENERIC_READ);
+    ResourceBarrierTransition(command_list, res_gpu, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+  };
+
+  // CPU SP
+  if (used_methods.count(RenderMethod::RENDER_METHOD_CPU_SP) > 0) {
     static double last_update_secs{ 0 };
     double secs = glfwGetTime();
     if (secs - last_update_secs > 0.1) {
@@ -503,37 +709,33 @@ void Render() {
 
       // Kick off refreshment
       // CPU
-      if (g_cpu_dirty && IsCPUDone()) {
-        if (IsCPUDone()) {
-          InitCPURender(VIEW_W, VIEW_H, g_lss_poses, g_lss_radii, g_inv_view, g_inv_proj);
-          g_cpu_dirty = false;
+      if (g_cpu_sp_dirty && IsCPUDone<glm::vec3, float>()) {
+        if (IsCPUDone<glm::vec3, float>()) {
+          InitCPURender<glm::vec3, float>(VIEW_W, VIEW_H, g_lss_poses, g_lss_radii, g_inv_view, g_inv_proj);
+          g_cpu_sp_dirty = false;
         }
       }
 
-      UpdateCPURenderResults(g_cpu_output_resource_cpuvsible);
-      ResourceBarrierTransition(command_list, g_cpu_output_resource_cpuvsible, D3D12_RESOURCE_STATE_GENERIC_READ, D3D12_RESOURCE_STATE_COPY_SOURCE);
-      ResourceBarrierTransition(command_list, g_cpu_output_resource_viz, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+      update_cpu_results(g_cpu_sp_output_resource_cpuvsible, g_cpu_sp_output_resource_viz, false);
+    }
+  }
 
-      D3D12_TEXTURE_COPY_LOCATION dstLoc{};
-      dstLoc.pResource = g_cpu_output_resource_viz;
-      dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-      dstLoc.SubresourceIndex = 0;
+  // CPU DP
+  if (used_methods.count(RenderMethod::RENDER_METHOD_CPU_DP) > 0) {
+    static double last_update_secs1{ 0 };
+    double secs = glfwGetTime();
+    if (secs - last_update_secs1 > 0.1) {
+      last_update_secs1 = secs;
 
-      D3D12_TEXTURE_COPY_LOCATION srcLoc{};
-      srcLoc.pResource = g_cpu_output_resource_cpuvsible;
-      srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-      srcLoc.PlacedFootprint = {
-          .Offset = 0, .Footprint = {
-              .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
-              .Width = (uint32_t)VIEW_W,
-              .Height = (uint32_t)VIEW_H,
-              .Depth = 1,
-              .RowPitch = (uint32_t)(4 * VIEW_W),
-          }
-      };
-      command_list->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
-      ResourceBarrierTransition(command_list, g_cpu_output_resource_cpuvsible, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_GENERIC_READ);
-      ResourceBarrierTransition(command_list, g_cpu_output_resource_viz, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+      // Kick off refresh
+      if (g_cpu_dp_dirty && IsCPUDone<glm::dvec3, double>()) {
+        if (IsCPUDone<glm::dvec3, double>()) {
+          InitCPURender<glm::dvec3, double>(VIEW_W, VIEW_H, g_lss_poses, g_lss_radii, g_inv_view, g_inv_proj);
+          g_cpu_dp_dirty = false;
+        }
+      }
+
+      update_cpu_results(g_cpu_dp_output_resource_cpuvsible, g_cpu_dp_output_resource_viz, true);
     }
   }
 
@@ -629,11 +831,15 @@ void InitResources() {
   g_lss_cs_imgui_texid = g_lss_cs_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr + 4ULL * srv_uav_cbv_descriptor_size;
 
   // CPU path
-  g_myframework->CreateCBVSRVUAVHeap(&g_cpu_output_srv_uav_cbv_heap, nullptr, 1);
-  g_myframework->CreateBufferForCPUSideData(nullptr, VIEW_W * VIEW_H * 4, &g_cpu_output_resource_cpuvsible);
-  g_myframework->CreateRtOutputResource(&g_cpu_output_resource_viz, VIEW_W, VIEW_H);
-  g_myframework->CreateSRVTexture2D(g_cpu_output_resource_viz, g_cpu_output_srv_uav_cbv_heap, 0);
-  g_cpu_output_imgui_texid = g_cpu_output_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr;
+  g_myframework->CreateCBVSRVUAVHeap(&g_cpu_output_srv_uav_cbv_heap, nullptr, 2);
+  g_myframework->CreateBufferForCPUSideData(nullptr, VIEW_W * VIEW_H * 4, &g_cpu_sp_output_resource_cpuvsible);
+  g_myframework->CreateRtOutputResource(&g_cpu_sp_output_resource_viz, VIEW_W, VIEW_H);
+  g_myframework->CreateSRVTexture2D(g_cpu_sp_output_resource_viz, g_cpu_output_srv_uav_cbv_heap, 0);
+  g_cpu_sp_output_imgui_texid = g_cpu_output_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr;
+  g_myframework->CreateBufferForCPUSideData(nullptr, VIEW_W * VIEW_H * 4, &g_cpu_dp_output_resource_cpuvsible);
+  g_myframework->CreateRtOutputResource(&g_cpu_dp_output_resource_viz, VIEW_W, VIEW_H);
+  g_myframework->CreateSRVTexture2D(g_cpu_dp_output_resource_viz, g_cpu_output_srv_uav_cbv_heap, 1);
+  g_cpu_dp_output_imgui_texid = g_cpu_output_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr + srv_uav_cbv_descriptor_size;
 
   // Same CB used for all paths
   size_t sz = AlignUp(sizeof(PerSceneCB), 256);
@@ -747,6 +953,7 @@ int main()
   InitSceneLSS();
   InitSceneProcedural();
   InitPerSceneCB();
+  LoadTestCasesFromFile();
 
   while (!glfwWindowShouldClose(g_window))
   {

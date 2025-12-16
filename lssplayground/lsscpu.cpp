@@ -6,48 +6,60 @@
 
 #include <d3d12.h>
 
+template<typename Vec3, typename Float>
 static std::vector<uint8_t> g_bytes;
+
 static uint32_t             W, H;
-static std::vector<std::thread*> g_threads;
 
 // The snapshot of LSS poses and radii when the render starts.
+template<typename Vec3, typename Float>
 std::vector<glm::vec3> lss_poses;
+
+template<typename Vec3, typename Float>
 std::vector<float> lss_radii;
 
-glm::mat4 inv_view, inv_proj;
+template<typename Vec3, typename Float>
+glm::mat4 inv_view;
 
+template<typename Vec3, typename Float>
+glm::mat4 inv_proj;
+
+template<typename Vec3, typename Float>
 bool IntersectLSS(
-  const glm::vec3& pa, float ra,
-  const glm::vec3& pb, float rb,
-  const glm::vec3& ro, const glm::vec3& rd, float tmin, float tmax, float& thit) {
+  const glm::vec3& _pa, float _ra,
+  const glm::vec3& _pb, float _rb,
+  const glm::vec3& _ro, const glm::vec3& _rd, float tmin, float tmax, float& thit) {
   thit = -1;
 
-  glm::vec3 ba = pb - pa;
-  glm::vec3 oa = ro - pa;
-  glm::vec3 ob = ro - pb;
-  float rr = ra - rb;
-  float m0 = glm::dot(ba, ba);
-  float m1 = glm::dot(ba, oa);
-  float m2 = glm::dot(ba, rd);
-  float m3 = glm::dot(rd, oa);
-  float m5 = glm::dot(oa, oa);
-  float m6 = glm::dot(ob, rd);
-  float m7 = glm::dot(ob, ob);
+  Vec3 pa = _pa, pb = _pb, ro = _ro, rd = _rd;
+  Float ra = _ra, rb = _rb;
+
+  Vec3 ba = pb - pa;
+  Vec3 oa = ro - pa;
+  Vec3 ob = ro - pb;
+  Float rr = ra - rb;
+  Float m0 = glm::dot(ba, ba);
+  Float m1 = glm::dot(ba, oa);
+  Float m2 = glm::dot(ba, rd);
+  Float m3 = glm::dot(rd, oa);
+  Float m5 = glm::dot(oa, oa);
+  Float m6 = glm::dot(ob, rd);
+  Float m7 = glm::dot(ob, ob);
   bool inside = false;
 
   // BODY
-  float d2 = m0 - rr * rr;
-  float k2 = d2 - m2 * m2;
-  float k1 = d2 * m3 - m1 * m2 + m2 * rr * ra;
-  float k0 = d2 * m5 - m1 * m1 + m1 * rr * ra * 2.0 - m0 * ra * ra;
-  float h = k1 * k1 - k0 * k2;
+  Float d2 = m0 - rr * rr;
+  Float k2 = d2 - m2 * m2;
+  Float k1 = d2 * m3 - m1 * m2 + m2 * rr * ra;
+  Float k0 = d2 * m5 - m1 * m1 + m1 * rr * ra * 2.0 - m0 * ra * ra;
+  Float h = k1 * k1 - k0 * k2;
   if (h < 0.0)
     return false;
 
-  float srt = sqrt(h);
-  float t0 = (-srt - k1) / k2;
-  float t1 = (srt - k1) / k2;
-  float t = inside ? t1 : t0;
+  Float srt = sqrt(h);
+  Float t0 = (-srt - k1) / k2;
+  Float t1 = (srt - k1) / k2;
+  Float t = inside ? t1 : t0;
 
   if (t < 0.0)
   {
@@ -56,9 +68,9 @@ bool IntersectLSS(
       return false;
   }
 
-  float y = m1 - ra * rr + t * m2;
+  Float y = m1 - ra * rr + t * m2;
 
-  float t_cand = 1e20;
+  Float t_cand = 1e20;
 
   if (y > 0.0 && y < d2 && t > tmin && t <= tmax)
   {
@@ -69,8 +81,8 @@ bool IntersectLSS(
   }
 
   // caps
-  float h1 = m3 * m3 - m5 + ra * ra;
-  float h2 = m6 * m6 - m7 + rb * rb;
+  Float h1 = m3 * m3 - m5 + ra * ra;
+  Float h2 = m6 * m6 - m7 + rb * rb;
   if (h1 <= 0.0 && h2 <= 0.0)
     return false;
 
@@ -78,7 +90,7 @@ bool IntersectLSS(
 
   if (h1 > 0.0)
   {
-    float cands[] =
+    Float cands[] =
     {
         -m3 - sqrt(h1),
         -m3 + sqrt(h1)
@@ -100,7 +112,7 @@ bool IntersectLSS(
   }
   if (h2 > 0.0)
   {
-    float cands[] =
+    Float cands[] =
     {
         -m6 - sqrt(h2),
         -m6 + sqrt(h2)
@@ -138,43 +150,51 @@ glm::vec3 TransformDirection(const glm::mat4& m, const glm::vec3& x)
   x4 = m * x4;
   return glm::vec3(x4);
 }
- 
+
+template<typename Vec3, typename Float>  // CXX 14 feature
 static std::thread* cpu_runner{ nullptr };
 
+template<typename Vec3, typename Float>
+static std::vector<std::thread*> g_threads;
+
+template<typename Vec3, typename Float>
 bool IsCPUDone() {
-  return (g_threads.empty() && cpu_runner == nullptr);
+  return (g_threads<Vec3, Float>.empty() && cpu_runner<Vec3, Float> == nullptr);
 }
 
+template bool IsCPUDone<glm::dvec3, double>();
+template bool IsCPUDone<glm::vec3, float>();
+
+template<typename Vec3, typename Float>
 void InitCPURender(uint32_t w, uint32_t h,
   std::vector<glm::vec3> ps,
   std::vector<float> rs,
   glm::mat4 iv, glm::mat4 ip
 ) {
-  if (!cpu_runner) {
-    cpu_runner = new std::thread([=]() {
+  if (!cpu_runner<Vec3, Float>) {
+    cpu_runner<Vec3, Float> = new std::thread([=]() {
 
       W = w; H = h;
-      g_bytes.resize(4ULL * W * H);
-      lss_poses = ps; lss_radii = rs;
-      inv_proj = ip; inv_view = iv;
+      g_bytes<Vec3, Float>.resize(4ULL * W * H);
+      lss_poses<Vec3, Float> = ps; lss_radii<Vec3, Float> = rs;
+      inv_proj<Vec3, Float> = ip; inv_view<Vec3, Float> = iv;
 
       std::thread* thd = new std::thread([=]() {
         for (uint32_t y = 0; y < H; y++) {
           for (uint32_t x = 0; x < W; x++) {
-
             float     u = x * 1.0f / (W - 1);
             float     v = y * 1.0f / (H - 1);
-            glm::vec3 ro = TransformPosition(inv_view, glm::vec3(0, 0, 0));
+            glm::vec3 ro = TransformPosition(inv_view<Vec3, Float>, glm::vec3(0, 0, 0));
             glm::vec2 d(u * 2.0f - 1.0f, v * 2.0f - 1.0f);
             //d.y *= -1;
-            glm::vec3 target = TransformPosition(inv_proj, glm::vec3(d.x, -d.y, 1.0f));
-            glm::vec3 rd = TransformDirection(inv_view, glm::normalize(target));
+            glm::vec3 target = TransformPosition(inv_proj<Vec3, Float>, glm::vec3(d.x, -d.y, 1.0f));
+            glm::vec3 rd = TransformDirection(inv_view<Vec3, Float>, glm::normalize(target));
             float thit;
-            uint8_t* ptr = &(g_bytes[4 * (y * W + x)]);
+            uint8_t* ptr = &(g_bytes<Vec3, Float>[4 * (y * W + x)]);
 
-            if (IntersectLSS(
-              lss_poses[0], lss_radii[0],
-              lss_poses[1], lss_radii[1],
+            if (IntersectLSS<Vec3, Float>(
+              lss_poses<Vec3, Float>[0], lss_radii<Vec3, Float>[0],
+              lss_poses<Vec3, Float>[1], lss_radii<Vec3, Float>[1],
               ro, rd,
               0, 1e20, thit
             )) {
@@ -192,23 +212,42 @@ void InitCPURender(uint32_t w, uint32_t h,
           }
         }
         });
-      g_threads.push_back(thd);
+      g_threads<Vec3, Float>.push_back(thd);
 
-      if (!g_threads.empty()) {
-        for (uint32_t i = 0; i < g_threads.size(); i++) {
-          g_threads[i]->join();
+      if (!g_threads<Vec3, Float>.empty()) {
+        for (uint32_t i = 0; i < g_threads<Vec3, Float>.size(); i++) {
+          g_threads<Vec3, Float>[i]->join();
         }
-        g_threads.clear();
+        g_threads<Vec3, Float>.clear();
       }
     });
-    cpu_runner = nullptr;
+    cpu_runner<Vec3, Float> = nullptr;
   }
 }
 
+template
+void InitCPURender<glm::dvec3, double>(uint32_t w, uint32_t h,
+  std::vector<glm::vec3> ps,
+  std::vector<float> rs,
+  glm::mat4 iv, glm::mat4 ip
+);
+
+template
+void InitCPURender<glm::vec3, float>(uint32_t w, uint32_t h,
+  std::vector<glm::vec3> ps,
+  std::vector<float> rs,
+  glm::mat4 iv, glm::mat4 ip
+);
+
+template<typename Vec3, typename Float>
 void UpdateCPURenderResults(ID3D12Resource* res)
 {
   uint8_t* mapped{};
   res->Map(0, nullptr, (void**)&mapped);
-  memcpy(mapped, g_bytes.data(), g_bytes.size());
+  memcpy(mapped, g_bytes<Vec3, Float>.data(), g_bytes<Vec3, Float>.size());
   res->Unmap(0, nullptr);
 }
+
+
+template void UpdateCPURenderResults<glm::dvec3, double>(ID3D12Resource* res);
+template void UpdateCPURenderResults<glm::vec3, float>(ID3D12Resource* res);
