@@ -52,7 +52,7 @@ public:
   struct PerSceneCB {
     uint32_t cull_flag;
   };
-
+  PerSceneCB h_perscene_cb;
   MyInstanceFlagScene(MyFramework* f);
   void Render() override;
   void Update(float secs) override;

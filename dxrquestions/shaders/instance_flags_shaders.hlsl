@@ -25,11 +25,9 @@ void MyRayGenShader()
     float2 lerpValues = (float2) DispatchRaysIndex() / (float2) DispatchRaysDimensions();
     uint2 dri = DispatchRaysIndex().xy;
     uint idx = dri.y * DispatchRaysDimensions().x + dri.x;
-    RenderTarget[dri] = float4(lerpValues, 0.0, 1.0);
 
-    /*
     MyPayload payload;
-    payload.color = float4(lerpValues, 0, 1);
+    payload.color = float4(0.1, lerpValues.y * 0.1, 0.1, 1);
     payload.prim_idx = 0xFFFFFFFF;
 
     RayDesc ray;
@@ -42,28 +40,20 @@ void MyRayGenShader()
 
     TraceRay(Scene,
     RAY_FLAG_NONE,
-    0xFF,
+    MyConstantBuffer.cull_flag,
     0,
     0,
     0,
     ray,
     payload);
 
-  // Render interpolated DispatchRaysIndex outside the stencil window
-    uint2 dri = DispatchRaysIndex().xy;
     RenderTarget[dri] = payload.color;
-    if (MyConstantBuffer.is_dump_debuginfo != 0)
-    {
-        uint idx = dri.y * DispatchRaysDimensions().x + dri.x;
-        MyDebugBuffer[idx] = payload.prim_idx;
-    }
-*/
 }
 
 [shader("closesthit")]
 void MyClosestHitShader(inout MyPayload payload, in MyAttributes attr)
 {
-    // NOP for now
+    payload.color = float4(1, 1, 0, 1);
 }
 
 [shader("miss")]

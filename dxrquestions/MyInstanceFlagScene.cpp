@@ -21,16 +21,48 @@
 
 
 MyInstanceFlagScene::MyInstanceFlagScene(MyFramework* f) : MyScene(f) {
+  h_perscene_cb.cull_flag = 0xFF;
   printf("[MyInstanceFlagScene] ctor\n");
   glm::vec3 tri_verts[] = {
     { -0.5, -0.5, 0 },
     { -0.5, 0.5,  0 },
-    { 0.5, -0.5, 0 }
+    { 0.5, -0.5, 0 },
+
+    { 0.5, -0.5, 0 },
+    { -0.5, 0.5,  0 },
+    { 0.5, 0.5, 0 }
   };
   // [Output UAV] [AS SRV] [PerScene CBV]
   framework->CreateBufferForCPUSideData(tri_verts, sizeof(tri_verts), &tri_verts_resource);
-  framework->BuildBLAS(&blas_result, tri_verts_resource, sizeof(glm::vec3), 3);
-  framework->BuildTLAS(&tlas_result, blas_result);
+  framework->BuildBLAS(&blas_result, tri_verts_resource, sizeof(glm::vec3), 6);
+
+  // Grid
+  float xmin = -0.95, xmax = 0.95, ymin = 0.9, ymax = -1.0;
+  float xstep = (xmax - xmin) / 16, ystep = (ymax - ymin) / 16;
+  const float L = 0.8f;
+  float xscale = xstep / 1.0f * L, yscale = ystep / 1.0f * L;
+  std::vector<D3D12_RAYTRACING_INSTANCE_DESC> inst_descs;
+  for (uint32_t y = 0; y < 16; y++) {
+    for (uint32_t x = 0; x < 16; x++) {
+      float xcenter = (x + 0.5) / 16 * (xmax - xmin) + xmin;
+      float ycenter = (y + 0.5) / 16 * (ymax - ymin) + ymin;
+      uint32_t idx = x + y * 16;
+      D3D12_RAYTRACING_INSTANCE_DESC desc{};
+      desc.AccelerationStructure = blas_result->GetGPUVirtualAddress();
+      desc.InstanceContributionToHitGroupIndex = 0;
+      desc.InstanceID = idx;
+      desc.InstanceMask = idx;
+      desc.Transform[0][0] = xscale;
+      desc.Transform[1][1] = yscale;
+      desc.Transform[2][2] = 1;
+      desc.Transform[0][3] = xcenter;
+      desc.Transform[1][3] = ycenter;
+      desc.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
+      inst_descs.push_back(desc);
+    }
+  }
+
+  framework->BuildTLAS(&tlas_result, blas_result, inst_descs);
   framework->CreateGlobalRootSig(&global_rootsig, 1, 1, 1);
   framework->CreateRtOutputResource(&rt_output_resource);
   uint32_t cb_size = 256;
@@ -51,11 +83,29 @@ MyInstanceFlagScene::MyInstanceFlagScene(MyFramework* f) : MyScene(f) {
 }
 
 void MyInstanceFlagScene::Update(float secs) {
-
+  void* mapped;
+  perscene_cb->Map(0, nullptr, &mapped);
+  memcpy(mapped, &h_perscene_cb, sizeof(h_perscene_cb));
+  perscene_cb->Unmap(0, nullptr);
 }
 
 void MyInstanceFlagScene::OnKeyDown(uint32_t k) {
-
+  int delta = 0;
+  switch (k) {
+  case VK_UP:
+    delta = 8; break;
+  case VK_DOWN:
+    delta = -8; break;
+  case VK_LEFT:
+    delta = -1; break;
+  case VK_RIGHT:
+    delta = 1; break;
+  }
+  if (delta != 0) {
+    uint32_t f = (h_perscene_cb.cull_flag + delta) & 0xFF;
+    h_perscene_cb.cull_flag = f;
+    printf("Ray cull flag set to %u (0x%x)\n", f, f);
+  }
 }
 void MyInstanceFlagScene::OnKeyUp(uint32_t k) {
 

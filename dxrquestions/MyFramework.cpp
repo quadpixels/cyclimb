@@ -909,7 +909,7 @@ void MyFramework::BuildTLAS(ID3D12Resource** tlas_result, ID3D12Resource* blas_r
   tlas_build_desc.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
   tlas_build_desc.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
   tlas_build_desc.Inputs.InstanceDescs = tlas_instances->GetGPUVirtualAddress();
-  tlas_build_desc.Inputs.NumDescs = 1;
+  tlas_build_desc.Inputs.NumDescs = N;
   tlas_build_desc.DestAccelerationStructureData = {
     (*tlas_result)->GetGPUVirtualAddress()
   };
