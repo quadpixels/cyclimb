@@ -1,3 +1,5 @@
+#pragma once
+
 #include <stdint.h>
 
 #include <vector>
@@ -109,53 +111,6 @@ public:
   std::vector<int> prim_idxes_omm;
 };
 
-class MyLssScene : public MyScene {
-public:
-    struct LssSphere {
-        glm::vec3 pos;
-        float radius;
-    };
-    MyLssScene(MyFramework* f);
-    void Render() override;
-    void Update(float secs) override;
-    void OnKeyDown(uint32_t k) override;
-    void OnKeyUp(uint32_t k) override;
-
-    ID3D12RootSignature* global_rootsig;
-    ID3D12Resource* rt_output_resource;
-    ID3D12DescriptorHeap* cbvsrvuav_heap;
-    MyRtPipeline my_rt_pipeline{};
-    ID3D12Resource* lss_pos_resource, * lss_pos_resource1;
-    ID3D12Resource* lss_radii_resource;
-    ID3D12Resource* lss_indices_list_resource, *lss_indices_successive_resource;
-    ID3D12Resource* blas_result, * tlas_result;
-    ID3D12Resource* my_debug_resource;
-    ID3D12Resource* my_debug_resource_cpu;
-    struct PerSceneCB {
-        DirectX::XMMATRIX inverse_view;
-        DirectX::XMMATRIX inverse_proj;
-        int viz_mode;
-        int cam_mode;  // 0 = perspective, 1 = orthogonal
-    };
-    ID3D12Resource* per_scene_cb;
-
-    std::vector<glm::vec3> lss_poses;
-    std::vector<float> lss_radii;
-    std::vector<uint32_t> lss_indices;
-    std::vector<uint32_t> lss_indices_successive;
-    glm::vec3 cam_pos{ 0, 0, 2.0 };
-    glm::vec3 cam_lookdir{ 0, 0, -1.0 };
-    glm::vec3 cam_up{ 0, 1, 0 };
-    glm::mat4 cam_view_matrix;
-    char axes[3]{};
-    char rot_axes[2]{};
-    float cam_azimuth{};
-    float cam_elevation{};
-    int viz_mode{ 1 };
-    int cam_mode{ 0 };
-    int case_idx{ 0 };
-};
-
 class MyFramework {
 public:
   // Shared by all scenes.
@@ -163,7 +118,7 @@ public:
   void InitDeviceAndCommandQ();
   void InitSwapchain();
   void InitSwapchain(uint32_t w, uint32_t h);
-  void InitNVAPI();
+  bool InitNVAPI();
   void InitRayTracingValidation();
   bool IsOMMSupported();
 #ifdef USE_IMGUI
@@ -175,18 +130,21 @@ public:
     const wchar_t* closest_hit_shader{};
     const wchar_t* miss_shader{};
     const wchar_t* anyhit_shader{};
+    const wchar_t* intersection_shader{};
     
     void* dxil_lib_bytecode{};
     uint32_t dxil_lib_length{ 0 };
 
     const wchar_t* hitgroup_name;
+    D3D12_HIT_GROUP_TYPE hitgroup_type{ D3D12_HIT_GROUP_TYPE_TRIANGLES };
   };
   void Deinit();
   void SetHwnd(HWND h);
 
   // Resource creation helpers
-  void CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv,
+  void CreateNvapiEnabledGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv,
     bool add_nvapi_uav, uint32_t nvapi_uav_idx);
+  void CreateGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv);
   void CreateRtOutputResource(ID3D12Resource** out_res);
   void CreateRtOutputResource(ID3D12Resource** out_res, uint32_t w, uint32_t h);
   void CreateCBVSRVUAVHeap(ID3D12DescriptorHeap** h, ID3D12DescriptorHeap** h_cpu, uint32_t num_descriptors);
@@ -202,6 +160,7 @@ public:
   ID3D12Resource* GetCurrentRenderTarget();
   void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
     ID3D12RootSignature* global_rootsig, const struct MyRtShaderListInfo& my_shaders);
+  void CreateComputePipeline(ID3D12PipelineState** pso, ID3D12RootSignature* root_sig, const void* shader_bytecode, uint32_t shader_bytecode_length);
   template<class T> void CreateVertexBuffer(std::vector<T>& verts, ID3D12Resource** res, D3D12_VERTEX_BUFFER_VIEW* vbv);
   void CreateBufferForCPUSideData(void* data, uint32_t len, ID3D12Resource** res);
   void CreateBufferForUAVAccess(uint32_t len, ID3D12Resource** res);
@@ -214,7 +173,7 @@ public:
   void CreateSRVAccelerationStructure(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx);
   void CreateSRVBuffer(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx, uint32_t num_elts, uint32_t stride);
   void CreateCBVBuffer(ID3D12Resource* res, ID3D12DescriptorHeap* h, uint32_t idx, uint32_t len);
-  void EnableRayTracingValidation();
+  void CreateLineDrawingPipeline();  // Slate UI
   
   void BuildDummyOMM(ID3D12Resource* vertex_buffer, uint32_t stride,
     ID3D12Resource** blas_result_omm, ID3D12Resource** tlas_result_omm);
@@ -231,12 +190,24 @@ public:
     int case_idx,
     bool is_update
   );
+  void BuildDummyTriNVAPI(
+    ID3D12Resource** blas_result,
+    ID3D12Resource** tlas_result,
+    ID3D12Resource* tri_verts_resource,
+    uint32_t vert_count
+  );
+  void BuildDummyProcedural(
+    ID3D12Resource** blas_result,
+    ID3D12Resource** tlas_result,
+    ID3D12Resource* proc_aabb_buffer,
+    uint32_t aabb_count
+  );
     
 
   void BuildBLAS(ID3D12Resource** blas_result,
     ID3D12Resource* vertex_buffer, uint32_t stride, uint32_t vertex_count);  // Just 1 geom
-  void BuildTLAS(ID3D12Resource** tlas_result,
-    ID3D12Resource* blas_result);
+  void BuildTLAS(ID3D12Resource** tlas_result, ID3D12Resource* blas_result);
+  void BuildTLAS(ID3D12Resource** tlas_result, ID3D12Resource* blas_result, const std::vector<D3D12_RAYTRACING_INSTANCE_DESC>& inst_descs);
 
   constexpr static uint32_t WIN_W = 512, WIN_H = 512;
   constexpr static uint32_t FRAME_COUNT = 2;

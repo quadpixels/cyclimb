@@ -144,11 +144,22 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MyFramework.cpp" />
     <ClCompile Include="MyFramework.h" />
+    <ClCompile Include="MyInstanceFlagScene.cpp" />
     <ClCompile Include="MyLssScene.cpp" />
     <ClCompile Include="MySphereScene.cpp" />
     <ClCompile Include="ommhelper.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <FxCompile Include="shaders\instance_flags_shaders.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Library</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.5</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Library</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.5</ShaderModel>
+      <VariableName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_InstanceFlagsShaders</VariableName>
+      <VariableName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_InstanceFlagsShaders</VariableName>
+      <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)CompiledShaders\%(Filename).hlsl.h</HeaderFileOutput>
+      <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)CompiledShaders\%(Filename).hlsl.h</HeaderFileOutput>
+    </FxCompile>
     <FxCompile Include="shaders\pixel_shader_ivyleaf_triangle.hlsl">
       <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">PSMain</EntryPointName>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>

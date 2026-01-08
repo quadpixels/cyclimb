@@ -15,6 +15,7 @@
 #include <nvapi.h>
 
 #include "MyFramework.h"
+#include "MyScene.h"
 
 #define CE(x) { \
   const std::source_location location = std::source_location::current(); \
@@ -30,7 +31,7 @@ namespace dxc {
 }
 
 MyFramework* g_myframework{};
-MyScene* g_scenes[2];
+MyScene* g_scenes[3];
 uint32_t g_scene_idx = 1;
 HWND g_hwnd{};
 long long g_last_ms{ 0 };
@@ -152,6 +153,7 @@ int main() {
 #endif
   g_scenes[0] = new MyParisIvyLeafScene(g_myframework);
   g_scenes[1] = new MyLssScene(g_myframework);
+  g_scenes[2] = new MyInstanceFlagScene(g_myframework);
   g_init_done = true;
 
   MSG msg = { 0 };

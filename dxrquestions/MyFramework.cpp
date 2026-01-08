@@ -20,6 +20,7 @@
 #include "x64\Release\g_PixelShaderIvyLeafTriangle.h"
 #include "x64\Release\g_VertexShaderIvyLeafTriangle.h"
 #include "x64/Release/CompiledShaders/raytracing_shaders.hlsl.h"
+
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -318,12 +319,24 @@ void MyFramework::do_CreateRootSig(
     error->Release();
 }
 
-void MyFramework::CreateRtGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv, bool add_nvapi_uav, uint32_t nvapi_uav_idx) {
+void MyFramework::CreateNvapiEnabledGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv, bool add_nvapi_uav, uint32_t nvapi_uav_idx) {
   do_CreateRootSig(out_rootsig, num_uav, num_srv, num_cbv, D3D12_ROOT_SIGNATURE_FLAG_NONE, true, add_nvapi_uav, nvapi_uav_idx);
+}
+
+void MyFramework::CreateGlobalRootSig(ID3D12RootSignature** out_rootsig, uint32_t num_uav, uint32_t num_srv, uint32_t num_cbv) {
+  do_CreateRootSig(out_rootsig, num_uav, num_srv, num_cbv, D3D12_ROOT_SIGNATURE_FLAG_NONE, true, false, 0);
 }
 
 void MyFramework::CreateHelloTriangleRootSig(ID3D12RootSignature** out_rootsig) {
   do_CreateRootSig(out_rootsig, 0, 2, 0, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT, true, false, 0);
+}
+
+void MyFramework::CreateComputePipeline(ID3D12PipelineState** pso, ID3D12RootSignature* root_sig, const void* shader_bytecode, uint32_t shader_bytecode_length) {
+  D3D12_COMPUTE_PIPELINE_STATE_DESC cpsd{};
+  cpsd.pRootSignature = root_sig;
+  cpsd.CS.pShaderBytecode = shader_bytecode;
+  cpsd.CS.BytecodeLength = shader_bytecode_length;
+  CE(device12->CreateComputePipelineState(&cpsd, IID_PPV_ARGS(pso)));
 }
 
 void MyFramework::CreateRtOutputResource(ID3D12Resource** out_res, uint32_t w, uint32_t h) {
@@ -433,8 +446,8 @@ void MyFramework::CreateNullUAV(ID3D12DescriptorHeap* h, uint32_t idx) {
   uav_desc.Buffer.CounterOffsetInBytes = 0;
   uav_desc.Buffer.FirstElement = 0;
   uav_desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-  uav_desc.Buffer.NumElements = 1;
-  uav_desc.Buffer.StructureByteStride = 4;
+  uav_desc.Buffer.NumElements = 256;
+  uav_desc.Buffer.StructureByteStride = 256;
   CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(h->GetCPUDescriptorHandleForHeapStart(), idx, cbvsrvuav_descriptor_size);
   device12->CreateUnorderedAccessView(nullptr, nullptr, &uav_desc, uav_handle);
 }
@@ -493,7 +506,8 @@ void MyFramework::CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
     my_shaders.raygen_shader,
     my_shaders.closest_hit_shader,
     my_shaders.miss_shader,
-    my_shaders.anyhit_shader
+    my_shaders.anyhit_shader,
+    my_shaders.intersection_shader,
   };
   for (uint32_t i = 0; i < _countof(shdrs); i++) {
     if (shdrs[i] != nullptr) {
@@ -529,10 +543,11 @@ void MyFramework::CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
 
   D3D12_STATE_SUBOBJECT subobj_hitgroup{};
   D3D12_HIT_GROUP_DESC hitgroup_desc{};
-  hitgroup_desc.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+  hitgroup_desc.Type = my_shaders.hitgroup_type;
   hitgroup_desc.HitGroupExport = hitgroup_name;
   hitgroup_desc.ClosestHitShaderImport = my_shaders.closest_hit_shader;
   hitgroup_desc.AnyHitShaderImport = my_shaders.anyhit_shader;
+  hitgroup_desc.IntersectionShaderImport = my_shaders.intersection_shader;
   subobj_hitgroup.Type = D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP;
   subobj_hitgroup.pDesc = &hitgroup_desc;
   subobjects.push_back(subobj_hitgroup);
@@ -788,9 +803,9 @@ void MyFramework::BuildBLAS(ID3D12Resource** blas_result,
 
   D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info{};
   device12->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &info);
-  printf("BLAS prebuild info:\n");
-  printf("  Scratch: %d\n", int(info.ScratchDataSizeInBytes));
-  printf("  Result : %d\n", int(info.ResultDataMaxSizeInBytes));
+  //printf("BLAS prebuild info:\n");
+  //printf("  Scratch: %d\n", int(info.ScratchDataSizeInBytes));
+  //printf("  Result : %d\n", int(info.ResultDataMaxSizeInBytes));
 
   ID3D12Resource* blas_scratch{};
   D3D12_RESOURCE_DESC scratch_desc{};
@@ -848,16 +863,33 @@ void MyFramework::BuildBLAS(ID3D12Resource** blas_result,
   blas_scratch->Release();
 }
 
+// Builds a Single-Instance TLAS.
 void MyFramework::BuildTLAS(ID3D12Resource** tlas_result,
   ID3D12Resource* blas_result) {
+  
+  std::vector<D3D12_RAYTRACING_INSTANCE_DESC> inst_descs(1);
+  D3D12_RAYTRACING_INSTANCE_DESC* instance_desc = &(inst_descs[0]);
+  instance_desc->InstanceID = 0;
+  instance_desc->InstanceContributionToHitGroupIndex = 0;
+  instance_desc->Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
+  DirectX::XMMATRIX m = DirectX::XMMatrixIdentity();
+  memcpy(instance_desc->Transform, &m, sizeof(instance_desc->Transform));
+  instance_desc->AccelerationStructure = blas_result->GetGPUVirtualAddress();
+  instance_desc->InstanceMask = 0xFF;
+
+  BuildTLAS(tlas_result, blas_result, inst_descs);
+}
+
+void MyFramework::BuildTLAS(ID3D12Resource** tlas_result, ID3D12Resource* blas_result, const std::vector<D3D12_RAYTRACING_INSTANCE_DESC>& inst_descs) {
+  size_t N = inst_descs.size();
   D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlas_inputs{};
   tlas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
   tlas_inputs.pGeometryDescs = nullptr;
-  tlas_inputs.NumDescs = 1;
+  tlas_inputs.NumDescs = N;
 
   D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO info{};
   device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &info);
-  int instance_desc_size = sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * 1;  // only 1 inst
+  int instance_desc_size = sizeof(D3D12_RAYTRACING_INSTANCE_DESC) * N;
 
   ID3D12Resource* tlas_scratch{};
   CreateBufferForUAVAccess(info.ScratchDataSizeInBytes, &tlas_scratch);
@@ -865,25 +897,18 @@ void MyFramework::BuildTLAS(ID3D12Resource** tlas_result,
 
   (*tlas_result)->SetName(L"TLAS result");
 
-  ID3D12Resource* tlas_instance{};
-  CreateBufferForCPUSideData(nullptr, instance_desc_size, &tlas_instance);
+  ID3D12Resource* tlas_instances{};
+  CreateBufferForCPUSideData(nullptr, instance_desc_size, &tlas_instances);
 
-  D3D12_RAYTRACING_INSTANCE_DESC* instance_desc;
-  tlas_instance->Map(0, nullptr, (void**)(&instance_desc));
-  ZeroMemory(instance_desc, sizeof(D3D12_RAYTRACING_INSTANCE_DESC));
-  instance_desc->InstanceID = 0;
-  instance_desc->InstanceContributionToHitGroupIndex = 0;
-  instance_desc->Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
-  DirectX::XMMATRIX m = DirectX::XMMatrixIdentity();
-  memcpy(instance_desc->Transform, &m, sizeof(instance_desc->Transform));
-  instance_desc->AccelerationStructure = blas_result->GetGPUVirtualAddress();
-  instance_desc->InstanceMask = 0xFF;
-  tlas_instance->Unmap(0, nullptr);
+  D3D12_RAYTRACING_INSTANCE_DESC* instance_descs;
+  tlas_instances->Map(0, nullptr, (void**)(&instance_descs));
+  memcpy(instance_descs, inst_descs.data(), instance_desc_size);
+  tlas_instances->Unmap(0, nullptr);
 
   D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC tlas_build_desc{};
   tlas_build_desc.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
   tlas_build_desc.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-  tlas_build_desc.Inputs.InstanceDescs = tlas_instance->GetGPUVirtualAddress();
+  tlas_build_desc.Inputs.InstanceDescs = tlas_instances->GetGPUVirtualAddress();
   tlas_build_desc.Inputs.NumDescs = 1;
   tlas_build_desc.DestAccelerationStructureData = {
     (*tlas_result)->GetGPUVirtualAddress()
@@ -906,7 +931,7 @@ void MyFramework::BuildTLAS(ID3D12Resource** tlas_result,
   WaitForPreviousFrame();
 
   tlas_scratch->Release();
-  tlas_instance->Release();
+  tlas_instances->Release();
 }
 
 void MyFramework::CreateBufferForCPUSideData(void* data, uint32_t len, ID3D12Resource** res) {
@@ -1174,7 +1199,6 @@ void MyFramework::BuildDummyLSS(
   int case_idx,
   bool is_update
 ) {
-
   NVAPI_D3D12_RAYTRACING_GEOMETRY_LSS_DESC lss_desc{};
   lss_desc.endcapMode = endcap_mode;
   if (case_idx == 2) {
@@ -1273,6 +1297,152 @@ void MyFramework::BuildDummyLSS(
   scratch_resource->Release();
 }
 
+void MyFramework::BuildDummyTriNVAPI(
+  ID3D12Resource** blas_result,
+  ID3D12Resource** tlas_result,
+  ID3D12Resource* tri_verts_resource,
+  uint32_t vert_count
+) {
+  NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX tri_desc{};
+  tri_desc.triangles.IndexBuffer = 0;
+  tri_desc.triangles.IndexCount = 0;
+  tri_desc.triangles.IndexFormat = DXGI_FORMAT_UNKNOWN;
+  tri_desc.triangles.Transform3x4 = 0;
+  tri_desc.triangles.VertexBuffer.StartAddress = tri_verts_resource->GetGPUVirtualAddress();
+  tri_desc.triangles.VertexBuffer.StrideInBytes = 12;
+  tri_desc.triangles.VertexCount = vert_count;
+  tri_desc.triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+  tri_desc.flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+  tri_desc.type = NVAPI_D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES_EX;
+  
+  NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX blas_input_ex{};
+  blas_input_ex.type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+  blas_input_ex.flags = NVAPI_D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE_EX;
+  blas_input_ex.numDescs = 1;
+  blas_input_ex.descsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+  blas_input_ex.geometryDescStrideInBytes = sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX);
+  blas_input_ex.pGeometryDescs = &tri_desc;
+
+  D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas_prebuild_info = {};
+  NVAPI_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_EX_PARAMS blas_get_prebuild_info_params = {};
+  blas_get_prebuild_info_params.pInfo = &blas_prebuild_info;
+  blas_get_prebuild_info_params.pDesc = &blas_input_ex;
+  blas_get_prebuild_info_params.version = NVAPI_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_EX_PARAMS_VER;
+  NvAPI_Status status = NvAPI_D3D12_GetRaytracingAccelerationStructurePrebuildInfoEx(device12, &blas_get_prebuild_info_params);
+  if (status != NVAPI_OK)
+  {
+    printf("[FAIL]: NvAPI_D3D12_GetRaytracingAccelerationStructurePrebuildInfoEx\n");
+    std::abort();
+  }
+
+  ID3D12Resource* scratch_resource{};
+  CreateBufferForUAVAccess(blas_prebuild_info.ScratchDataSizeInBytes, &scratch_resource);
+
+  // Build BLAS
+  CreateBufferForAS(blas_prebuild_info.ResultDataMaxSizeInBytes, blas_result);
+  NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC_EX blas_build_desc{};
+  blas_build_desc.destAccelerationStructureData = (*blas_result)->GetGPUVirtualAddress();
+  blas_build_desc.inputs = blas_input_ex;
+  blas_build_desc.scratchAccelerationStructureData = scratch_resource->GetGPUVirtualAddress();
+  NVAPI_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_EX_PARAMS blas_build_params{};
+  blas_build_params.numPostbuildInfoDescs = 0;
+  blas_build_params.pPostbuildInfoDescs = nullptr;
+  blas_build_params.pDesc = &blas_build_desc;
+  blas_build_params.version = NVAPI_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_EX_PARAMS_VER;
+
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, nullptr));
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(scratch_resource, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
+
+  status = NvAPI_D3D12_BuildRaytracingAccelerationStructureEx(command_list, &blas_build_params);
+  if (status != NVAPI_OK)
+  {
+    printf("[FAIL]: NvAPI_D3D12_BuildRaytracingAccelerationStructureEx\n");
+    std::abort();
+  }
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(scratch_resource)));
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(*blas_result)));
+  command_list->Close();
+  command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
+  WaitForPreviousFrame();
+  BuildTLAS(tlas_result, *blas_result);
+
+  scratch_resource->Release();
+}
+
+void MyFramework::BuildDummyProcedural(
+  ID3D12Resource** blas_result,
+  ID3D12Resource** tlas_result,
+  ID3D12Resource* proc_aabb_buffer,
+  uint32_t aabb_count
+) {
+  D3D12_RAYTRACING_GEOMETRY_DESC proc_desc{};
+  proc_desc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
+  proc_desc.AABBs.AABBCount = aabb_count;
+  proc_desc.AABBs.AABBs.StartAddress = proc_aabb_buffer->GetGPUVirtualAddress();
+  proc_desc.AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
+  proc_desc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
+
+  D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS blas_inputs{};
+  blas_inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+  blas_inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+  blas_inputs.NumDescs = 1;
+  blas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+  blas_inputs.pGeometryDescs = &proc_desc;
+
+  D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlas_inputs{};
+  tlas_inputs = blas_inputs;
+  tlas_inputs.NumDescs = 1;
+  tlas_inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+  tlas_inputs.InstanceDescs = {};
+
+  D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas_buildinfo{}, tlas_buildinfo{};
+  device12->GetRaytracingAccelerationStructurePrebuildInfo(&blas_inputs, &blas_buildinfo);
+  device12->GetRaytracingAccelerationStructurePrebuildInfo(&tlas_inputs, &tlas_buildinfo);
+  
+  CreateBufferForAS(blas_buildinfo.ResultDataMaxSizeInBytes, blas_result);
+  CreateBufferForAS(tlas_buildinfo.ResultDataMaxSizeInBytes, tlas_result);
+
+  size_t scratch_sz = std::max(blas_buildinfo.ScratchDataSizeInBytes, tlas_buildinfo.ScratchDataSizeInBytes);
+  ID3D12Resource* scratch_resource{};
+  CreateBufferForUAVAccess(scratch_sz, &scratch_resource);
+
+  D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC blas_build_desc{};
+  blas_build_desc.Inputs = blas_inputs;
+  blas_build_desc.DestAccelerationStructureData = (*blas_result)->GetGPUVirtualAddress();
+  blas_build_desc.ScratchAccelerationStructureData = scratch_resource->GetGPUVirtualAddress();
+  
+  ID3D12Resource* instance_descs{};
+  D3D12_RAYTRACING_INSTANCE_DESC instance_descs_cpu{};
+  instance_descs_cpu.Transform[0][0] = 1;
+  instance_descs_cpu.Transform[1][1] = 1;
+  instance_descs_cpu.Transform[2][2] = 1;
+  instance_descs_cpu.InstanceMask = 0xFF;
+  instance_descs_cpu.AccelerationStructure = (*blas_result)->GetGPUVirtualAddress();
+  CreateBufferForCPUSideData(&instance_descs_cpu, sizeof(D3D12_RAYTRACING_INSTANCE_DESC), &instance_descs);
+
+  tlas_inputs.InstanceDescs = instance_descs->GetGPUVirtualAddress();
+
+  D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC tlas_build_desc{};
+  tlas_build_desc.Inputs = tlas_inputs;
+  tlas_build_desc.DestAccelerationStructureData = (*tlas_result)->GetGPUVirtualAddress();
+  tlas_build_desc.ScratchAccelerationStructureData = scratch_resource->GetGPUVirtualAddress();
+
+  command_list->Reset(command_allocator, nullptr);
+  command_list->BuildRaytracingAccelerationStructure(&blas_build_desc, 0, nullptr);
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(*blas_result)));
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(scratch_resource)));
+  command_list->BuildRaytracingAccelerationStructure(&tlas_build_desc, 0, nullptr);
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(*tlas_result)));
+  command_list->Close();
+  command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
+  WaitForPreviousFrame();
+
+  scratch_resource->Release();
+  instance_descs->Release();
+}
+
 // Validation callback
 static void __stdcall myValidationMessageCallback(void* pUserData, NVAPI_D3D12_RAYTRACING_VALIDATION_MESSAGE_SEVERITY severity, const char* messageCode, const char* message, const char* messageDetails)
 {
@@ -1286,7 +1456,7 @@ static void __stdcall myValidationMessageCallback(void* pUserData, NVAPI_D3D12_R
   fflush(stderr);
 }
 
-void MyFramework::InitNVAPI() {
+bool MyFramework::InitNVAPI() {
   NvAPI_Status status = NvAPI_Initialize();
   if (status == NVAPI_OK) {
     printf("NVAPI inited.\n");
@@ -1294,7 +1464,7 @@ void MyFramework::InitNVAPI() {
   }
   else {
     printf("NVAPI init failed = %d\n", (int)status);
-    return;
+    return false;
   }
 
 #ifndef NDEBUG
@@ -1326,6 +1496,7 @@ void MyFramework::InitNVAPI() {
   params.flags = 0;
   if (is_lss_available) {
     params.flags |= NVAPI_D3D12_PIPELINE_CREATION_STATE_FLAGS_ENABLE_LSS_SUPPORT;
+    params.flags |= NVAPI_D3D12_PIPELINE_CREATION_STATE_FLAGS_ENABLE_SPHERE_SUPPORT;
   }
   if (is_omm_available) {
     params.flags |= NVAPI_D3D12_PIPELINE_CREATION_STATE_FLAGS_ENABLE_OMM_SUPPORT;
@@ -1337,6 +1508,7 @@ void MyFramework::InitNVAPI() {
   else {
     printf("Oh! could not set pipeline creation options.\n");
   }
+  return true;
 }
 
 void MyFramework::Deinit() {
@@ -1367,6 +1539,7 @@ bool MyFramework::IsOMMSupported() {
   return is_omm_available;
 }
 
+#ifdef USE_IMGUI
 // Stolen from https://github.com/ocornut/imgui/blob/master/examples/example_win32_directx12/main.cpp
 // Simple free list based allocator
 struct ExampleDescriptorHeapAllocator
@@ -1413,7 +1586,9 @@ struct ExampleDescriptorHeapAllocator
   }
 };
 struct ExampleDescriptorHeapAllocator g_imguiSrvDescHeapAlloc;
+#endif
 
+#ifdef USE_IMGUI
 void MyFramework::InitImGUIForGLFW(GLFWwindow* w)
 {
   IMGUI_CHECKVERSION();
@@ -1445,7 +1620,14 @@ void MyFramework::InitImGUIForGLFW(GLFWwindow* w)
   ImGui_ImplDX12_Init(&init_info);
   ImGui_ImplGlfw_InitForOther(w, true);
 }
+#endif
 
+void MyFramework::CreateLineDrawingPipeline() {
+  // 1. Shader
+  // 2. Rootsig
+  // 3. Pipeline
+  // 4. CB
+}
 
 // ======================================= Helper functions ===============
 void ResourceBarrierTransition(ID3D12GraphicsCommandList4* cmdlist,
@@ -1463,7 +1645,7 @@ MyParisIvyLeafScene::MyParisIvyLeafScene(MyFramework* f) : MyScene(f) {
   const uint32_t num_verts = vertices.size();
   const uint32_t num_pixels = f->WIN_H * f->WIN_W;
   const uint32_t cb_size = 256;  // Multiple of 256
-  f->CreateRtGlobalRootSig(&global_rootsig, 2, 4, 1, false, 0);
+  f->CreateNvapiEnabledGlobalRootSig(&global_rootsig, 2, 4, 1, false, 0);
   f->CreateRtOutputResource(&rt_output_resource);
   f->CreateBufferForUAVAccess(num_pixels * 4, &my_debug_resource);
   my_debug_resource->SetName(L"My debug resource");

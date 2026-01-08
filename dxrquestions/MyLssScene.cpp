@@ -1,4 +1,5 @@
 #include "MyFramework.h"
+#include "MyScene.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -42,7 +43,7 @@ static constexpr auto& keep(T&& x) noexcept {
 #endif
 
 MyLssScene::MyLssScene(MyFramework* f) : MyScene(f) {
-  case_idx = 1;
+  case_idx = 0;
   switch (case_idx) {
   case 0: {
     lss_poses = {
@@ -79,7 +80,22 @@ MyLssScene::MyLssScene(MyFramework* f) : MyScene(f) {
     cam_pos = { 0, 0, 100 };
     break;
   }
-  
+  case 2: {
+    lss_poses = {
+      { 0.0, 0.0, -1.0 },
+      { 0.0, 0.0, -5.0 },
+    };
+    lss_radii = {
+      1.0, 2.0
+    };
+    lss_indices = { 0, 1 };
+    lss_indices_successive = { 0 };
+    cam_elevation = 0;
+    cam_azimuth = 0;// atan(0.7499);
+    cam_mode = 1;
+    cam_pos = { 0, 0, 10 };
+    break;
+  }
   }
   
 
@@ -91,7 +107,7 @@ MyLssScene::MyLssScene(MyFramework* f) : MyScene(f) {
     exit(0);
   }
   // Layout: [output UAV] [Debug UAV] [NVAPI UAV] [AS SRV] [PerScene CBV]
-  f->CreateRtGlobalRootSig(&global_rootsig, 2, 1, 1, true, nvapi_uav);
+  f->CreateNvapiEnabledGlobalRootSig(&global_rootsig, 2, 1, 1, true, nvapi_uav);
   f->CreateRtOutputResource(&rt_output_resource);
   f->CreateBufferForCPUSideData(nullptr, AlignUp(sizeof(PerSceneCB), 256), &per_scene_cb);
   f->CreateCBVSRVUAVHeap(&cbvsrvuav_heap, nullptr, 5);
@@ -131,9 +147,10 @@ MyLssScene::MyLssScene(MyFramework* f) : MyScene(f) {
     lss_indices_list_resource,
     lss_indices_successive_resource,
     lss_poses.size(),  // vert count
-    NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_NONE,
+    NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED,
     NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_LIST,
-    case_idx);
+    case_idx,
+    false);
   f->CreateSRVAccelerationStructure(tlas_result, cbvsrvuav_heap, 3);
   f->CreateNullUAV(cbvsrvuav_heap, 2);
 }
