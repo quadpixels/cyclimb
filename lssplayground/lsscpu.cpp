@@ -6,6 +6,10 @@
 
 #include <d3d12.h>
 
+#include "lssplayground.h"
+
+extern VizMethod g_viz_method;
+
 template<typename Vec3, typename Float>
 static std::vector<uint8_t> g_bytes;
 
@@ -24,11 +28,47 @@ glm::mat4 inv_view;
 template<typename Vec3, typename Float>
 glm::mat4 inv_proj;
 
+glm::vec3 MapDistToColorRamp(float d)
+{
+  if (d < 0) {
+    d = 0;
+  }
+  if (d > 1)
+  {
+    d = 1 + log(d) / log(10);
+  }
+  const uint32_t N = 4;
+  glm::vec3 breaks[N] =
+  {
+      { 1, 0, 0 },
+      { 0, 1, 0 },
+      { 1, 1, 0 },
+      { 1, 1, 1 }
+  };
+  if (d < 0)
+  {
+    return breaks[0];
+  }
+  else if (d >= N - 1)
+  {
+    return breaks[N - 1];
+  }
+  for (uint32_t i = 0; i < N - 1; i++)
+  {
+    if (d >= i && d < i + 1)
+    {
+      float t = 1.0f - (d - std::floor(d));
+      return (breaks[i] * t + breaks[i + 1] * (1-t));
+    }
+  }
+  return glm::vec3(0);
+}
+
 template<typename Vec3, typename Float>
 bool IntersectLSS(
   const glm::vec3& _pa, float _ra,
   const glm::vec3& _pb, float _rb,
-  const glm::vec3& _ro, const glm::vec3& _rd, float tmin, float tmax, float& thit) {
+  const glm::vec3& _ro, const glm::vec3& _rd, float tmin, float tmax, Float& thit, Float& bary_u) {
   thit = -1;
 
   Vec3 pa = _pa, pb = _pb, ro = _ro, rd = _rd;
@@ -74,6 +114,7 @@ bool IntersectLSS(
 
   if (y > 0.0 && y < d2 && t > tmin && t <= tmax)
   {
+    bary_u = y / d2;
     t_cand = t;
     thit = t;
     // float3 n = normalize(d2 * (oa + t * rd) - ba * y);
@@ -107,6 +148,7 @@ bool IntersectLSS(
         //rec.p = r.at(rec.t);
         //glm::vec3 n = glm::normalize((oa + t * rd) / ra);
         ret = true;
+        bary_u = 0;
       }
     }
   }
@@ -131,6 +173,7 @@ bool IntersectLSS(
         //rec.SetFaceNormal(r, n);
         //rec.mat_ptr = this - > mat_ptr;
         ret = true;
+        bary_u = 1;
       }
     }
   }
@@ -184,24 +227,63 @@ void InitCPURender(uint32_t w, uint32_t h,
           for (uint32_t x = 0; x < W; x++) {
             float     u = x * 1.0f / (W - 1);
             float     v = y * 1.0f / (H - 1);
-            glm::vec3 ro = TransformPosition(inv_view<Vec3, Float>, glm::vec3(0, 0, 0));
+            Vec3 ro = TransformPosition(inv_view<Vec3, Float>, glm::vec3(0, 0, 0));
             glm::vec2 d(u * 2.0f - 1.0f, v * 2.0f - 1.0f);
             //d.y *= -1;
-            glm::vec3 target = TransformPosition(inv_proj<Vec3, Float>, glm::vec3(d.x, -d.y, 1.0f));
-            glm::vec3 rd = TransformDirection(inv_view<Vec3, Float>, glm::normalize(target));
-            float thit;
+            Vec3 target = TransformPosition(inv_proj<Vec3, Float>, glm::vec3(d.x, -d.y, 1.0f));
+            Vec3 rd = TransformDirection(inv_view<Vec3, Float>, glm::normalize(target));
+            Float thit, bary_u;
             uint8_t* ptr = &(g_bytes<Vec3, Float>[4 * (y * W + x)]);
+            Vec3 pa = lss_poses<Vec3, Float>[0];
+            Vec3 pb = lss_poses<Vec3, Float>[1];
+            Float ra = lss_radii<Vec3, Float>[0];
+            Float rb = lss_radii<Vec3, Float>[1];
 
-            if (IntersectLSS<Vec3, Float>(
-              lss_poses<Vec3, Float>[0], lss_radii<Vec3, Float>[0],
-              lss_poses<Vec3, Float>[1], lss_radii<Vec3, Float>[1],
-              ro, rd,
-              0, 1e20, thit
-            )) {
-              ptr[0] = 255;
-              ptr[1] = 255;
-              ptr[2] = 25;
-              ptr[3] = 255;
+            if (IntersectLSS<Vec3, Float>(pa, ra, pb, rb, ro, rd, 0, 1e20, thit, bary_u)) {
+              if (g_viz_method == VizMethod::VIZ_METHOD_HIT_MISS) {
+                ptr[0] = 255; ptr[1] = 255; ptr[2] = 25; ptr[3] = 255;
+              }
+              else {
+                Vec3 hit_p = ro + rd * thit;
+                Vec3 ap = hit_p - pa, bp = hit_p - pb;
+                Float len_ap_sq = glm::dot(ap, ap), len_bp_sq = glm::dot(bp, bp);
+                Float bary_u_1{};
+                Float EPS = 1e-4;
+                if (abs(len_ap_sq - ra * ra) < EPS) {
+                  bary_u_1 = 0.0f;
+                }
+                else if (abs(len_bp_sq - rb * rb) < EPS) {
+                  bary_u_1 = 1.0f;
+                }
+                else {
+                  Float proj_ap = sqrt(len_ap_sq - ra * ra), proj_bp = sqrt(len_bp_sq - rb * rb);
+                  bary_u_1 = proj_ap / (proj_ap + proj_bp);
+                }
+
+                Vec3 p = pb * bary_u + pa * ((Float)1.0 - bary_u);
+                Vec3 n = glm::normalize(hit_p - p);
+
+                if (g_viz_method == VizMethod::VIZ_METHOD_NORMAL_BASED_SHADING) {
+                  Float dnl = glm::dot(n, glm::normalize(Vec3(1, 1, 1)));
+                  dnl = dnl * 0.5 + 0.5;
+                  ptr[0] = ptr[1] = ptr[2] = static_cast<uint8_t>(dnl * 255);
+                  ptr[3] = 255;
+                }
+                else if (g_viz_method == VizMethod::VIZ_METHOD_NORMAL) {
+                  n = n * (Float)0.5 + Vec3(0.5, 0.5, 0.5);
+                  ptr[0] = static_cast<uint8_t>(n.x * 255);
+                  ptr[1] = static_cast<uint8_t>(n.y * 255);
+                  ptr[2] = static_cast<uint8_t>(n.z * 255);
+                  ptr[3] = 255;
+                }
+                else if (g_viz_method == VizMethod::VIA_METHOD_T) {
+                  glm::vec3 col = MapDistToColorRamp(thit);
+                  ptr[0] = static_cast<uint8_t>(col.x * 255);
+                  ptr[1] = static_cast<uint8_t>(col.y * 255);
+                  ptr[2] = static_cast<uint8_t>(col.z * 255);
+                  ptr[3] = 255;
+                }
+              }
             }
             else {
               ptr[0] = 25;

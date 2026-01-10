@@ -1,0 +1,8 @@
+#pragma once
+
+enum VizMethod {
+  VIZ_METHOD_HIT_MISS,
+  VIZ_METHOD_NORMAL_BASED_SHADING,
+  VIZ_METHOD_NORMAL,
+  VIA_METHOD_T
+};

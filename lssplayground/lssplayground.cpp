@@ -33,6 +33,8 @@
 #include "x64/Debug/lss_cs.hlsl.h"
 #endif
 
+#include "lssplayground.h"
+
 MyFramework* g_myframework{};
 GLFWwindow* g_window{};
 uint32_t WIN_W = 960, WIN_H = 600;
@@ -50,7 +52,7 @@ ID3D12RootSignature* g_lss_rootsig{};
 ID3D12RootSignature* g_proc_rootsig{};
 MyRtPipeline g_lss_pipeline{};
 MyRtPipeline g_proc_pipeline{};
-ID3D12Resource* g_lss_output_resource{};
+ID3D12Resource* g_lss_output_resource{}, * g_lss_mydebug_resource{}, * g_lss_mydebug_resource_cpu{};
 ID3D12Resource* g_proc_output_resource{};
 ID3D12DescriptorHeap* g_lss_srv_uav_cbv_heap{}, * g_lss_srv_uav_cbv_heap_cpu{};
 ID3D12DescriptorHeap* g_proc_srv_uav_cbv_heap{}, * g_proc_srv_uav_cbv_heap_cpu{};
@@ -102,15 +104,22 @@ ImTextureID g_showdiff_imgui_texid{};
 RenderMethod g_render_method_1{RenderMethod::RENDER_METHOD_LSS_NVAPI};
 RenderMethod g_render_method_2{RenderMethod::RENDER_METHOD_INTERSECTION_SHADER};
 
+VizMethod g_viz_method{VizMethod::VIZ_METHOD_HIT_MISS};
+
 bool g_dirty{ true };
 bool g_cpu_sp_dirty{ true };
 bool g_cpu_dp_dirty{ true };
 bool g_dir_dirty{ true };
 
+extern glm::vec3 TransformDirection(const glm::mat4& m, const glm::vec3& x);
+extern glm::vec3 TransformPosition(const glm::mat4& m, const glm::vec3& x);
+
 struct PerSceneCB {
   DirectX::XMMATRIX inverse_view;
   DirectX::XMMATRIX inverse_proj;
-  int cam_mode;  // 0 = perspective, 1 = orthogonal
+  // The center ray must be EXACTLY in the direction of rd !!
+  glm::vec3 ro; int cam_mode;  // 0 = perspective, 1 = orthogonal
+  glm::vec3 rd; int viz_mode;
 };
 PerSceneCB h_perscene_cb;
 
@@ -275,6 +284,7 @@ glm::vec3 g_cam_pos(20.0f, 0.0f, 0.0f);
 float g_azimuth = 180.0;
 float g_elevation = 0.0;
 glm::vec3 g_cam_dir(-1, 0, 0);
+glm::vec3 g_cam_dir_userinput;
 
 std::pair<float, float> RayDirToAzimuthAndElevation(const glm::vec3& dir) {
   float elevation = glm::degrees(asin(dir.y));
@@ -348,8 +358,8 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  ImGui::SetNextWindowSize(ImVec2(480, 240), ImGuiCond_Once);
-  ImGui::SetNextWindowPos(ImVec2(0, 360), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(480, 200), ImGuiCond_Once);
+  ImGui::SetNextWindowPos(ImVec2(0, 400), ImGuiCond_Once);
 
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize
     | ImGuiWindowFlags_NoMove
@@ -358,7 +368,7 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui::Begin("LSS Playground.", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
 
   static char test_case_name[128] = "";
-  ImGui::InputText("testcasename", test_case_name, sizeof(test_case_name));
+  ImGui::InputText("Test case name", test_case_name, sizeof(test_case_name));
 
   ImGui::Text("LSS in right-hand coords");
   ImGui::SameLine();
@@ -380,16 +390,19 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui::Text("Camera (use WASDQEIJKL to move & look)");
   ImGui::SameLine();
   if (ImGui::Button("Update##2")) {
+    g_cam_dir_userinput = g_cam_dir;
     std::tie(g_azimuth, g_elevation) = RayDirToAzimuthAndElevation(glm::normalize(g_cam_dir));
+    g_cpu_sp_dirty = g_cpu_dp_dirty = true;
   }
   ImGui::SetNextItemWidth(240.0f);
   ImGui::InputFloat3("pos", &g_cam_pos[0], "%g");
   ImGui::SetNextItemWidth(240.0f);
   ImGui::InputFloat3("dir", &g_cam_dir[0], "%g");
+  ImGui::Text("Azimuth: %g, Elevation: %g", g_azimuth, g_elevation);
   ImGui::End();
 
-  ImGui::SetNextWindowSize(ImVec2(480, 240), ImGuiCond_Once);
-  ImGui::SetNextWindowPos(ImVec2(480, 360), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(480, 200), ImGuiCond_Once);
+  ImGui::SetNextWindowPos(ImVec2(480, 400), ImGuiCond_Once);
   ImGui::Begin("Test case list.", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
   std::vector<const char*> items;
   for (uint32_t i = 0; i < g_testcase_names.size(); i++) {
@@ -479,6 +492,32 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
 
   ImGui::End();
 
+
+  ImGui::SetNextWindowSize(ImVec2(640, 40), ImGuiCond_Once);
+  ImGui::SetNextWindowPos(ImVec2(0, 360), ImGuiCond_Once);
+
+  ImGui::Begin("shading_method##xxxx", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
+  const char* items_viz_methods[] = {
+    "Hit/miss",
+    "Grey",
+    "Normal",
+    "THit"
+  };
+  if (ImGui::BeginCombo("Visualization method", items_viz_methods[static_cast<int>(g_viz_method)], 0)) {
+    for (uint32_t i = 0; i < _countof(items_viz_methods); i++) {
+      const bool is_selected = (i == static_cast<int>(g_viz_method));
+      if (ImGui::Selectable(items_viz_methods[i], is_selected)) {
+        if (g_viz_method != static_cast<VizMethod>(i)) {
+          g_cpu_sp_dirty = g_cpu_dp_dirty = true;
+          g_viz_method = static_cast<VizMethod>(i);
+        }
+      }
+      if (is_selected) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::End();
+
   window_flags = window_flags | ImGuiWindowFlags_NoScrollbar
     | ImGuiWindowFlags_NoScrollWithMouse;
 
@@ -531,9 +570,10 @@ void RenderImGui(ID3D12GraphicsCommandList4* command_list) {
   ImGui::Image(texture_ids[g_render_method_2], ImVec2(300, 300));
   ImGui::End();
 
-  ImGui::SetNextWindowSize(ImVec2(320, 360), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(320, 400), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(640, 0), ImGuiCond_Once);
-  ImGui::Begin("Difference", nullptr, window_flags);
+  ImGui::Begin("Difference##xxxx", nullptr, window_flags | ImGuiWindowFlags_NoTitleBar);
+  ImGui::Text("Difference");
   ImGui::Image(g_showdiff_imgui_texid, ImVec2(300, 300));
   ImGui::End();
   
@@ -577,12 +617,21 @@ void Update() {
 
   g_view = glm::lookAt(g_cam_pos, g_cam_pos + x_axis, glm::vec3(0, 1, 0));
 
+  //{
+  //  glm::vec3 dir_in_cam = TransformDirection(g_view, g_cam_dir);
+  //  glm::vec3 dir_in_ndc = TransformDirection(g_proj, dir_in_cam);
+  //  printf("g_cam_dir's ndc coords are (%g,%g,%g)\n", dir_in_ndc.x, dir_in_ndc.y, dir_in_ndc.z);  // should be (0,0,1)
+  //}
+
   // UPD
   g_inv_view = glm::inverse(g_view);
   g_inv_proj = glm::inverse(g_proj);
   GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_view, g_inv_view);
   GlmMat4ToDirectXMatrixColMajor(&h_perscene_cb.inverse_proj, g_inv_proj);
   h_perscene_cb.cam_mode = 0;
+  h_perscene_cb.viz_mode = static_cast<int>(g_viz_method);
+  h_perscene_cb.rd = g_cam_dir;
+  h_perscene_cb.ro = g_cam_pos;
 
   void* mapped{};
   g_perscene_cb->Map(0, nullptr, &mapped);
@@ -611,6 +660,14 @@ void Update() {
       );
     }
   }
+
+  // Show dbg buffer data
+  if (1) {
+    float* mapped{};
+    g_lss_mydebug_resource_cpu->Map(0, nullptr, reinterpret_cast<void**>(&mapped));
+    printf("Debug data: %g %g   %g %g %g   %g %g %g\n", mapped[0], mapped[1], mapped[2], mapped[3], mapped[4], mapped[5], mapped[6], mapped[7]);
+    g_lss_mydebug_resource_cpu->Unmap(0, nullptr);
+  }
 }
 
 void Render() {
@@ -635,9 +692,15 @@ void Render() {
     drd->Width = VIEW_W;
     drd->Height = VIEW_H;
     drd->Depth = 1;
+    ResourceBarrierTransition(command_list, g_lss_mydebug_resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     ResourceBarrierTransition(command_list, g_lss_output_resource, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     command_list->DispatchRays(drd);
     ResourceBarrierTransition(command_list, g_lss_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+    ResourceBarrierTransition(command_list, g_lss_mydebug_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    ResourceBarrierTransition(command_list, g_lss_mydebug_resource_cpu, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+    command_list->CopyResource(g_lss_mydebug_resource_cpu, g_lss_mydebug_resource);
+    ResourceBarrierTransition(command_list, g_lss_mydebug_resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    ResourceBarrierTransition(command_list, g_lss_mydebug_resource_cpu, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
   }
 
   // Render target 2
@@ -770,7 +833,7 @@ void Render() {
 }
 
 void InitPipeline() {
-  g_myframework->CreateNvapiEnabledGlobalRootSig(&g_lss_rootsig, 1, 1, 1, true, 999);
+  g_myframework->CreateNvapiEnabledGlobalRootSig(&g_lss_rootsig, 2, 3, 1, true, 999);
   MyFramework::MyRtShaderListInfo sli{};
   sli.dxil_lib_bytecode = static_cast<void*>(const_cast<uint8_t*>(g_LssNvapiShader));
   sli.dxil_lib_length = sizeof(g_LssNvapiShader);
@@ -804,12 +867,16 @@ void InitResources() {
   // NVAPI LSS path
   uint32_t srv_uav_cbv_descriptor_size = g_myframework->GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
   g_myframework->CreateRtOutputResource(&g_lss_output_resource, VIEW_W, VIEW_H);
-  // |For RT in RenderTarget 1                                | RenderTgt 1 in ImGui |
-  //  [Rendertarget 1 UAV] [NVAPI UAV] [AS SRV] [PerScene CBV] [Rendertaget 1 SRV]    
-  g_myframework->CreateCBVSRVUAVHeap(&g_lss_srv_uav_cbv_heap, &g_lss_srv_uav_cbv_heap_cpu, 5);
-  g_myframework->CreateSRVTexture2D(g_lss_output_resource, g_lss_srv_uav_cbv_heap, 4);
-  g_lss_output_imgui_texid = g_lss_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr + 4ULL * srv_uav_cbv_descriptor_size;
+  // |For RT in RenderTarget 1                                                                | RenderTgt 1 in ImGui |
+  //  [Rendertarget 1 UAV] [DBG UAV] [NVAPI UAV] [AS SRV] [LSS pos] [LSS radii] [PerScene CBV] [Rendertaget 1 SRV]    
+  g_myframework->CreateCBVSRVUAVHeap(&g_lss_srv_uav_cbv_heap, &g_lss_srv_uav_cbv_heap_cpu, 8);
+  g_myframework->CreateSRVTexture2D(g_lss_output_resource, g_lss_srv_uav_cbv_heap, 7);
+  g_lss_output_imgui_texid = g_lss_srv_uav_cbv_heap->GetGPUDescriptorHandleForHeapStart().ptr + 7ULL * srv_uav_cbv_descriptor_size;
+  g_myframework->CreateNullUAV(g_lss_srv_uav_cbv_heap, 2);
   g_myframework->CreateUAVTexture2D(g_lss_output_resource, g_lss_srv_uav_cbv_heap, 0);
+  g_myframework->CreateBufferForUAVAccess(sizeof(float) * 8, &g_lss_mydebug_resource);
+  g_myframework->CreateBufferForCPUAccess(sizeof(float) * 8, &g_lss_mydebug_resource_cpu);
+  g_myframework->CreateUAVUintBuffer(g_lss_mydebug_resource, 8, sizeof(float), g_lss_srv_uav_cbv_heap, 1);
   g_lss_srv_uav_cbv_heap->SetName(L"lss_srv_uav_cbv_heap");
 
   // Procedural path
@@ -844,7 +911,7 @@ void InitResources() {
   // Same CB used for all paths
   size_t sz = AlignUp(sizeof(PerSceneCB), 256);
   g_myframework->CreateBufferForCPUSideData(nullptr, sz, &g_perscene_cb);
-  g_myframework->CreateCBVBuffer(g_perscene_cb, g_lss_srv_uav_cbv_heap, 3, sz);
+  g_myframework->CreateCBVBuffer(g_perscene_cb, g_lss_srv_uav_cbv_heap, 6, sz);
   g_myframework->CreateCBVBuffer(g_perscene_cb, g_proc_srv_uav_cbv_heap, 4, sz);
   g_myframework->CreateCBVBuffer(g_perscene_cb, g_lss_cs_srv_uav_cbv_heap, 3, sz);
 
@@ -876,12 +943,14 @@ void InitSceneLSS() {
     2,
     false);
 
-  g_myframework->CreateSRVAccelerationStructure(g_lss_tlas_resource, g_lss_srv_uav_cbv_heap, 2);
+  g_myframework->CreateSRVAccelerationStructure(g_lss_tlas_resource, g_lss_srv_uav_cbv_heap, 3);
 
-  // SRVs used by intersection shader pass and CS pass
+  // SRVs used by LSS pass, intersection shader pass and CS pass
+  g_myframework->CreateSRVBuffer(g_lss_poses_resource, g_lss_srv_uav_cbv_heap, 4, g_lss_poses.size(), sizeof(g_lss_poses[0]));
+  g_myframework->CreateSRVBuffer(g_lss_radii_resource, g_lss_srv_uav_cbv_heap, 5, g_lss_radii.size(), sizeof(g_lss_radii[0]));
   g_myframework->CreateSRVBuffer(g_lss_poses_resource, g_proc_srv_uav_cbv_heap, 2, g_lss_poses.size(), sizeof(g_lss_poses[0]));
   g_myframework->CreateSRVBuffer(g_lss_radii_resource, g_proc_srv_uav_cbv_heap, 3, g_lss_radii.size(), sizeof(g_lss_radii[0]));
-  g_myframework->CreateSRVBuffer(g_lss_poses_resource, g_lss_cs_srv_uav_cbv_heap, 1, g_lss_radii.size(), sizeof(g_lss_radii[0]));
+  g_myframework->CreateSRVBuffer(g_lss_poses_resource, g_lss_cs_srv_uav_cbv_heap, 1, g_lss_radii.size(), sizeof(g_lss_poses[0]));
   g_myframework->CreateSRVBuffer(g_lss_radii_resource, g_lss_cs_srv_uav_cbv_heap, 2, g_lss_radii.size(), sizeof(g_lss_radii[0]));
 }
 

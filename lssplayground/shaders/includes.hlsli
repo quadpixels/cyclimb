@@ -124,3 +124,37 @@ precise bool IntersectLSS(
     }
     return ret;
 }
+
+float3 MapDistToColorRamp(float d)
+{
+    if (d < 0)
+        d = 0;
+    if (d > 1)
+    {
+        d = 1 + log(d) / log(10);
+    }
+    const uint N = 4;
+    float3 breaks[N] =
+    {
+        { 1, 0, 0 },
+        { 0, 1, 0 },
+        { 1, 1, 0 },
+        { 1, 1, 1 }
+    };
+    if (d < 0)
+    {
+        return breaks[0];
+    }
+    else if (d >= N - 1)
+    {
+        return breaks[N - 1];
+    }
+    for (uint i = 0; i < N - 1; i++)
+    {
+        if (d >= i && d < i + 1)
+        {
+            return lerp(breaks[i], breaks[i + 1], frac(d));
+        }
+    }
+    return float3(0, 0, 0);
+}
