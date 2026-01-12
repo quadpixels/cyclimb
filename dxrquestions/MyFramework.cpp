@@ -359,6 +359,7 @@ void MyFramework::CreateRtOutputResource(ID3D12Resource** out_res, uint32_t w, u
 
 void MyFramework::CreateRtOutputResource(ID3D12Resource** out_res) {
   CreateRtOutputResource(out_res, WIN_W, WIN_H);
+  (*out_res)->SetName(L"RTOutputResource");
 }
 
 void MyFramework::CreateCBVSRVUAVHeap(ID3D12DescriptorHeap** h, ID3D12DescriptorHeap** h_cpu, uint32_t num_descriptors) {

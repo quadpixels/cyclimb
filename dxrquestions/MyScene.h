@@ -1,4 +1,5 @@
 #include "MyFramework.h"
+#include "textrender1.hpp"
 
 class MyLssScene : public MyScene {
 public:
@@ -66,4 +67,7 @@ public:
   ID3D12Resource* blas_result, *tlas_result;
   ID3D12Resource* perscene_cb;
   ID3D12DescriptorHeap* cbvsrvuav_heap, *cbvsrvuav_heap_cpu;
+  std::vector<std::pair<std::wstring, glm::vec2>> labels;
+
+  TextPass* text_pass;
 };

@@ -1,6 +1,8 @@
 #include "MyFramework.h"
 #include "MyScene.h"
+#include "textrender1.hpp"
 
+#include <wchar.h>
 #include <source_location>
 
 #ifndef CE
@@ -42,11 +44,14 @@ MyInstanceFlagScene::MyInstanceFlagScene(MyFramework* f) : MyScene(f) {
   const float L = 0.8f;
   float xscale = xstep / 1.0f * L, yscale = ystep / 1.0f * L;
   std::vector<D3D12_RAYTRACING_INSTANCE_DESC> inst_descs;
+  wchar_t buf[20];
   for (uint32_t y = 0; y < 16; y++) {
     for (uint32_t x = 0; x < 16; x++) {
       float xcenter = (x + 0.5) / 16 * (xmax - xmin) + xmin;
       float ycenter = (y + 0.5) / 16 * (ymax - ymin) + ymin;
       uint32_t idx = x + y * 16;
+      wsprintf(buf, L"%02X", idx);
+      labels.emplace_back(buf, glm::vec2((xcenter + 1.0) / 2.0 * MyFramework::WIN_W, (1.0 - (ycenter + 1.0) / 2.0) * MyFramework::WIN_H));
       D3D12_RAYTRACING_INSTANCE_DESC desc{};
       desc.AccelerationStructure = blas_result->GetGPUVirtualAddress();
       desc.InstanceContributionToHitGroupIndex = 0;
@@ -80,6 +85,12 @@ MyInstanceFlagScene::MyInstanceFlagScene(MyFramework* f) : MyScene(f) {
   info.dxil_lib_bytecode = (void*)g_InstanceFlagsShaders;
   info.dxil_lib_length = sizeof(g_InstanceFlagsShaders);
   f->CreateMyRtPipeline(&my_rt_pipeline, global_rootsig, info);
+
+
+  text_pass = new TextPass(framework->GetDevice(), framework->GetCommandQueue(), framework->GetGraphicsCommandList(), framework->GetCommandAllocator());
+  text_pass->AllocateConstantBuffers(2048);
+  text_pass->InitD3D12(nullptr);
+  text_pass->InitFreetype();
 }
 
 void MyInstanceFlagScene::Update(float secs) {
@@ -112,6 +123,7 @@ void MyInstanceFlagScene::OnKeyUp(uint32_t k) {
 }
 
 void MyInstanceFlagScene::Render() {
+  static bool is_first_frame{ true };
   D3D12_CPU_DESCRIPTOR_HANDLE handle_rtv = framework->GetCurrRenderTargetCPUDescriptor();
   float bg_color[] = { 1.0f, 1.0f, 0.8f, 1.0f };
   ID3D12CommandAllocator* command_allocator = framework->GetCommandAllocator();
@@ -131,14 +143,64 @@ void MyInstanceFlagScene::Render() {
     command_list->SetPipelineState1(my_rt_pipeline.rt_state_object);
     command_list->DispatchRays(&(my_rt_pipeline.dispatch_rays_desc));
   }
-  ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+  if (!is_first_frame) {
+    ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+  }
+  is_first_frame = false;
   ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
   command_list->CopyResource(rendertarget, rt_output_resource);
   ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+  CE(command_list->Close());
+  ID3D12CommandQueue* command_queue = framework->GetCommandQueue();
+  command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
+
+  framework->WaitForPreviousFrame();
+
+  // Text pass, new cmd list
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, text_pass->pipeline_state));
+
+  text_pass->StartPass();
+  command_list->SetGraphicsRootSignature(text_pass->root_signature);
+  // TextPass's rendering procedure
+  ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
+  wchar_t buf[50];
+  wsprintf(buf, L"Ray cull flag: 0x%02X", h_perscene_cb.cull_flag);
+  glm::vec3 textcolor(0, 1, 1);
+  text_pass->AddText(buf, 4.0f, 16.0f, 1.0f, textcolor, glm::mat4(1));
+  // BKGRND
+  uint32_t idx = 0;
+  for (const auto& x : labels) {
+    glm::vec3 textcolor;
+    auto [text, pos ] = x;
+    if (idx & h_perscene_cb.cull_flag) {
+      textcolor = glm::vec3(0, 0, 1);
+    }
+    else {
+      textcolor = glm::vec3(0, 1, 1);
+    }
+    text_pass->AddText(text, pos.x - 8, pos.y + 5, 1.0f, textcolor, glm::mat4(1));
+    idx++;
+  }
+
+
+  command_list->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
+  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * MyFramework::WIN_W, 1.0f * MyFramework::WIN_H, 0.0f, 1.0f);
+  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(MyFramework::WIN_W), long(MyFramework::WIN_H));
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissor);
+  command_list->OMSetRenderTargets(1, &handle_rtv, false, nullptr);
+  float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  command_list->OMSetBlendFactor(blend_factor);
+
+  text_pass->RenderText(command_list);
+
+  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+  
   CE(command_list->Close());
 
-  ID3D12CommandQueue* command_queue = framework->GetCommandQueue();
   command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&command_list);
   CE(framework->Present());
   framework->WaitForPreviousFrame();

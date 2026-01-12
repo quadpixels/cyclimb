@@ -36,6 +36,9 @@
     <ClCompile Include="MyInstanceFlagScene.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="textrender1.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shaders\pixel_shader_ivyleaf_triangle.hlsl">
@@ -56,6 +59,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="MyScene.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="textrender1.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

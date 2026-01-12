@@ -148,6 +148,7 @@
     <ClCompile Include="MyLssScene.cpp" />
     <ClCompile Include="MySphereScene.cpp" />
     <ClCompile Include="ommhelper.cpp" />
+    <ClCompile Include="textrender1.cpp" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shaders\instance_flags_shaders.hlsl">
@@ -207,6 +208,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="MyScene.h" />
+    <ClInclude Include="textrender1.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

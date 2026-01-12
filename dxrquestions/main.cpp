@@ -16,6 +16,7 @@
 
 #include "MyFramework.h"
 #include "MyScene.h"
+#include "textrender1.hpp"
 
 #define CE(x) { \
   const std::source_location location = std::source_location::current(); \
