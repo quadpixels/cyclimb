@@ -70,6 +70,17 @@ public:
   void Update(float secs) override;
 
   ID3D12Resource* blas0;
+  uint32_t flag_idx{ 0 };
+  RayGenConstantBuffer raygen_cb{};
+
+  void ToggleCullBackFacingTriangles();
+  void ToggleCullFrontFacingTriangles();
+  void ToggleCullOpaque();
+  void ToggleCullNonOpaque();
+  void ToggleFrontIsCCW();
+
+  bool is_front_cw{ true };
+  void RebuildAS();
 };
 
 class MoreTrianglesScene : public Scene {

@@ -96,9 +96,26 @@ void OnKeyDown(WPARAM wParam, LPARAM lParam) {
     g_scene_idx = wParam - '0'; break;
   }
   default: break;
+    case 'C': {
+      if (g_scene_idx == 4) {
+        ((MoreTrianglesScene2*)(g_scenes[4]))->ToggleFrontIsCCW();
+      }
+      break;
+    }
+    case 'B': {
+      if (g_scene_idx == 4) {
+        ((MoreTrianglesScene2*)(g_scenes[4]))->ToggleCullBackFacingTriangles();
+      }
+      break;
+    }
     case 'F': {
-      bool f = ((MoreTrianglesScene*)(g_scenes[2]))->ToggleIsFacingPlusZ();
-      printf("MoreTrianglesScene is facing +z = %d\n", f);
+      if (g_scene_idx == 2) {
+        bool f = ((MoreTrianglesScene*)(g_scenes[2]))->ToggleIsFacingPlusZ();
+        printf("MoreTrianglesScene is facing +z = %d\n", f);
+      }
+      else if (g_scene_idx == 4) {
+        ((MoreTrianglesScene2*)(g_scenes[4]))->ToggleCullFrontFacingTriangles();
+      }
       break;
     }
     case 'I': {

@@ -18,6 +18,13 @@ extern IDXGISwapChain3* g_swapchain;
 int RoundUp(int x, int align);
 void WaitForPreviousFrame();
 
+/*
+RAY_FLAG_CULL_BACK_FACING_TRIANGLES = 0x10,
+RAY_FLAG_CULL_FRONT_FACING_TRIANGLES = 0x20,
+RAY_FLAG_CULL_OPAQUE = 0x40,
+RAY_FLAG_CULL_NON_OPAQUE = 0x80
+*/
+
 // Front-facing, back-facing
 MoreTrianglesScene2::MoreTrianglesScene2() {
   // Create command list
@@ -189,6 +196,316 @@ MoreTrianglesScene2::MoreTrianglesScene2() {
     vertex_buffer->Unmap(0, nullptr);
   }
 
+  // SBT
+  {
+    int shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + sizeof(RayGenConstantBuffer);
+    shader_record_size = RoundUp(shader_record_size, D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT);
+
+    D3D12_RESOURCE_DESC sbt_desc{};
+    sbt_desc.DepthOrArraySize = 1;
+    sbt_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    sbt_desc.Format = DXGI_FORMAT_UNKNOWN;
+    sbt_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    sbt_desc.Width = shader_record_size;
+    sbt_desc.Height = 1;
+    sbt_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    sbt_desc.SampleDesc.Count = 1;
+    sbt_desc.SampleDesc.Quality = 0;
+    sbt_desc.MipLevels = 1;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE, &sbt_desc,
+      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+      IID_PPV_ARGS(&raygen_sbt_storage)));
+
+    sbt_desc.Width = shader_record_size;  // 64
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE, &sbt_desc,
+      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+      IID_PPV_ARGS(&miss_sbt_storage)));
+
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
+      D3D12_HEAP_FLAG_NONE, &sbt_desc,
+      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+      IID_PPV_ARGS(&hit_sbt_storage)));
+  }
+
+  // Output Resources
+  {
+    D3D12_RESOURCE_DESC desc{};
+    desc.DepthOrArraySize = 1;
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    desc.Width = WIN_W;
+    desc.Height = WIN_H;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE, &desc,
+      D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr,
+      IID_PPV_ARGS(&rt_output_resource)));
+
+    // UAV heap
+    D3D12_DESCRIPTOR_HEAP_DESC dhd{};
+    dhd.NumDescriptors = 3;
+    dhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    dhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    dhd.NodeMask = 0;
+    g_device12->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&srv_uav_heap));
+    srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart(), 0, srv_uav_descriptor_size);
+
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc{};
+    uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    g_device12->CreateUnorderedAccessView(rt_output_resource, nullptr, &uav_desc, uav_handle);
+  }
+
+  // Text render pass
+  text_pass = new TextPass(g_device12, g_command_queue, command_list, command_allocator);
+  text_pass->AllocateConstantBuffers(1024);
+  text_pass->InitD3D12(nullptr);
+  text_pass->InitFreetype();
+
+  // DSV and depth map, just to make text render pass happy
+  // DSV heap, depthmap, DSV
+  {
+    D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc{};
+    dsv_heap_desc.NumDescriptors = 1;
+    dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    dsv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    CE(g_device12->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(&dsv_heap)));
+    dsv_heap->SetName(L"DSV heap");
+    dsv_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+
+    D3D12_CLEAR_VALUE depth_clear{};
+    depth_clear.Format = DXGI_FORMAT_D32_FLOAT;
+    depth_clear.DepthStencil.Depth = 1.0f;
+    depth_clear.DepthStencil.Stencil = 0;
+    CE(g_device12->CreateCommittedResource(
+      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
+      D3D12_HEAP_FLAG_NONE,
+      &keep(CD3DX12_RESOURCE_DESC::Tex2D(
+        DXGI_FORMAT_D32_FLOAT, WIN_W, WIN_H, 1, 0, 1, 0,
+        D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)),
+      D3D12_RESOURCE_STATE_GENERIC_READ,
+      &depth_clear,
+      IID_PPV_ARGS(&depth_map)));
+    depth_map->SetName(L"Depth map");
+
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc{};
+    dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    dsv_desc.Flags = D3D12_DSV_FLAG_NONE;
+    g_device12->CreateDepthStencilView(depth_map, &dsv_desc, dsv_heap->GetCPUDescriptorHandleForHeapStart());
+  }
+
+  RebuildAS();
+}
+
+void MoreTrianglesScene2::Render() {
+  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
+    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
+    g_frame_index, g_rtv_descriptor_size);
+
+  float bg_color[] = { 0.8f, 1.0f, 1.0f, 1.0f };
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, nullptr));
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_PRESENT,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    rt_output_resource,
+    D3D12_RESOURCE_STATE_COPY_SOURCE,
+    D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
+
+  command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
+
+  command_list->SetComputeRootSignature(global_rootsig);
+  command_list->SetDescriptorHeaps(1, &srv_uav_heap);
+  CD3DX12_GPU_DESCRIPTOR_HANDLE handle_uav(
+    srv_uav_heap->GetGPUDescriptorHandleForHeapStart());
+  command_list->SetComputeRootDescriptorTable(0, handle_uav);
+  command_list->SetComputeRootShaderResourceView(1, tlas->GetGPUVirtualAddress());
+
+  command_list->SetComputeRoot32BitConstants(2, 1, &(raygen_cb.the_ray_flag), 0);
+
+  D3D12_DISPATCH_RAYS_DESC desc{};
+  desc.RayGenerationShaderRecord.StartAddress = raygen_sbt_storage->GetGPUVirtualAddress();
+  desc.RayGenerationShaderRecord.SizeInBytes = 64;
+  desc.MissShaderTable.StartAddress = miss_sbt_storage->GetGPUVirtualAddress();
+  desc.MissShaderTable.SizeInBytes = 32;
+  desc.MissShaderTable.StrideInBytes = 32;
+  desc.HitGroupTable.StartAddress = hit_sbt_storage->GetGPUVirtualAddress();
+  desc.HitGroupTable.SizeInBytes = 64;
+  desc.HitGroupTable.StrideInBytes = 64;
+  //desc.CallableShaderTable.StartAddress = 0;
+  //desc.CallableShaderTable.SizeInBytes = 32;
+  desc.Width = WIN_W;
+  desc.Height = WIN_H;
+  desc.Depth = 1;
+  command_list->SetPipelineState1(rt_state_object);
+  command_list->DispatchRays(&desc);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    rt_output_resource,
+    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+    D3D12_RESOURCE_STATE_COPY_SOURCE)));
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_COPY_DEST)));
+
+  command_list->CopyResource(g_rendertargets[g_frame_index], rt_output_resource);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_COPY_DEST,
+    D3D12_RESOURCE_STATE_RENDER_TARGET)));
+
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1,
+    (ID3D12CommandList* const*)&command_list);
+
+  WaitForPreviousFrame();
+
+  // ------------------------ Text ----------------
+  text_pass->StartPass();
+  std::wstring info;
+  info += L"CW and CCW test";
+  text_pass->AddText(info.c_str(), WIN_W * 0.5f - 10 * info.size() * 0.5f, WIN_H * 0.15f - 3.0f,
+    1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
+
+  info = L"CW";
+  text_pass->AddText(info.c_str(), WIN_W * 0.25f - 10 * info.size() * 0.5f, WIN_H * 0.35f - 3.0f,
+    1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
+
+  info = L"CCW";
+  text_pass->AddText(info.c_str(), WIN_W * 0.75f - 10 * info.size() * 0.5f, WIN_H * 0.35f - 3.0f,
+    1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
+
+  info = L"Front is: ";
+  if (is_front_cw) {
+    info += L"CW";
+  }
+  else {
+    info += L"CCW";
+  }
+  text_pass->AddText(info.c_str(), WIN_W * 0.5f - 10 * info.size() * 0.5f, WIN_H * 0.20f - 3.0f,
+    1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
+
+  info = L"";
+  if (raygen_cb.the_ray_flag == 0) {
+    info += L" none";
+  }
+  if (raygen_cb.the_ray_flag & D3D12_RAY_FLAG_CULL_BACK_FACING_TRIANGLES) {
+    info += L" back";
+  }
+  if (raygen_cb.the_ray_flag & D3D12_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES) {
+    info += L" front";
+  }
+  if (raygen_cb.the_ray_flag & D3D12_RAY_FLAG_CULL_OPAQUE) {
+    info += L" opaque";
+  }
+  if (raygen_cb.the_ray_flag & D3D12_RAY_FLAG_CULL_NON_OPAQUE) {
+    info += L" non-opaque";
+  }
+  info = L"Ray cull:" + info;
+  text_pass->AddText(info.c_str(), WIN_W * 0.5f - 10 * info.size() * 0.5f, WIN_H * 0.25f - 3.0f,
+    1.0f, glm::vec3(1, 1, 0), glm::mat4(1));
+
+  // done using it
+  WaitForPreviousFrame();
+
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, text_pass->pipeline_state));
+  command_list->SetGraphicsRootSignature(text_pass->root_signature);
+  // Text pass's rendering process
+  ID3D12DescriptorHeap* ppHeaps_textpass[] = { text_pass->srv_heap };
+  D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * WIN_W, 1.0f * WIN_H, 0.0f, 1.0f);
+  D3D12_RECT scissor = CD3DX12_RECT(0, 0, long(WIN_W), long(WIN_H));
+  command_list->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
+  command_list->RSSetViewports(1, &viewport);
+  command_list->RSSetScissorRects(1, &scissor);
+  D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle = dsv_heap->GetCPUDescriptorHandleForHeapStart();
+  command_list->ClearDepthStencilView(dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+  command_list->OMSetRenderTargets(1, &handle_rtv, false, &dsv_handle);
+  float blend_factor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  command_list->OMSetBlendFactor(blend_factor);
+  text_pass->RenderText(command_list);
+
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
+    g_rendertargets[g_frame_index],
+    D3D12_RESOURCE_STATE_RENDER_TARGET,
+    D3D12_RESOURCE_STATE_PRESENT)));
+
+  CE(command_list->Close());
+  g_command_queue->ExecuteCommandLists(1,
+    (ID3D12CommandList* const*)&command_list);
+
+  CE(g_swapchain->Present(1, 0));
+  WaitForPreviousFrame();
+}
+
+void MoreTrianglesScene2::Update(float secs) {
+  void* raygen_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyRaygenShader");
+  void* miss_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyMissShader");
+  void* hit_shader_id = rt_state_object_props->GetShaderIdentifier(L"TriangleHitGroup");
+
+  char* mapped;
+  raygen_sbt_storage->Map(0, nullptr, (void**)&mapped);
+  memcpy(mapped, raygen_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  mapped += D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+  memcpy(mapped, &raygen_cb, sizeof(raygen_cb));
+  raygen_sbt_storage->Unmap(0, nullptr);
+
+  miss_sbt_storage->Map(0, nullptr, (void**)&mapped);
+  memcpy(mapped, miss_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  mapped += D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+  memcpy(mapped, &raygen_cb, sizeof(raygen_cb));
+  miss_sbt_storage->Unmap(0, nullptr);
+
+  hit_sbt_storage->Map(0, nullptr, (void**)&mapped);
+  memcpy(mapped, hit_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
+  memcpy(mapped + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES, &raygen_cb, sizeof(raygen_cb));
+  hit_sbt_storage->Unmap(0, nullptr);
+}
+
+void MoreTrianglesScene2::ToggleCullBackFacingTriangles() {
+  raygen_cb.the_ray_flag ^= D3D12_RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
+  printf("ray flag is %x\n", raygen_cb.the_ray_flag);
+}
+
+void MoreTrianglesScene2::ToggleCullFrontFacingTriangles() {
+  raygen_cb.the_ray_flag ^= D3D12_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES;
+  printf("ray flag is %x\n", raygen_cb.the_ray_flag);
+}
+
+void MoreTrianglesScene2::ToggleCullOpaque() {
+  raygen_cb.the_ray_flag ^= D3D12_RAY_FLAG_CULL_OPAQUE;
+  printf("ray flag is %x\n", raygen_cb.the_ray_flag);
+}
+
+void MoreTrianglesScene2::ToggleCullNonOpaque() {
+  raygen_cb.the_ray_flag ^= D3D12_RAY_FLAG_CULL_NON_OPAQUE;
+  printf("ray flag is %x\n", raygen_cb.the_ray_flag);
+}
+
+void MoreTrianglesScene2::ToggleFrontIsCCW() {
+  is_front_cw = !is_front_cw;
+  RebuildAS();
+}
+
+void MoreTrianglesScene2::RebuildAS() {
   // AS
   {
     D3D12_RAYTRACING_GEOMETRY_DESC geom_desc[1]{};
@@ -267,6 +584,9 @@ MoreTrianglesScene2::MoreTrianglesScene2() {
     instance_descs_cpu[0].InstanceMask = 1;
     instance_descs_cpu[0].AccelerationStructure = blas0->GetGPUVirtualAddress();
     instance_descs_cpu[0].InstanceContributionToHitGroupIndex = 0;  // Use hit group 0
+    if (is_front_cw == false) {
+      instance_descs_cpu[0].Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_FRONT_COUNTERCLOCKWISE;
+    }
 
     CE(g_device12->CreateCommittedResource(
       &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
@@ -294,76 +614,6 @@ MoreTrianglesScene2::MoreTrianglesScene2() {
     g_command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
   }
 
-  // SBT
-  {
-    int shader_record_size = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + sizeof(RayGenConstantBuffer);
-    shader_record_size = RoundUp(shader_record_size, D3D12_RAYTRACING_SHADER_RECORD_BYTE_ALIGNMENT);
-
-    D3D12_RESOURCE_DESC sbt_desc{};
-    sbt_desc.DepthOrArraySize = 1;
-    sbt_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    sbt_desc.Format = DXGI_FORMAT_UNKNOWN;
-    sbt_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
-    sbt_desc.Width = shader_record_size;
-    sbt_desc.Height = 1;
-    sbt_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    sbt_desc.SampleDesc.Count = 1;
-    sbt_desc.SampleDesc.Quality = 0;
-    sbt_desc.MipLevels = 1;
-    CE(g_device12->CreateCommittedResource(
-      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
-      D3D12_HEAP_FLAG_NONE, &sbt_desc,
-      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-      IID_PPV_ARGS(&raygen_sbt_storage)));
-
-    sbt_desc.Width = shader_record_size;  // 64
-    CE(g_device12->CreateCommittedResource(
-      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
-      D3D12_HEAP_FLAG_NONE, &sbt_desc,
-      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-      IID_PPV_ARGS(&miss_sbt_storage)));
-
-    CE(g_device12->CreateCommittedResource(
-      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD)),
-      D3D12_HEAP_FLAG_NONE, &sbt_desc,
-      D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-      IID_PPV_ARGS(&hit_sbt_storage)));
-  }
-
-  // Output Resources
-  {
-    D3D12_RESOURCE_DESC desc{};
-    desc.DepthOrArraySize = 1;
-    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-    desc.Width = WIN_W;
-    desc.Height = WIN_H;
-    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-    desc.MipLevels = 1;
-    desc.SampleDesc.Count = 1;
-    CE(g_device12->CreateCommittedResource(
-      &keep(CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT)),
-      D3D12_HEAP_FLAG_NONE, &desc,
-      D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr,
-      IID_PPV_ARGS(&rt_output_resource)));
-
-    // UAV heap
-    D3D12_DESCRIPTOR_HEAP_DESC dhd{};
-    dhd.NumDescriptors = 3;
-    dhd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    dhd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    dhd.NodeMask = 0;
-    g_device12->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&srv_uav_heap));
-    srv_uav_descriptor_size = g_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-
-    CD3DX12_CPU_DESCRIPTOR_HANDLE uav_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart(), 0, srv_uav_descriptor_size);
-
-    D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc{};
-    uav_desc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-    g_device12->CreateUnorderedAccessView(rt_output_resource, nullptr, &uav_desc, uav_handle);
-  }
-
   // SRV of TLAS
   {
     CD3DX12_CPU_DESCRIPTOR_HANDLE srv_handle(srv_uav_heap->GetCPUDescriptorHandleForHeapStart(), 2, srv_uav_descriptor_size);
@@ -374,95 +624,4 @@ MoreTrianglesScene2::MoreTrianglesScene2() {
     srv_desc.RaytracingAccelerationStructure.Location = tlas->GetGPUVirtualAddress();
     g_device12->CreateShaderResourceView(nullptr, &srv_desc, srv_handle);
   }
-}
-
-void MoreTrianglesScene2::Render() {
-  CD3DX12_CPU_DESCRIPTOR_HANDLE handle_rtv(
-    g_rtv_heap->GetCPUDescriptorHandleForHeapStart(),
-    g_frame_index, g_rtv_descriptor_size);
-
-  float bg_color[] = { 0.8f, 1.0f, 1.0f, 1.0f };
-  CE(command_allocator->Reset());
-  CE(command_list->Reset(command_allocator, nullptr));
-
-  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    g_rendertargets[g_frame_index],
-    D3D12_RESOURCE_STATE_PRESENT,
-    D3D12_RESOURCE_STATE_RENDER_TARGET)));
-
-  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    rt_output_resource,
-    D3D12_RESOURCE_STATE_COPY_SOURCE,
-    D3D12_RESOURCE_STATE_UNORDERED_ACCESS)));
-
-  command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
-
-  command_list->SetComputeRootSignature(global_rootsig);
-  command_list->SetDescriptorHeaps(1, &srv_uav_heap);
-
-  D3D12_DISPATCH_RAYS_DESC desc{};
-  desc.RayGenerationShaderRecord.StartAddress = raygen_sbt_storage->GetGPUVirtualAddress();
-  desc.RayGenerationShaderRecord.SizeInBytes = 64;
-  //desc.MissShaderTable.StartAddress = miss_sbt_storage->GetGPUVirtualAddress();
-  //desc.MissShaderTable.SizeInBytes = 32;
-  //desc.MissShaderTable.StrideInBytes = 32;
-  //desc.HitGroupTable.StartAddress = hit_sbt_storage->GetGPUVirtualAddress();
-  //desc.HitGroupTable.SizeInBytes = 64;
-  //desc.HitGroupTable.StrideInBytes = 64;
-  //desc.CallableShaderTable.StartAddress = 0;
-  //desc.CallableShaderTable.SizeInBytes = 32;
-  desc.Width = WIN_W;
-  desc.Height = WIN_H;
-  desc.Depth = 1;
-  command_list->SetPipelineState1(rt_state_object);
-  command_list->DispatchRays(&desc);
-
-  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    rt_output_resource,
-    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-    D3D12_RESOURCE_STATE_COPY_SOURCE)));
-
-  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    g_rendertargets[g_frame_index],
-    D3D12_RESOURCE_STATE_RENDER_TARGET,
-    D3D12_RESOURCE_STATE_COPY_DEST)));
-
-  command_list->CopyResource(g_rendertargets[g_frame_index], rt_output_resource);
-
-  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(
-    g_rendertargets[g_frame_index],
-    D3D12_RESOURCE_STATE_COPY_DEST,
-    D3D12_RESOURCE_STATE_PRESENT)));
-
-  CE(command_list->Close());
-  g_command_queue->ExecuteCommandLists(1,
-    (ID3D12CommandList* const*)&command_list);
-
-  CE(g_swapchain->Present(1, 0));
-  WaitForPreviousFrame();
-}
-
-void MoreTrianglesScene2::Update(float secs) {
-  RayGenConstantBuffer cb{};
-  void* raygen_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyRaygenShader");
-  void* miss_shader_id = rt_state_object_props->GetShaderIdentifier(L"MyMissShader");
-  void* hit_shader_id = rt_state_object_props->GetShaderIdentifier(L"TriangleHitGroup");
-
-  char* mapped;
-  raygen_sbt_storage->Map(0, nullptr, (void**)&mapped);
-  memcpy(mapped, raygen_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-  mapped += D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-  memcpy(mapped, &cb, sizeof(cb));
-  raygen_sbt_storage->Unmap(0, nullptr);
-
-  miss_sbt_storage->Map(0, nullptr, (void**)&mapped);
-  memcpy(mapped, miss_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-  mapped += D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-  memcpy(mapped, &cb, sizeof(cb));
-  miss_sbt_storage->Unmap(0, nullptr);
-
-  hit_sbt_storage->Map(0, nullptr, (void**)&mapped);
-  memcpy(mapped, hit_shader_id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
-  memcpy(mapped + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES, &cb, sizeof(cb));
-  hit_sbt_storage->Unmap(0, nullptr);
 }
