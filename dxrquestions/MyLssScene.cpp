@@ -104,7 +104,7 @@ MyLssScene::MyLssScene(MyFramework* f) : MyScene(f) {
   NvAPI_Status status = NvAPI_D3D12_SetNvShaderExtnSlotSpaceLocalThread(f->GetDevice(), nvapi_uav, nvapi_space);
   if (status != NVAPI_OK) {
     printf("Oh! error setting NVShaderExtnSlotSpaceLocalThread\n");
-    exit(0);
+    return;
   }
   // Layout: [output UAV] [Debug UAV] [NVAPI UAV] [AS SRV] [PerScene CBV]
   f->CreateNvapiEnabledGlobalRootSig(&global_rootsig, 2, 1, 1, true, nvapi_uav);
@@ -153,6 +153,7 @@ MyLssScene::MyLssScene(MyFramework* f) : MyScene(f) {
     false);
   f->CreateSRVAccelerationStructure(tlas_result, cbvsrvuav_heap, 3);
   f->CreateNullUAV(cbvsrvuav_heap, 2);
+  inited = true;
 }
 
 void MyLssScene::Render() {
@@ -166,7 +167,7 @@ void MyLssScene::Render() {
   ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
   command_list->ClearRenderTargetView(handle_rtv, bg_color, 0, nullptr);
 
-  {  // if LSS supported
+  if (inited) {  // if LSS supported
     ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     ResourceBarrierTransition(command_list, my_debug_resource, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     command_list->SetComputeRootSignature(global_rootsig);
@@ -179,12 +180,12 @@ void MyLssScene::Render() {
     ResourceBarrierTransition(command_list, rt_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
     command_list->CopyResource(rendertarget, rt_output_resource);
-    ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
     ResourceBarrierTransition(command_list, my_debug_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     command_list->CopyResource(my_debug_resource_cpu, my_debug_resource);
     ResourceBarrierTransition(command_list, my_debug_resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
   }
 
+  ResourceBarrierTransition(command_list, rendertarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
   CE(command_list->Close());
 
   ID3D12CommandQueue* command_queue = framework->GetCommandQueue();
@@ -192,7 +193,7 @@ void MyLssScene::Render() {
   CE(framework->Present());
   framework->WaitForPreviousFrame();
 
-  {
+  if (inited) {
     float* mapped;
     my_debug_resource_cpu->Map(0, nullptr, (void**)&mapped);
     printf("Ray in center, o=(%g,%g,%g), d=(%g,%g,%g)\n",
@@ -202,6 +203,7 @@ void MyLssScene::Render() {
 }
 
 void MyLssScene::Update(float delta_secs) {
+    if (!inited) return;
     cam_azimuth += delta_secs * (float)rot_axes[1];
     cam_elevation -= delta_secs * (float)rot_axes[0];
 

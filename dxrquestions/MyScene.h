@@ -46,6 +46,8 @@ public:
   int viz_mode{ 1 };
   int cam_mode{ 0 };
   int case_idx{ 0 };
+
+  bool inited{ false };  // False if no nvapi support
 };
 
 class MyInstanceFlagScene : public MyScene {
