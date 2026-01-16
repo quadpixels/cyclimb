@@ -303,8 +303,8 @@ void MyCullingScene::Render() {
   // Per spec: SKIP_TRIANGLE and SKIP_PROCEDURAL_PRIMITIVES are mutually exclusive
   {
     uint32_t count1 = 0;
-    count1 += bool(h_perscene_cb.ray_flag & D3D12_RAY_FLAG_CULL_BACK_FACING_TRIANGLES);
-    count1 += bool(h_perscene_cb.ray_flag & D3D12_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES);
+    count1 += bool(h_perscene_cb.ray_flag & D3D12_RAY_FLAG_SKIP_TRIANGLES);
+    count1 += bool(h_perscene_cb.ray_flag & D3D12_RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES);
     if (count1 > 1) {
       infos.push_back(L"Ray flag: SKIP_TRIANGLE and SKIP_PROCEDURAL_PRIMITIVES");
       infos.push_back(L"are mutually exclusive.");
