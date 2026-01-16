@@ -163,6 +163,22 @@ MoreTrianglesScene2::MoreTrianglesScene2() {
       {-l, -l, 0 }
     };
 
+    {
+      glm::vec3 v0(-0.7, -0.2, 0);
+      glm::vec3 v1(-0.5, 0.2, 0);
+      glm::vec3 v2(-0.3, -0.2, 0);
+      glm::vec3 n0 = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+      printf("CW tri's nomral is: (%g,%g,%g)\n", n0.x, n0.y, n0.z);
+    }
+
+    {
+      glm::vec3 v0(0.7, -0.2, 0);
+      glm::vec3 v1(0.5, 0.2, 0);
+      glm::vec3 v2(0.3, -0.2, 0);
+      glm::vec3 n0 = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+      printf("CCW tri's nomral is: (%g,%g,%g)\n", n0.x, n0.y, n0.z);
+    }
+
     for (uint32_t i = 0; i < 3; i++) {
       vertices[i].x -= x_ofst;
     }

@@ -116,11 +116,13 @@ MyLssScene::MyLssScene(MyFramework* f) : MyScene(f) {
   f->CreateBufferForUAVAccess(sizeof(uint32_t) * 6, &my_debug_resource);
   f->CreateUAVUintBuffer(my_debug_resource, 6, sizeof(uint32_t), cbvsrvuav_heap, 1);
   f->CreateBufferForCPUAccess(6 * sizeof(uint32_t), &my_debug_resource_cpu);
+  D3D12_HIT_GROUP_DESC hg{};
+  hg.ClosestHitShaderImport = L"MyClosestHitShader";
+  hg.HitGroupExport = L"MyHitGroup";
   MyFramework::MyRtShaderListInfo info{};
   info.raygen_shader = L"MyRayGenShader";
-  info.closest_hit_shader = L"MyClosestHitShader";
   info.miss_shader = L"MyMissShader";
-  info.hitgroup_name = L"MyHitGroup";
+  info.hit_groups = { hg };
   info.dxil_lib_bytecode = (void*)g_RaytracingShadersLss;
   info.dxil_lib_length = sizeof(g_RaytracingShadersLss);
   f->CreateMyRtPipeline(&my_rt_pipeline, global_rootsig, info);

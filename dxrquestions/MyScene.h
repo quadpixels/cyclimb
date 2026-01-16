@@ -73,3 +73,32 @@ public:
 
   TextPass* text_pass;
 };
+
+class MyCullingScene : public MyScene {
+public:
+  struct PerSceneCB {
+    uint32_t ray_flag;
+  };
+  uint32_t inst_flag{};
+  MyCullingScene(MyFramework* f);
+  void Render() override;
+  void Update(float secs) override;
+  void OnKeyDown(uint32_t k) override;
+  void OnKeyUp(uint32_t k) override;
+  void BuildOrRebuildAS();
+  
+  TextPass* text_pass;
+  ID3D12RootSignature* global_rootsig;
+  ID3D12Resource* rt_output_resource;
+  MyRtPipeline my_rt_pipeline{};
+  ID3D12Resource* blas_result_tri, *blas_result_proc;
+  ID3D12Resource* tlas_result;
+  ID3D12Resource* perscene_cb;
+  PerSceneCB h_perscene_cb{};
+  ID3D12DescriptorHeap* cbvsrvuav_heap, * cbvsrvuav_heap_cpu;
+
+  int choice_idx{ -1 };
+  bool is_as_dirty{ false };
+  void do_ChangeChoice(int delta);
+  void do_ChangeOption(int delta);
+};

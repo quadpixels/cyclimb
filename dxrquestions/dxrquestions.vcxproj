@@ -142,6 +142,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="MyCullingScene.cpp" />
     <ClCompile Include="MyFramework.cpp" />
     <ClCompile Include="MyFramework.h" />
     <ClCompile Include="MyInstanceFlagScene.cpp" />
@@ -151,6 +152,16 @@
     <ClCompile Include="textrender1.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <FxCompile Include="shaders\culling_mode_shaders.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Library</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.5</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Library</ShaderType>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">6.5</ShaderModel>
+      <VariableName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">g_CullingSceneShaders</VariableName>
+      <VariableName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">g_CullingSceneShaders</VariableName>
+      <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)CompiledShaders\%(Filename).hlsl.h</HeaderFileOutput>
+      <HeaderFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)CompiledShaders\%(Filename).hlsl.h</HeaderFileOutput>
+    </FxCompile>
     <FxCompile Include="shaders\instance_flags_shaders.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Library</ShaderType>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">6.5</ShaderModel>

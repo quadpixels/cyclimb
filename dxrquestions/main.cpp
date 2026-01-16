@@ -32,7 +32,7 @@ namespace dxc {
 }
 
 MyFramework* g_myframework{};
-MyScene* g_scenes[3];
+MyScene* g_scenes[4];
 uint32_t g_scene_idx = 1;
 HWND g_hwnd{};
 long long g_last_ms{ 0 };
@@ -75,7 +75,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     if (wParam == VK_ESCAPE) {
       exit(0);
     }
-    else if (wParam >= '1' && wParam <= '1' + _countof(g_scenes)) {
+    else if (wParam >= '1' && wParam < '1' + _countof(g_scenes)) {
       g_scene_idx = wParam - '1';
     }
     else {
@@ -155,6 +155,7 @@ int main() {
   g_scenes[0] = new MyParisIvyLeafScene(g_myframework);
   g_scenes[1] = new MyLssScene(g_myframework);
   g_scenes[2] = new MyInstanceFlagScene(g_myframework);
+  g_scenes[3] = new MyCullingScene(g_myframework);
   g_init_done = true;
 
   MSG msg = { 0 };

@@ -39,6 +39,9 @@
     <ClCompile Include="textrender1.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MyCullingScene.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="shaders\pixel_shader_ivyleaf_triangle.hlsl">
@@ -54,6 +57,9 @@
       <Filter>Resource Files</Filter>
     </FxCompile>
     <FxCompile Include="shaders\instance_flags_shaders.hlsl">
+      <Filter>Resource Files</Filter>
+    </FxCompile>
+    <FxCompile Include="shaders\culling_mode_shaders.hlsl">
       <Filter>Resource Files</Filter>
     </FxCompile>
   </ItemGroup>

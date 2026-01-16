@@ -125,18 +125,15 @@ public:
   void InitImGUIForGLFW(GLFWwindow* w);
 #endif
   ID3D12Device5* GetDevice();
+
   struct MyRtShaderListInfo {
     const wchar_t* raygen_shader{};
-    const wchar_t* closest_hit_shader{};
     const wchar_t* miss_shader{};
-    const wchar_t* anyhit_shader{};
-    const wchar_t* intersection_shader{};
     
+    std::vector<D3D12_HIT_GROUP_DESC> hit_groups;  // CHS + AS + IS
+
     void* dxil_lib_bytecode{};
     uint32_t dxil_lib_length{ 0 };
-
-    const wchar_t* hitgroup_name;
-    D3D12_HIT_GROUP_TYPE hitgroup_type{ D3D12_HIT_GROUP_TYPE_TRIANGLES };
   };
   void Deinit();
   void SetHwnd(HWND h);
@@ -160,6 +157,7 @@ public:
   ID3D12Resource* GetCurrentRenderTarget();
   void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline,
     ID3D12RootSignature* global_rootsig, const struct MyRtShaderListInfo& my_shaders);
+  void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline, ID3D12RootSignature* global_rootsig, const std::vector<struct MyRtShaderListInfo>& my_infos);
   void CreateComputePipeline(ID3D12PipelineState** pso, ID3D12RootSignature* root_sig, const void* shader_bytecode, uint32_t shader_bytecode_length);
   template<class T> void CreateVertexBuffer(std::vector<T>& verts, ID3D12Resource** res, D3D12_VERTEX_BUFFER_VIEW* vbv);
   void CreateBufferForCPUSideData(void* data, uint32_t len, ID3D12Resource** res);
@@ -204,10 +202,12 @@ public:
   );
     
 
-  void BuildBLAS(ID3D12Resource** blas_result,
-    ID3D12Resource* vertex_buffer, uint32_t stride, uint32_t vertex_count);  // Just 1 geom
+  void BuildBLAS(ID3D12Resource** blas_result, ID3D12Resource* vertex_buffer, uint32_t stride, uint32_t vertex_count, D3D12_RAYTRACING_GEOMETRY_FLAGS geom_flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE);     // Just 1 Geom
+  void BuildBLAS(ID3D12Resource** blas_result, std::vector<ID3D12Resource*> vertex_buffers, uint32_t stride, std::vector<uint32_t> vertex_counts, std::vector<D3D12_RAYTRACING_GEOMETRY_FLAGS> geom_flags);  // Multiple Geoms
+  void BuildBLASProc(ID3D12Resource** blas_result, ID3D12Resource* aabb_buffer, uint32_t stride, uint32_t aabb_count, D3D12_RAYTRACING_GEOMETRY_FLAGS geom_flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE);     // 1 Geom
+  void BuildBLASProc(ID3D12Resource** blas_result, std::vector<ID3D12Resource*> aabb_buffers, uint32_t stride, std::vector<uint32_t> aabb_counts, std::vector<D3D12_RAYTRACING_GEOMETRY_FLAGS> geom_flags);  // Multiple Geoms
   void BuildTLAS(ID3D12Resource** tlas_result, ID3D12Resource* blas_result);
-  void BuildTLAS(ID3D12Resource** tlas_result, ID3D12Resource* blas_result, const std::vector<D3D12_RAYTRACING_INSTANCE_DESC>& inst_descs);
+  void BuildTLAS(ID3D12Resource** tlas_result, const std::vector<D3D12_RAYTRACING_INSTANCE_DESC>& inst_descs);
 
   constexpr static uint32_t WIN_W = 512, WIN_H = 512;
   constexpr static uint32_t FRAME_COUNT = 2;

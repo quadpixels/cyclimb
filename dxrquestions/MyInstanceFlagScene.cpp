@@ -67,7 +67,7 @@ MyInstanceFlagScene::MyInstanceFlagScene(MyFramework* f) : MyScene(f) {
     }
   }
 
-  framework->BuildTLAS(&tlas_result, blas_result, inst_descs);
+  framework->BuildTLAS(&tlas_result, inst_descs);
   framework->CreateGlobalRootSig(&global_rootsig, 1, 1, 1);
   framework->CreateRtOutputResource(&rt_output_resource);
   uint32_t cb_size = 256;
@@ -79,9 +79,12 @@ MyInstanceFlagScene::MyInstanceFlagScene(MyFramework* f) : MyScene(f) {
 
   MyFramework::MyRtShaderListInfo info{};
   info.raygen_shader = L"MyRayGenShader";
-  info.closest_hit_shader = L"MyClosestHitShader";
   info.miss_shader = L"MyMissShader";
-  info.hitgroup_name = L"MyHitGroup";
+  D3D12_HIT_GROUP_DESC hg{};
+  hg.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+  hg.ClosestHitShaderImport = L"MyClosestHitShader";
+  hg.HitGroupExport = L"MyHitGroup";
+  info.hit_groups = { hg };
   info.dxil_lib_bytecode = (void*)g_InstanceFlagsShaders;
   info.dxil_lib_length = sizeof(g_InstanceFlagsShaders);
   f->CreateMyRtPipeline(&my_rt_pipeline, global_rootsig, info);
@@ -184,7 +187,6 @@ void MyInstanceFlagScene::Render() {
     text_pass->AddText(text, pos.x - 8, pos.y + 5, 1.0f, textcolor, glm::mat4(1));
     idx++;
   }
-
 
   command_list->SetDescriptorHeaps(_countof(ppHeaps_textpass), ppHeaps_textpass);
   D3D12_VIEWPORT viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, 1.0f * MyFramework::WIN_W, 1.0f * MyFramework::WIN_H, 0.0f, 1.0f);
