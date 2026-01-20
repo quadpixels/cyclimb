@@ -3,6 +3,7 @@
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <sstream>
 #include <source_location>
@@ -60,7 +61,7 @@ struct PerSceneCB {
 static_assert(sizeof(PerSceneCB) == 32);
 static_assert(offsetof(PerSceneCB, tmin) == 12);
 
-// Just test 1 LSS
+// Just test 1 LSS, 1 tri & 1 AABB
 std::vector<uint32_t> g_lss_indices = {
   0, 1
 };
@@ -74,12 +75,21 @@ std::vector<std::pair<glm::vec3, glm::vec3>> g_lss_pos_pairs = {
 std::vector<std::pair<float, float>> g_lss_radii_pairs = {
   { 1.0f, 1.0f }
 };
+std::vector<NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE> g_lss_endcap_modes = {
+  NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED
+};
 
 std::vector<std::vector<glm::vec3>> g_tri_verts = {
   {
     { -1, 0, 0 },
     {  0, 1, 0 },
     {  1, 0, 0 }
+  }
+};
+
+std::vector<std::pair<glm::vec3, glm::vec3>> g_aabbs = {
+  {
+    { -1,-1,-1 }, { 1,1,1 }
   }
 };
 
@@ -96,15 +106,39 @@ std::vector<PerSceneCB> g_per_scene_cbs = {
     { 0, 0, -1 },
     10000.0f
   },
+  {
+    { 0, 0, 10 },
+    0.0f,
+    { 0, 0, -1 },
+    10000.0f
+  }
 };
+
+std::vector<std::string> g_messages_to_print = {
+
+};
+
+enum TestType {
+  TEST_TYPE_PRINT_MESSAGE,
+  TEST_TYPE_LSS,
+  TEST_TYPE_TRIANGLE,
+  TEST_TYPE_PROCEDURAL_AABB,
+
+  TEST_TYPE_BEGIN_DUMP_TRI,
+  TEST_TYPE_END_DUMP_TRI
+};
+
+std::vector<std::pair<TestType, uint32_t>> g_test_idxes;
 
 const float TMIN_DEFAULT = 0.0f;
 const float TMAX_DEFAULT = 10000.0f;
 
 static uint32_t GetInputSize() {
   assert(g_lss_pos_pairs.size() == g_lss_radii_pairs.size());
-  assert(g_lss_radii_pairs.size() + g_tri_verts.size()  == g_per_scene_cbs.size());
-  return g_lss_pos_pairs.size() + g_tri_verts.size();
+  assert(g_lss_pos_pairs.size() == g_lss_endcap_modes.size());
+  uint32_t n = g_lss_radii_pairs.size() + g_tri_verts.size() + g_aabbs.size();
+  assert(n == g_per_scene_cbs.size());
+  return n;
 }
 
 static void ClearInputs() {
@@ -112,6 +146,9 @@ static void ClearInputs() {
   g_lss_radii_pairs.clear();
   g_per_scene_cbs.clear();
   g_tri_verts.clear();
+  g_aabbs.clear();
+  g_test_idxes.clear();
+  g_messages_to_print.clear();
 }
 
 void ReadInputFile(const char* fn) {
@@ -130,37 +167,93 @@ void ReadInputFile(const char* fn) {
   // Read file line by line
   while (std::getline(file, line)) {
     std::istringstream iss(line);
-    if (line.find("//") != std::string::npos ||
-      line.find("#") != std::string::npos) {  // Contains Comments, will be ignored
+    if (line.find("//") != std::string::npos) {  // Contains Comments, will be ignored
+      g_test_idxes.emplace_back(TestType::TEST_TYPE_PRINT_MESSAGE, g_messages_to_print.size());
+      g_messages_to_print.push_back(line);
       continue;
     }
-    glm::vec3 lss0pos, lss1pos;
-    float r0, r1;
+    if (line.find("#") != std::string::npos) {  // Contains Comments, will be ignored
+      continue;
+    }
+    std::string ty;
+    if (iss >> ty) {
+      if (ty == "lss" || ty == "tri" || ty == "aabb" || ty == "lss_no_endcaps" ||
+          ty == "begin_dump_triangle" || ty == "end_dump_triangle") { }
+      else continue;
+    }
+    else continue;
+
     glm::vec3 ray_dir, ray_origin;
     float tmin, tmax;
-    if (iss >> lss0pos.x >> lss0pos.y >> lss0pos.z >> r0 
-            >> lss1pos.x >> lss1pos.y >> lss1pos.z >> r1
-            >> ray_origin.x >> ray_origin.y >> ray_origin.z
-            >> ray_dir.x >> ray_dir.y >> ray_dir.z) {
-      if (iss >> tmin >> tmax) {
-        ;  // Use supplied tmin and tmax
+
+    if (ty == "begin_dump_triangle") {
+      g_test_idxes.emplace_back(TestType::TEST_TYPE_BEGIN_DUMP_TRI, 0);
+      continue;
+    }
+    else if (ty == "end_dump_triangle") {
+      g_test_idxes.emplace_back(TestType::TEST_TYPE_END_DUMP_TRI, 0);
+      continue;
+    }
+    else if (ty == "lss" || ty == "lss_no_endcaps") {
+      glm::vec3 lss0pos, lss1pos;
+      float r0, r1;
+      if (iss >> lss0pos.x >> lss0pos.y >> lss0pos.z >> r0
+        >> lss1pos.x >> lss1pos.y >> lss1pos.z >> r1
+        >> ray_origin.x >> ray_origin.y >> ray_origin.z
+        >> ray_dir.x >> ray_dir.y >> ray_dir.z) {
+        if (iss >> tmin >> tmax) {
+          ;  // Use supplied tmin and tmax
+        }
+        else {
+          tmin = 0;
+          tmax = 1e4;
+        }
+        g_test_idxes.emplace_back(TestType::TEST_TYPE_LSS, g_lss_pos_pairs.size());
+        g_lss_pos_pairs.emplace_back(lss0pos, lss1pos);
+        g_lss_radii_pairs.emplace_back(r0, r1);
+        g_lss_endcap_modes.push_back((ty == "lss" ? NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED : NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_NONE));
       }
-      else {
-        tmin = 0;
-        tmax = 1e4;
+    }
+    else if (ty == "tri") {
+      glm::vec3 a, b, c;
+      if (iss >> a.x >> a.y >> a.z >> b.x >> b.y >> b.z >> c.x >> c.y >> c.z
+              >> ray_origin.x >> ray_origin.y >> ray_origin.z
+              >> ray_dir.x >> ray_dir.y >> ray_dir.z) {
+        if (iss >> tmin >> tmax) {
+          ;
+        }
+        else {
+          tmin = 0; tmax = 1e4;
+        }
+        g_test_idxes.emplace_back(TestType::TEST_TYPE_TRIANGLE, g_tri_verts.size());
+        g_tri_verts.push_back({ a, b, c });
       }
-      g_lss_pos_pairs.emplace_back(lss0pos, lss1pos);
-      g_lss_radii_pairs.emplace_back(r0, r1);
-      PerSceneCB c{};
-      c.ray_dir = ray_dir;
-      c.ray_origin = ray_origin;
-      c.tmin = tmin;
-      c.tmax = tmax;
-      g_per_scene_cbs.push_back(c);
+    }
+    else if (ty == "aabb") {
+      glm::vec3 a, b;
+      if (iss >> a.x >> a.y >> a.z >> b.x >> b.y >> b.z
+        >> ray_origin.x >> ray_origin.y >> ray_origin.z
+        >> ray_dir.x >> ray_dir.y >> ray_dir.z) {
+        if (iss >> tmin >> tmax) {
+          ;
+        }
+        else {
+          tmin = 0; tmax = 1e4;
+        }
+        g_test_idxes.emplace_back(TestType::TEST_TYPE_PROCEDURAL_AABB, g_aabbs.size());
+        g_aabbs.push_back({ a, b });
+      }
     }
     else {
       continue;
     }
+
+    PerSceneCB c{};
+    c.ray_dir = ray_dir;
+    c.ray_origin = ray_origin;
+    c.tmin = tmin;
+    c.tmax = tmax;
+    g_per_scene_cbs.push_back(c);
   }
 
   printf("%u inputs read.\n", GetInputSize());
@@ -172,6 +265,39 @@ int main(int argc, char** argv) {
   g_lss_pos_pairs.clear();
   g_lss_radii_pairs.clear();
   g_tri_verts.clear();
+  g_aabbs.clear();
+  g_lss_endcap_modes.clear();
+  bool has_read_file{ false };
+  bool is_dumping_triangle{ false };
+
+  struct RayAndResult {
+    glm::vec3 o, d;
+    bool is_hit;
+    float hit_t;
+  };
+  struct MyComparator {
+    bool CompareVec3(const glm::vec3& a, const glm::vec3 b) const {
+      if (a.x < b.x) return true;
+      else if (a.x == b.x) {
+        if (a.y < b.y) return true;
+        else if (a.y == b.y) {
+          if (a.z < b.z) return true;
+          else return false;
+        }
+        else return false;
+      }
+      else return false;
+    }
+    bool operator()(const std::vector<glm::vec3>& a, const std::vector<glm::vec3>& b) const {
+      for (uint32_t i = 0; i < min(a.size(), b.size()); i++) {
+        if (CompareVec3(a[i], b[i])) return true;
+        else if (a[i] == b[i]) continue;
+        else return false;
+      }
+      return false;
+    }
+  };
+  std::map<std::vector<glm::vec3>, std::vector<RayAndResult>, MyComparator> dumped_tris;
 
   for (uint32_t i = 0; i < argc; i++) {
     float x1, x2, x3, x4;
@@ -189,6 +315,7 @@ int main(int argc, char** argv) {
       if (g_lss_pos_pairs.empty()) {
         g_lss_pos_pairs.push_back(std::make_pair(glm::vec3(0), glm::vec3(0)));
         g_lss_radii_pairs.push_back(std::make_pair(0, 0));
+        g_lss_endcap_modes.push_back(NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED);
       }
       g_lss_pos_pairs[0].first.x = x1;
       g_lss_pos_pairs[0].first.y = x2;
@@ -200,6 +327,7 @@ int main(int argc, char** argv) {
       if (g_lss_pos_pairs.empty()) {
         g_lss_pos_pairs.push_back(std::make_pair(glm::vec3(0), glm::vec3(0)));
         g_lss_radii_pairs.push_back(std::make_pair(0, 0));
+        g_lss_endcap_modes.push_back(NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED);
       }
       g_lss_pos_pairs[0].second.x = x1;
       g_lss_pos_pairs[0].second.y = x2;
@@ -231,6 +359,22 @@ int main(int argc, char** argv) {
       g_tri_verts[0][2].y = x2;
       g_tri_verts[0][2].z = x3;
     }
+    if (!strcmp(argv[i], "-aabb0") && i + 3 < argc) {
+      if (g_aabbs.empty()) {
+        g_aabbs.resize(1);
+      }
+      g_aabbs[0].first.x = x1;
+      g_aabbs[0].first.y = x2;
+      g_aabbs[0].first.z = x3;
+    }
+    if (!strcmp(argv[i], "-aabb1") && i + 3 < argc) {
+      if (g_aabbs.empty()) {
+        g_aabbs.resize(1);
+      }
+      g_aabbs[0].second.x = x1;
+      g_aabbs[0].second.y = x2;
+      g_aabbs[0].second.z = x3;
+    }
     if (!strcmp(argv[i], "-ro") && i + 3 < argc) {
       g_per_scene_cbs[0].ray_origin.x = x1;
       g_per_scene_cbs[0].ray_origin.y = x2;
@@ -253,6 +397,16 @@ int main(int argc, char** argv) {
     }
     if (!strcmp(argv[i], "-i") && i + 1 < argc) {
       ReadInputFile(argv[i + 1]);
+      has_read_file = true;
+      break;
+    }
+    if (!strcmp(argv[i], "--noendcaps")) {
+      if (g_lss_pos_pairs.empty()) {
+        g_lss_pos_pairs.push_back(std::make_pair(glm::vec3(0), glm::vec3(0)));
+        g_lss_radii_pairs.push_back(std::make_pair(0, 0));
+        g_lss_endcap_modes.push_back(NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED);
+      }
+      g_lss_endcap_modes[0] = NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_NONE;
     }
     if (!strcmp(argv[i], "-random") && i + 1 < argc) {
       ClearInputs();
@@ -272,6 +426,54 @@ int main(int argc, char** argv) {
         g_per_scene_cbs.push_back(c);
       }
     }
+    if (!strcmp(argv[i], "--watertightpattern")) {  // Generates a water-tight pattern
+      printf("Will generate watertight pattern.\n");
+      ClearInputs();
+      glm::vec3 center(0, 0, 0);
+      glm::vec3 verts[] = {
+        {  1, 0, 0 },
+        {  1,-1, 0 },
+        {  0,-1, 0 },
+        { -1,-1, 0 },
+        { -1, 0, 0 },
+        { -1, 1, 0 },
+        {  0, 1, 0 },
+        {  1, 1, 0 }
+      };
+      glm::vec3 ray_dirs[] = {
+        { 0,0,1 },
+        { 0,0,-1}
+      };
+
+      g_test_idxes.emplace_back(TestType::TEST_TYPE_BEGIN_DUMP_TRI, 0);
+      for (uint32_t i = 0; i < 8; i++) {
+        glm::vec3 a = center, b = verts[i], c = verts[(i + 1) % 8];
+        glm::vec3 abc[] = { a, b, c };
+        for (uint32_t eidx = 0; eidx < 3; eidx++) {
+          glm::vec3 p0 = abc[eidx], p1 = abc[(eidx + 1) % 3];
+          const uint32_t nbreaks = 3;
+          for (uint32_t bidx = 0; bidx < nbreaks; bidx++) {
+            for (uint32_t didx = 0; didx < _countof(ray_dirs); didx++) {
+              glm::vec3 d = ray_dirs[didx];
+              float t0 = bidx * 1.0f / nbreaks, t1 = 1 - t0;
+              PerSceneCB cb{};
+              cb.ray_dir = d;
+              cb.ray_origin = p0 * t0 + p1 * t1;
+              cb.ray_origin -= d;
+              cb.tmin = 0;
+              cb.tmax = 100;
+
+              g_test_idxes.emplace_back(TestType::TEST_TYPE_TRIANGLE, g_tri_verts.size());
+              g_tri_verts.push_back({ a,b,c });
+              g_per_scene_cbs.push_back(cb);
+            }
+          }
+        }
+      }
+      g_test_idxes.emplace_back(TestType::TEST_TYPE_END_DUMP_TRI, 0);
+      has_read_file = true;
+      break;
+    }
     if (!strcmp(argv[i], "-o") && i + 1 < argc) {
       std::string ofn(argv[i + 1]);
       if (std::filesystem::exists(ofn)) {
@@ -289,7 +491,8 @@ int main(int argc, char** argv) {
       printf("Usage: %s params\n", argv[0]);
       printf("\n");
       printf("Do intersection on the command line:\n");
-      printf(" -lss0 x y z r -lss1 x y z r -ro x y z -rd x y z [-tmin x] [-tmax x] : Perform 1 intersection test\n");
+      printf(" -lss0 x y z r -lss1 x y z r -ro x y z -rd x y z [-tmin x] [-tmax x] [--noendcaps] : Perform 1 LSS intersection test\n");
+      printf(" -tri0 x y z -tri1 x y z -tri2 x y z -ro x y z -rd x y z [-tmin x] [-tmax x] : Perform 1 tri intersection test\n");
       printf(" -random x                                                           : Perform x random tests, LSS and ray params randomized between 0 and 10\n");
       printf("\n");
       printf("Read tests from file:\n");
@@ -307,36 +510,40 @@ int main(int argc, char** argv) {
     }
   }
 
+  bool has_nvapi{ false };
   g_myframework = new MyFramework();
   g_myframework->InitDeviceAndCommandQ();
-  g_myframework->InitNVAPI();
+  if (g_myframework->InitNVAPI()) {
+    has_nvapi = true;
+  }
   g_myframework->CreateBufferForUAVAccess(128, &g_uav_resource);
   g_myframework->CreateBufferForCPUAccess(128, &g_uav_resource_cpu);
   // [0] = debug uav, [1] = NVAPI uav, [2] = AS SRV, [3] = PerScene CBV
   g_myframework->CreateCBVSRVUAVHeap(&g_cbvsrvuav_heap, nullptr, 4);
   uint32_t nvapi_uav = 100;
-  g_myframework->CreateRtGlobalRootSig(&g_global_rootsig, 1, 1, 1, true, nvapi_uav);
+  g_myframework->CreateNvapiEnabledGlobalRootSig(&g_global_rootsig, 1, 1, 1, true, nvapi_uav);
   g_myframework->CreateUAVUintBuffer(g_uav_resource, 32, sizeof(uint32_t), g_cbvsrvuav_heap, 0);
   g_myframework->CreateNullUAV(g_cbvsrvuav_heap, 1);
   g_myframework->CreateBufferForCPUSideData(nullptr, 256, &g_perscene_cb_cpu);
   g_myframework->CreateCBVBuffer(g_perscene_cb_cpu, g_cbvsrvuav_heap, 3, 256);
   
-  enum TestType {
-    TEST_TYPE_LSS,
-    TEST_TYPE_TRIANGLE
-  };
+  if (!has_read_file) {
+    for (uint32_t i = 0; i < g_tri_verts.size(); i++) {
+      g_test_idxes.emplace_back(TestType::TEST_TYPE_TRIANGLE, i);
+    }
+    for (uint32_t i = 0; i < g_lss_pos_pairs.size(); i++) {
+      g_test_idxes.emplace_back(TestType::TEST_TYPE_LSS, i);
+    }
+    for (uint32_t i = 0; i < g_aabbs.size(); i++) {
+      g_test_idxes.emplace_back(TestType::TEST_TYPE_PROCEDURAL_AABB, i);
+    }
+  }
+  uint32_t num_tests = g_test_idxes.size();
   
-  std::vector<std::pair<TestType, uint32_t>> test_idxes;
-  for (uint32_t i = 0; i < g_tri_verts.size(); i++) {
-    test_idxes.emplace_back(TestType::TEST_TYPE_TRIANGLE, i);
-  }
-  for (uint32_t i = 0; i < g_lss_pos_pairs.size(); i++) {
-    test_idxes.emplace_back(TestType::TEST_TYPE_LSS, i);
-  }
-  uint32_t num_tests = test_idxes.size();
+  uint32_t i_perscene_cb{ 0 };
 
   for (uint32_t i = 0; i < num_tests; i++) {
-    const auto [test_type, pertest_idx] = test_idxes.at(i);
+    const auto [test_type, pertest_idx] = g_test_idxes.at(i);
 
     // Resources that might be used
     ID3D12Resource* lss_poses_resource{};
@@ -346,11 +553,36 @@ int main(int argc, char** argv) {
     std::pair<float, float> radii_pair;
     ID3D12Resource* tri_verts_resource{};
     std::vector<glm::vec3> tri_verts;
+    std::pair<glm::vec3, glm::vec3> aabb;
+    ID3D12Resource* aabb_resource{};
+    NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE lss_endcap_mode;
 
     switch (test_type) {
+      case TestType::TEST_TYPE_BEGIN_DUMP_TRI: {
+        is_dumping_triangle = true;
+        continue;
+      }
+      case TestType::TEST_TYPE_END_DUMP_TRI: {
+        is_dumping_triangle = false;
+        continue;
+      }
+      case TestType::TEST_TYPE_PRINT_MESSAGE: {
+        printf("%s\n", g_messages_to_print.at(pertest_idx).c_str());
+        continue;
+      }
       case TestType::TEST_TYPE_LSS: {
+        if (!has_nvapi) {
+          static bool printed = false;
+          if (!printed) {
+            printf("Oh! No NVAPI. skipping LSS");
+            printed = true;
+          }
+          i_perscene_cb++;
+          continue;
+        }
         pos_pair = g_lss_pos_pairs.at(pertest_idx);
         radii_pair = g_lss_radii_pairs.at(pertest_idx);
+        lss_endcap_mode = g_lss_endcap_modes.at(pertest_idx);
 
         // BVH
         g_myframework->CreateBufferForCPUSideData(&pos_pair, sizeof(pos_pair), &lss_poses_resource);
@@ -362,7 +594,7 @@ int main(int argc, char** argv) {
           lss_radii_resource,
           lss_indices_list_resource, nullptr,
           2,  // vert count
-          NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED,
+          lss_endcap_mode,
           NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_LIST,
           2,
           false
@@ -373,21 +605,37 @@ int main(int argc, char** argv) {
       case TestType::TEST_TYPE_TRIANGLE: {
         tri_verts = g_tri_verts.at(pertest_idx);
         g_myframework->CreateBufferForCPUSideData(tri_verts.data(), sizeof(glm::vec3) * 3, &tri_verts_resource);
-        g_myframework->BuildDummyTriNVAPI(&g_blas_result, &g_tlas_result, tri_verts_resource, 3);
+        //g_myframework->BuildDummyTriNVAPI(&g_blas_result, &g_tlas_result, tri_verts_resource, 3);
+        g_myframework->BuildBLAS(&g_blas_result, tri_verts_resource, sizeof(glm::vec3), 3);
+        g_myframework->BuildTLAS(&g_tlas_result, g_blas_result);
+        g_myframework->CreateSRVAccelerationStructure(g_tlas_result, g_cbvsrvuav_heap, 2);
+        break;
+      }
+      case TestType::TEST_TYPE_PROCEDURAL_AABB: {
+        aabb = g_aabbs.at(pertest_idx);
+        g_myframework->CreateBufferForCPUSideData(&aabb, sizeof(aabb), &aabb_resource);
+        g_myframework->BuildDummyProcedural(&g_blas_result, &g_tlas_result, aabb_resource, 1);
         g_myframework->CreateSRVAccelerationStructure(g_tlas_result, g_cbvsrvuav_heap, 2);
         break;
       }
     }
 
-
     MyFramework::MyRtShaderListInfo info{};
     info.raygen_shader = L"MyRayGenShader";
     info.miss_shader = L"MyMissShader";
-    info.closest_hit_shader = L"MyClosestHitShader";
-    info.hitgroup_name = L"MyHitGroup";
+    D3D12_HIT_GROUP_DESC hd{};
+    hd.ClosestHitShaderImport = L"MyClosestHitShader";
+    hd.HitGroupExport = L"MyHitGroup";
+    if (test_type == TestType::TEST_TYPE_PROCEDURAL_AABB) {
+      hd.IntersectionShaderImport = L"MyIntersectionShader";
+      hd.Type = D3D12_HIT_GROUP_TYPE_PROCEDURAL_PRIMITIVE;
+    }
+    else {
+      hd.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+    }
+    info.hit_groups = { hd };
     info.dxil_lib_bytecode = (void*)g_lssShader;
     info.dxil_lib_length = sizeof(g_lssShader);
-    info.hitgroup_type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     g_myframework->CreateMyRtPipeline(&g_my_rtpipeline, g_global_rootsig, info);
     D3D12_DISPATCH_RAYS_DESC* drd = &(g_my_rtpipeline.dispatch_rays_desc);
     drd->Width = 1;
@@ -397,7 +645,8 @@ int main(int argc, char** argv) {
     PerSceneCB h_perscene_cb{};
     {
       char* mapped;
-      h_perscene_cb = g_per_scene_cbs.at(i);
+      h_perscene_cb = g_per_scene_cbs.at(i_perscene_cb);
+      i_perscene_cb++;
 
       g_perscene_cb_cpu->Map(0, nullptr, (void**)&mapped);
       memcpy(mapped, &h_perscene_cb, sizeof(h_perscene_cb));
@@ -440,6 +689,9 @@ int main(int argc, char** argv) {
         h_perscene_cb.ray_dir.x, h_perscene_cb.ray_dir.y, h_perscene_cb.ray_dir.z,
         h_perscene_cb.tmin, h_perscene_cb.tmax
       );
+      if (lss_endcap_mode == NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_NONE) {
+        printf("no_end_caps, ");
+      }
 
       if (t_hit < 0) {
         printf("Miss");
@@ -512,7 +764,54 @@ int main(int argc, char** argv) {
         }
       }
 
+      printf("\n");
+      if (g_outfile) {
+        (*g_outfile) << "\n";
+      }
+
+      if (is_dumping_triangle) {
+        RayAndResult rar{};
+        rar.o = h_perscene_cb.ray_origin;
+        rar.d = h_perscene_cb.ray_dir;
+        rar.is_hit = (t_hit >= 0);
+        rar.hit_t = t_hit;
+        dumped_tris[tri_verts].push_back(rar);
+      }
+
       tri_verts_resource->Release();
+      break;
+    }
+    case TestType::TEST_TYPE_PROCEDURAL_AABB: {
+      printf("#%u: aabb0=(%g,%g,%g), aabb1=(%g,%g,%g), ray=(%g,%g,%g)-(%g,%g,%g), tmin=%g, tmax=%g, ",
+        i,
+        aabb.first.x, aabb.first.y, aabb.first.z,
+        aabb.second.x, aabb.second.y, aabb.second.z,
+        h_perscene_cb.ray_origin.x, h_perscene_cb.ray_origin.y, h_perscene_cb.ray_origin.z,
+        h_perscene_cb.ray_dir.x, h_perscene_cb.ray_dir.y, h_perscene_cb.ray_dir.z,
+        h_perscene_cb.tmin, h_perscene_cb.tmax
+      );
+
+      if (t_hit < 0) {
+        printf("Miss");
+        if (g_outfile) {
+          (*g_outfile) << "Miss";
+        }
+      }
+      else {
+        char buf[100];
+        snprintf(buf, sizeof(buf), "Hit");
+        printf("%s", buf);
+        if (g_outfile) {
+          (*g_outfile) << buf;
+        }
+      }
+
+      printf("\n");
+      if (g_outfile) {
+        (*g_outfile) << "\n";
+      }
+
+      aabb_resource->Release();
       break;
     }
     default: {
@@ -522,6 +821,40 @@ int main(int argc, char** argv) {
 
     g_blas_result->Release();
     g_tlas_result->Release();
+  }
+
+  // DUMP
+  if (dumped_tris.empty() == false) {
+    FILE* f{};
+    fopen_s(&f, "dumped_tris.json", "w");
+    fprintf(f, "DATA = [\n");
+    uint32_t idx0 = 0;
+    for (const auto& entry : dumped_tris) {
+      if (idx0 > 0) {
+        fprintf(f, "  ,\n");
+      }
+      idx0++;
+      fprintf(f, "  [\n");
+      fprintf(f, "    \"triangle\", [");
+      const auto& vs = entry.first;
+      fprintf(f, "[%g,%g,%g], [%g,%g,%g], [%g,%g,%g] ],\n",
+        vs[0].x, vs[0].y, vs[0].z,
+        vs[1].x, vs[1].y, vs[1].z,
+        vs[2].x, vs[2].y, vs[2].z);
+      fprintf(f, "    [\n");
+      for (const auto& rar : entry.second) {
+        fprintf(f, " [ [%g,%g,%g],[%g,%g,%g],\"%s\"",
+          rar.o.x, rar.o.y, rar.o.z, rar.d.x, rar.d.y, rar.d.z,
+          rar.is_hit ? "hit" : "miss");
+        if (rar.is_hit) {
+          fprintf(f, ", %g", rar.hit_t);
+        }
+        fprintf(f, "],");
+      }
+      fprintf(f, "    ]\n");
+      fprintf(f, "  ]\n");
+    }
+    fprintf(f, "]\n");
   }
 
   // DONE

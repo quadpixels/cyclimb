@@ -67,3 +67,10 @@ void MyClosestHitShader(inout MyPayload payload, in MyAttributes attr)
         payload.t = RayTCurrent();
     }
 }
+
+[shader("intersection")]
+void MyIntersectionShader()
+{
+    MyAttributes attr;
+    ReportHit(tmin, 0, attr);
+}
