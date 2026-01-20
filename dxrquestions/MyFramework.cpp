@@ -138,11 +138,37 @@ void MyFramework::InitDeviceAndCommandQ() {
       hw_adapter->GetDesc1(&desc);
       if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
       else {
-        CE(D3D12CreateDevice(hw_adapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&device12)));
-        printf("Created a hardware device = %p, %ls\n", device12, desc.Description);
+        D3D_FEATURE_LEVEL feature_levels[] = {
+          D3D_FEATURE_LEVEL_11_0,
+          D3D_FEATURE_LEVEL_12_2,
+          D3D_FEATURE_LEVEL_12_1,
+          D3D_FEATURE_LEVEL_12_0,
+          D3D_FEATURE_LEVEL_11_1,
+          D3D_FEATURE_LEVEL_10_1,
+          D3D_FEATURE_LEVEL_10_0
+        };
+        const char* fl_names[] = {
+          "11_0",
+          "12_2", 
+          "12_1",
+          "12_0",
+          "11_1",
+          "10_1",
+          "10_0"
+        };
+        for (uint32_t i = 0; i < _countof(feature_levels); i++) {
+          HRESULT hr = D3D12CreateDevice(hw_adapter, feature_levels[i], IID_PPV_ARGS(&device12));
+          if (SUCCEEDED(hr)) {
+            printf("Created a hardware device=%p, feature level=%s, name=%ls\n", device12, fl_names[i], desc.Description);
+            goto OK;
+          }
+        }
+        printf("Oh! Could not create device.\n");
+        exit(0);
         break;
       }
     }
+  OK: {}
   }
 
   // Check raytracing support

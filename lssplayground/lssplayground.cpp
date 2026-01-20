@@ -839,8 +839,10 @@ void InitPipeline() {
   sli.dxil_lib_length = sizeof(g_LssNvapiShader);
   sli.raygen_shader = L"RayGen";
   sli.miss_shader = L"Miss";
-  sli.closest_hit_shader = L"ClosestHit";
-  sli.hitgroup_name = L"HitGroup";
+  D3D12_HIT_GROUP_DESC hg{};
+  hg.ClosestHitShaderImport = L"ClosestHit";
+  hg.HitGroupExport = L"HitGroup";
+  sli.hit_groups = { hg };
   g_myframework->CreateMyRtPipeline(&g_lss_pipeline, g_lss_rootsig, sli);
 
   g_myframework->CreateNvapiEnabledGlobalRootSig(&g_proc_rootsig, 1, 3, 1, false, 0);
@@ -848,10 +850,12 @@ void InitPipeline() {
   sli.dxil_lib_length = sizeof(g_LssProceduralShader);
   sli.raygen_shader = L"RayGen";
   sli.miss_shader = L"Miss";
-  sli.closest_hit_shader = L"ClosestHit";
-  sli.hitgroup_name = L"HitGroup";
-  sli.intersection_shader = L"Intersection";
-  sli.hitgroup_type = D3D12_HIT_GROUP_TYPE_PROCEDURAL_PRIMITIVE;
+  hg = {};
+  hg.ClosestHitShaderImport = L"ClosestHit";
+  hg.HitGroupExport = L"HitGroup";
+  hg.IntersectionShaderImport = L"Intersection";
+  hg.Type = D3D12_HIT_GROUP_TYPE_PROCEDURAL_PRIMITIVE;
+  sli.hit_groups = { hg };
   g_myframework->CreateMyRtPipeline(&g_proc_pipeline, g_proc_rootsig, sli);
 
   g_myframework->CreateGlobalRootSig(&g_showdiff_rootsig, 1, 2, 0);

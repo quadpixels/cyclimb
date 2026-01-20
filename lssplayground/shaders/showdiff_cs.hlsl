@@ -23,5 +23,16 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     float2 uv = dispatchThreadID.xy / float2(width, height);
     
     float th = 0;
-    buffer[dispatchThreadID.xy] = (abs(t0 - t1) <= th) ? float4(0.1, 0.1, 0.1, 1) : float4(1, 0.2, 0.1, 1);
+    float4 ret;
+    float dif = (float) (abs(t0 - t1));
+    if (dif <= th)
+    {
+        ret = float4(0.1, 0.1, 0.1, 1);
+    }
+    else
+    {
+        ret = float4(1, 0.2, 0.1, 1);
+    }
+    buffer[dispatchThreadID.xy] = ret;
+
 }
