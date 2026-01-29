@@ -208,6 +208,16 @@ public:
   void BuildBLASProc(ID3D12Resource** blas_result, std::vector<ID3D12Resource*> aabb_buffers, uint32_t stride, std::vector<uint32_t> aabb_counts, std::vector<D3D12_RAYTRACING_GEOMETRY_FLAGS> geom_flags);  // Multiple Geoms
   void BuildTLAS(ID3D12Resource** tlas_result, ID3D12Resource* blas_result);
   void BuildTLAS(ID3D12Resource** tlas_result, const std::vector<D3D12_RAYTRACING_INSTANCE_DESC>& inst_descs);
+  void BuildBLASLSS(ID3D12Resource** blas_result, ID3D12Resource* lss_pos_resource, ID3D12Resource* lss_radii_resource, ID3D12Resource* lss_indices_resource,
+    uint32_t vert_count, uint32_t index_count, uint32_t prim_count,
+    NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE endcap_mode, NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT prim_format,
+    D3D12_RAYTRACING_GEOMETRY_FLAGS geom_flags
+  );
+  void BuildBLASLSS(ID3D12Resource** blas_result, std::vector<ID3D12Resource*> lss_pos_resources, std::vector<ID3D12Resource*> lss_radii_resources, std::vector<ID3D12Resource*> lss_indices_resources,
+    std::vector<uint32_t> vert_counts, std::vector<uint32_t> index_counts, std::vector<uint32_t> prim_counts,
+    std::vector<NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE> endcap_modes, std::vector<NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT> prim_formats,
+    std::vector<D3D12_RAYTRACING_GEOMETRY_FLAGS> geom_flags
+  );
 
   constexpr static uint32_t WIN_W = 512, WIN_H = 512;
   constexpr static uint32_t FRAME_COUNT = 2;

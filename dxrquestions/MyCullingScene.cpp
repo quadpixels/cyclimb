@@ -70,8 +70,8 @@ void MyCullingScene::BuildOrRebuildAS() {
   };
 
   std::vector<glm::vec2> deltas = {
-    { -0.205 + 0.5, 0 + 0.5 },
-    { +0.205 + 0.5, 0 + 0.5 }
+    { -0.205 + 0.5, 0 + 0.75 },
+    { +0.205 + 0.5, 0 + 0.75 }
   };
 
   std::vector<float> scales = {
@@ -99,8 +99,8 @@ void MyCullingScene::BuildOrRebuildAS() {
     {  1 + x0,  1 + x0,  0.01 }
   };
   std::vector<glm::vec2> deltas1 = {
-    { -0.21 + 0.5, 0 },
-    { +0.21 + 0.5, 0 }
+    { -0.21 + 0.5, 0.3 },
+    { +0.21 + 0.5, 0.3 }
   };
   std::vector<ID3D12Resource*> aabb_bufs(2);
   for (uint32_t i = 0; i < 2; i++) {
@@ -129,6 +129,45 @@ void MyCullingScene::BuildOrRebuildAS() {
     inst_descs[i].Transform[2][2] = 1.0f;
   }
 
+  std::vector<ID3D12Resource*> lss_pos_bufs(2);
+  std::vector<ID3D12Resource*> lss_radii_bufs(2);
+  if (has_nvapi) {
+    for (uint32_t i = 0; i < 2; i++) {
+      std::vector<glm::vec3> lss_poses = {
+        { -0.1, -0.6, 0.0 },
+        {  0.1, -0.4, 0.0 }
+      };
+      for (uint32_t j = 0; j < 2; j++) {
+        lss_poses[j] += glm::vec3(deltas1[i], 0.0);
+      }
+      framework->CreateBufferForCPUSideData(lss_poses.data(), lss_poses.size() * sizeof(lss_poses[0]), &lss_pos_bufs[i]);
+      std::vector<float> lss_radii = {
+        0.1, 0.1
+      };
+      framework->CreateBufferForCPUSideData(lss_radii.data(), lss_radii.size() * sizeof(lss_radii[0]), &lss_radii_bufs[i]);
+    }
+    std::vector<uint32_t> vert_counts = { 2, 2 };
+    std::vector<uint32_t> index_counts = { 2, 2 };
+    std::vector<uint32_t> prim_counts = { 2, 2 };
+    std::vector<NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE> endcap_modes(2, NVAPI_D3D12_RAYTRACING_LSS_ENDCAP_MODE_CHAINED);
+    std::vector<NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT> prim_formats(2, NVAPI_D3D12_RAYTRACING_LSS_PRIMITIVE_FORMAT_LIST);
+    framework->BuildBLASLSS(&blas_result_lss, lss_pos_bufs, lss_radii_bufs, { nullptr, nullptr }, vert_counts, index_counts, prim_counts,
+      endcap_modes, prim_formats,
+      gfs);
+
+
+    D3D12_RAYTRACING_INSTANCE_DESC d{};
+    d.AccelerationStructure = blas_result_lss->GetGPUVirtualAddress();
+    d.Flags = inst_flag;
+    d.InstanceContributionToHitGroupIndex = 0;
+    d.InstanceID = 0;
+    d.InstanceMask = 0xFF;
+    d.Transform[0][0] = 1.0f;
+    d.Transform[1][1] = 1.0f;
+    d.Transform[2][2] = 1.0f;
+    inst_descs.push_back(d);
+  }
+
   framework->BuildTLAS(&tlas_result, inst_descs);
 
   vertex_bufs[0]->Release();
@@ -137,7 +176,7 @@ void MyCullingScene::BuildOrRebuildAS() {
   aabb_bufs[1]->Release();
 
   // Refresh SRV
-  framework->CreateSRVAccelerationStructure(tlas_result, cbvsrvuav_heap, 1);
+  framework->CreateSRVAccelerationStructure(tlas_result, cbvsrvuav_heap, has_nvapi ? 2 : 1);
 }
 
 MyCullingScene::MyCullingScene(MyFramework* f) : MyScene(f) {
@@ -146,8 +185,20 @@ MyCullingScene::MyCullingScene(MyFramework* f) : MyScene(f) {
   text_pass->InitD3D12(nullptr);
   text_pass->InitFreetype();
 
+  // NVAPI ?
+  uint32_t nvapi_uav = 100;
+  uint32_t nvapi_space = 0;
+  NvAPI_Status status = NvAPI_D3D12_SetNvShaderExtnSlotSpaceLocalThread(f->GetDevice(), nvapi_uav, nvapi_space);
+  if (status != NVAPI_OK) {
+    printf("Oh! error setting NVShaderExtnSlotSpaceLocalThread\n");
+    has_nvapi = false;
+  }
+
   // ============== RootSig and Pipeline =================
-  framework->CreateGlobalRootSig(&global_rootsig, 1, 1, 1);
+  if (has_nvapi)  // [Output UAV] [AS SRV] [PerScene CBV] 
+    framework->CreateNvapiEnabledGlobalRootSig(&global_rootsig, 1, 1, 1, true, nvapi_uav);
+  else            // [Output UAV] [NVAPI UAV] [AS SRV] [PerScene CBV]
+    framework->CreateGlobalRootSig(&global_rootsig, 1, 1, 1);
 
   MyFramework::MyRtShaderListInfo info{};
   D3D12_HIT_GROUP_DESC hitgroup1{};
@@ -170,9 +221,12 @@ MyCullingScene::MyCullingScene(MyFramework* f) : MyScene(f) {
   framework->CreateRtOutputResource(&rt_output_resource);
   uint32_t cb_size = 256;
   framework->CreateBufferForCPUSideData(nullptr, cb_size, &perscene_cb);
-  framework->CreateCBVSRVUAVHeap(&cbvsrvuav_heap, &cbvsrvuav_heap_cpu, 3);
-  framework->CreateCBVBuffer(perscene_cb, cbvsrvuav_heap, 2, cb_size);
+  framework->CreateCBVSRVUAVHeap(&cbvsrvuav_heap, &cbvsrvuav_heap_cpu, has_nvapi ? 4 : 3);
+  framework->CreateCBVBuffer(perscene_cb, cbvsrvuav_heap, has_nvapi ? 3 : 2, cb_size);
   framework->CreateUAVTexture2D(rt_output_resource, cbvsrvuav_heap, 0);
+  if (has_nvapi) {
+    framework->CreateNullUAV(cbvsrvuav_heap, 1);
+  }
 
   BuildOrRebuildAS();
 }
@@ -263,15 +317,19 @@ void MyCullingScene::Render() {
       y += 16.0f;
     }
 
+    float the_y = MyFramework::WIN_H * 0.65f;
+    if (has_nvapi) {
+      the_y += MyFramework::WIN_H * 0.25f;
+    }
     text_pass->AddText(L"Geom Flag",
       MyFramework::WIN_W*0.75f - 40,
-      MyFramework::WIN_H*0.65f + 16, 1.0, glm::vec3(0,1,1), glm::mat4(1));
+      the_y + 16, 1.0, glm::vec3(0,1,1), glm::mat4(1));
     text_pass->AddText(L"NONE",
       MyFramework::WIN_W * 0.6f - 1,
-      MyFramework::WIN_H * 0.65f, 1.0, glm::vec3(0, 1, 1), glm::mat4(1));
+      the_y, 1.0, glm::vec3(0, 1, 1), glm::mat4(1));
     text_pass->AddText(L"FORCE_OPAQUE",
       MyFramework::WIN_W * 0.8f - 30,
-      MyFramework::WIN_H * 0.65f, 1.0, glm::vec3(0, 1, 1), glm::mat4(1));
+      the_y, 1.0, glm::vec3(0, 1, 1), glm::mat4(1));
   }
 
   std::vector<std::wstring> infos;

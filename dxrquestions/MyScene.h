@@ -91,7 +91,7 @@ public:
   ID3D12RootSignature* global_rootsig;
   ID3D12Resource* rt_output_resource;
   MyRtPipeline my_rt_pipeline{};
-  ID3D12Resource* blas_result_tri, *blas_result_proc;
+  ID3D12Resource* blas_result_tri, *blas_result_proc, *blas_result_lss;
   ID3D12Resource* tlas_result;
   ID3D12Resource* perscene_cb;
   PerSceneCB h_perscene_cb{};
@@ -99,6 +99,7 @@ public:
 
   int choice_idx{ -1 };
   bool is_as_dirty{ false };
+  bool has_nvapi{ true };
   void do_ChangeChoice(int delta);
   void do_ChangeOption(int delta);
 };
