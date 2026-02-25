@@ -1927,6 +1927,85 @@ void MyFramework::BuildBLASLSS(ID3D12Resource** blas_result, std::vector<ID3D12R
   WaitForPreviousFrame();
 }
 
+void MyFramework::BuildBLASSphere(ID3D12Resource** blas_result, std::vector<ID3D12Resource*> sphere_pos_resources, std::vector<ID3D12Resource*> sphere_radii_resources, std::vector<ID3D12Resource*> sphere_indices_resources,
+  std::vector<uint32_t> vert_counts, std::vector<uint32_t> index_counts,
+  std::vector<D3D12_RAYTRACING_GEOMETRY_FLAGS> geom_flags
+) {
+  uint32_t N = sphere_pos_resources.size();
+  std::vector<NVAPI_D3D12_RAYTRACING_GEOMETRY_SPHERES_DESC> sphere_descs(N);
+  std::vector<NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX> geom_descs(N);
+
+  for (uint32_t i = 0; i < N; i++) {
+    NVAPI_D3D12_RAYTRACING_GEOMETRY_SPHERES_DESC& sph_desc = sphere_descs.at(i);
+    sph_desc.indexBuffer.StartAddress = (sphere_indices_resources[i] ? sphere_indices_resources[i]->GetGPUVirtualAddress() : NULL);
+    sph_desc.indexBuffer.StrideInBytes = sizeof(uint32_t);
+    sph_desc.indexCount = index_counts[i];
+    sph_desc.indexFormat = (sphere_indices_resources[i] ? DXGI_FORMAT_R32_UINT : DXGI_FORMAT_UNKNOWN);
+    sph_desc.vertexCount = vert_counts[i];
+    sph_desc.vertexPositionBuffer.StartAddress = sphere_pos_resources[i]->GetGPUVirtualAddress();
+    sph_desc.vertexPositionBuffer.StrideInBytes = sizeof(float) * 3;
+    sph_desc.vertexPositionFormat = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    sph_desc.vertexRadiusBuffer.StartAddress = sphere_radii_resources[i]->GetGPUVirtualAddress();
+    sph_desc.vertexRadiusBuffer.StrideInBytes = sizeof(float);
+    sph_desc.vertexRadiusFormat = DXGI_FORMAT_R32_FLOAT;
+
+    NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX& geom_desc = geom_descs.at(i);
+    geom_desc.type = NVAPI_D3D12_RAYTRACING_GEOMETRY_TYPE_SPHERES_EX;
+    geom_desc.flags = geom_flags.at(i);
+    geom_desc.spheres = sph_desc;
+  }
+
+  NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS_EX blas_input_ex{};
+  blas_input_ex.type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+  blas_input_ex.flags = NVAPI_D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_NONE_EX;
+  blas_input_ex.numDescs = N;
+  blas_input_ex.descsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+  blas_input_ex.geometryDescStrideInBytes = sizeof(NVAPI_D3D12_RAYTRACING_GEOMETRY_DESC_EX);
+  blas_input_ex.pGeometryDescs = geom_descs.data();
+
+  D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO blas_prebuild_info = {};
+  NVAPI_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_EX_PARAMS blas_get_prebuild_info_params = {};
+  blas_get_prebuild_info_params.pInfo = &blas_prebuild_info;
+  blas_get_prebuild_info_params.pDesc = &blas_input_ex;
+  blas_get_prebuild_info_params.version = NVAPI_GET_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO_EX_PARAMS_VER;
+  NvAPI_Status status = NvAPI_D3D12_GetRaytracingAccelerationStructurePrebuildInfoEx(device12, &blas_get_prebuild_info_params);
+  if (status != NVAPI_OK)
+  {
+    printf("[FAIL]: NvAPI_D3D12_GetRaytracingAccelerationStructurePrebuildInfoEx\n");
+    std::abort();
+  }
+
+  ID3D12Resource* scratch_resource{};
+  CreateBufferForUAVAccess(blas_prebuild_info.ScratchDataSizeInBytes, &scratch_resource);
+
+  // Build BLAS
+  CreateBufferForUAVAccess(blas_prebuild_info.ResultDataMaxSizeInBytes, blas_result);
+  NVAPI_D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC_EX blas_build_desc{};
+  blas_build_desc.destAccelerationStructureData = (*blas_result)->GetGPUVirtualAddress();
+  blas_build_desc.inputs = blas_input_ex;
+  blas_build_desc.scratchAccelerationStructureData = scratch_resource->GetGPUVirtualAddress();
+  NVAPI_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_EX_PARAMS blas_build_params{};
+  blas_build_params.numPostbuildInfoDescs = 0;
+  blas_build_params.pPostbuildInfoDescs = nullptr;
+  blas_build_params.pDesc = &blas_build_desc;
+  blas_build_params.version = NVAPI_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_EX_PARAMS_VER;
+
+  CE(command_allocator->Reset());
+  CE(command_list->Reset(command_allocator, nullptr));
+
+  status = NvAPI_D3D12_BuildRaytracingAccelerationStructureEx(command_list, &blas_build_params);
+  if (status != NVAPI_OK)
+  {
+    printf("[FAIL]: NvAPI_D3D12_BuildRaytracingAccelerationStructureEx\n");
+    std::abort();
+  }
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(scratch_resource)));
+  command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::UAV(*blas_result)));
+  command_list->Close();
+  command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
+  WaitForPreviousFrame();
+}
+
 void MyParisIvyLeafScene::Render() {
   // Clear screen
 

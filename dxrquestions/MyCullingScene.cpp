@@ -129,13 +129,14 @@ void MyCullingScene::BuildOrRebuildAS() {
     inst_descs[i].Transform[2][2] = 1.0f;
   }
 
+  // L.S.S.
   std::vector<ID3D12Resource*> lss_pos_bufs(2);
   std::vector<ID3D12Resource*> lss_radii_bufs(2);
   if (has_nvapi) {
     for (uint32_t i = 0; i < 2; i++) {
       std::vector<glm::vec3> lss_poses = {
-        { -0.1, -0.6, 0.0 },
-        {  0.1, -0.4, 0.0 }
+        { -0.1, -0.55, 0.0 },
+        {  0.1, -0.35, 0.0 }
       };
       for (uint32_t j = 0; j < 2; j++) {
         lss_poses[j] += glm::vec3(deltas1[i], 0.0);
@@ -155,9 +156,39 @@ void MyCullingScene::BuildOrRebuildAS() {
       endcap_modes, prim_formats,
       gfs);
 
-
     D3D12_RAYTRACING_INSTANCE_DESC d{};
     d.AccelerationStructure = blas_result_lss->GetGPUVirtualAddress();
+    d.Flags = inst_flag;
+    d.InstanceContributionToHitGroupIndex = 0;
+    d.InstanceID = 0;
+    d.InstanceMask = 0xFF;
+    d.Transform[0][0] = 1.0f;
+    d.Transform[1][1] = 1.0f;
+    d.Transform[2][2] = 1.0f;
+    inst_descs.push_back(d);
+  }
+
+  // Spheres
+  std::vector<ID3D12Resource*> sphere_pos_bufs(2);
+  std::vector<ID3D12Resource*> sphere_radii_bufs(2);
+  if (has_nvapi) {
+    for (uint32_t i = 0; i < 2; i++) {
+      std::vector<glm::vec3> sphere_poses = {
+        { 0, -0.9, 0.0 },
+      };
+      sphere_poses[0] += glm::vec3(deltas1[i], 0.0);
+      std::vector<float> sphere_radii = {
+        0.2
+      };
+      framework->CreateBufferForCPUSideData(sphere_poses.data(), sphere_poses.size() * sizeof(sphere_poses[0]), &sphere_pos_bufs[i]);
+      framework->CreateBufferForCPUSideData(sphere_radii.data(), sphere_radii.size() * sizeof(sphere_radii[0]), &sphere_radii_bufs[i]);
+    }
+    std::vector<uint32_t> vert_counts = { 1, 1 };
+    std::vector<uint32_t> index_counts = { 1,1 };
+    framework->BuildBLASSphere(&blas_result_spheres, sphere_pos_bufs, sphere_radii_bufs, { nullptr, nullptr }, vert_counts, index_counts, gfs);
+
+    D3D12_RAYTRACING_INSTANCE_DESC d{};
+    d.AccelerationStructure = blas_result_spheres->GetGPUVirtualAddress();
     d.Flags = inst_flag;
     d.InstanceContributionToHitGroupIndex = 0;
     d.InstanceID = 0;
@@ -174,6 +205,16 @@ void MyCullingScene::BuildOrRebuildAS() {
   vertex_bufs[1]->Release();
   aabb_bufs[0]->Release();
   aabb_bufs[1]->Release();
+  if (has_nvapi) {
+    lss_pos_bufs[0]->Release();
+    lss_pos_bufs[1]->Release();
+    lss_radii_bufs[0]->Release();
+    lss_radii_bufs[1]->Release();
+    sphere_pos_bufs[0]->Release();
+    sphere_pos_bufs[1]->Release();
+    sphere_radii_bufs[0]->Release();
+    sphere_radii_bufs[1]->Release();
+  }
 
   // Refresh SRV
   framework->CreateSRVAccelerationStructure(tlas_result, cbvsrvuav_heap, has_nvapi ? 2 : 1);
@@ -319,7 +360,7 @@ void MyCullingScene::Render() {
 
     float the_y = MyFramework::WIN_H * 0.65f;
     if (has_nvapi) {
-      the_y += MyFramework::WIN_H * 0.25f;
+      the_y += MyFramework::WIN_H * 0.3f;
     }
     text_pass->AddText(L"Geom Flag",
       MyFramework::WIN_W*0.75f - 40,

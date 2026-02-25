@@ -91,7 +91,7 @@ public:
   ID3D12RootSignature* global_rootsig;
   ID3D12Resource* rt_output_resource;
   MyRtPipeline my_rt_pipeline{};
-  ID3D12Resource* blas_result_tri, *blas_result_proc, *blas_result_lss;
+  ID3D12Resource* blas_result_tri, *blas_result_proc, *blas_result_lss, *blas_result_spheres;
   ID3D12Resource* tlas_result;
   ID3D12Resource* perscene_cb;
   PerSceneCB h_perscene_cb{};
