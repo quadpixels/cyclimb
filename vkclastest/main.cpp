@@ -42,7 +42,7 @@ bool g_is_rt{ false };
 bool g_is_cluster{ false };  // applies to both rast and rt
 bool g_is_cluster_template{ false };  // only applies to rt
 bool g_is_rotate{ true };
-constexpr bool UseIndirect = true;  // TODO: Fix normals
+constexpr bool UseIndirect = false;  // TODO: Fix normals
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 std::vector<const char*> validationLayers = {
@@ -413,7 +413,7 @@ private:
         for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
           vkCmdBindVertexBuffers(commandBuffer, 0, 1, &(clusterVertexBuffers[i]), &zero);
           vkCmdBindIndexBuffer(commandBuffer, clusterIndexBuffers[i], 0, VK_INDEX_TYPE_UINT32);
-          vkCmdDrawIndexed(commandBuffer, vertex_and_indices[i].indices.size(), 1, 0, 0, 0);
+          vkCmdDrawIndexed(commandBuffer, vertex_and_indices[i].indices.size(), 1, 0, 0, i);
         }
       }
       else {
