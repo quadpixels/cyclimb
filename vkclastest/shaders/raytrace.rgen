@@ -12,6 +12,8 @@ layout(binding=2) uniform RtPerSceneData {
     mat4 InverseView;
     mat4 InverseProj;
     int IsUsingCluster;
+    int ColoringMode;
+    int HighlightedClusterID;
 };
 
 layout(location=0) rayPayloadEXT hitPayload payload;

@@ -1,4 +1,4 @@
-#define _CRT_SECURE_NO_WARNINGS
+﻿#define _CRT_SECURE_NO_WARNINGS
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN
@@ -26,6 +26,10 @@
 #include <optional>
 #include <vector>
 
+#include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_vulkan.h"
+
 std::string g_gltf_filename = "bunny.gltf";
 
 #define TINYOBJLOADER_IMPLEMENTATION
@@ -41,6 +45,12 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 bool g_is_rt{ false };
 bool g_is_cluster{ false };  // applies to both rast and rt
 bool g_is_cluster_template{ false };  // only applies to rt
+enum ColoringMode {
+  COLORING_MODE_CLUSTER_ID,
+  COLORING_MODE_GEOMETRY_ID
+};
+int  g_coloring_mode{ COLORING_MODE_CLUSTER_ID };
+int  g_highlighted_cluster_id{ -1 };
 bool g_is_rotate{ true };
 constexpr bool UseIndirect = false;  // TODO: Fix normals
 const uint32_t WIDTH = 800;
@@ -66,6 +76,8 @@ struct PerSceneUniformBuffer {
 struct RtPerSceneUniformBuffer {
   glm::mat4 inv_view, inv_proj;
   int is_cluster;
+  int coloring_mode;  // 0 = cluster, 1 = geometry
+  int highlighted_cluster_id;
 };
 
 struct RtPerSceneVertexProcessingDataBuffer {
@@ -258,6 +270,7 @@ public:
   void run() {
     initWindow();
     initVulkan();
+    initImGui();
     mainLoop();
     cleanup();
   }
@@ -428,8 +441,11 @@ private:
         );
       }
     }
-
     vkCmdEndRenderPass(commandBuffer);
+
+    // ImGUI-Related
+    renderImGuiAndEndImGuiForFrame();
+
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not end command buffer");
     }
@@ -619,6 +635,11 @@ private:
       VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
       0, 0, nullptr, 0, nullptr, 1, &barrier);
 
+    //
+    // // ImGUI-Related
+    renderImGuiAndEndImGuiForFrame();
+    //
+
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not end RT command buffer");
     }
@@ -631,8 +652,11 @@ private:
     vkMapMemory(device, rtPerSceneVertexProcessingBufferMemory, 0, sizeof(RtPerSceneVertexProcessingDataBuffer), 0, (void**)(&mapped));
     RtPerSceneVertexProcessingDataBuffer rtpb{};
     float angle = g_is_rotate ? glfwGetTime() : 0;
+    float rad = angle * 3.14159f / 2;
+    const float twopi = 3.1415926f * 2;
+    rad = rad - glm::floor(rad / twopi) * twopi;
     rtpb.M = glm::mat4(1);
-    rtpb.M = glm::rotate(rtpb.M, angle * 3.14159f / 2, glm::vec3(0, 1, 0));
+    rtpb.M = glm::rotate(rtpb.M, rad, glm::vec3(0, 1, 0));
     if (is_clas)
       rtpb.num_verts = g_cluster_vert_count;
     else
@@ -759,6 +783,8 @@ private:
       rtpsub.inv_proj = glm::inverse(psub.P);
       rtpsub.inv_view = glm::inverse(psub.V);
       rtpsub.is_cluster = (int)g_is_cluster;
+      rtpsub.coloring_mode = (int)g_coloring_mode;
+      rtpsub.highlighted_cluster_id = g_highlighted_cluster_id;
       vkMapMemory(device, perSceneRtUniformBufferMemory, 0, sizeof(RtPerSceneUniformBuffer), 0, (void**)&mapped);
       memcpy(mapped, &rtpsub, sizeof(rtpsub));
       vkUnmapMemory(device, perSceneRtUniformBufferMemory);
@@ -768,6 +794,8 @@ private:
     vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(device, 1, &inFlightFence);
     
+    startImGuiForFrame();
+
     uint32_t imageIndex;
     vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
     vkResetCommandBuffer(commandBuffer, 0);
@@ -1178,6 +1206,19 @@ private:
 
     vkGetPhysicalDeviceFeatures2(physicalDevice, &deviceFeatures2);
 
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps{};
+    asProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+
+    VkPhysicalDeviceClusterAccelerationStructurePropertiesNV clusterASProps{};
+    clusterASProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_PROPERTIES_NV;
+    clusterASProps.pNext = &asProps;
+
+    VkPhysicalDeviceProperties2 deviceProperties2{};
+    deviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    deviceProperties2.pNext = &clusterASProps;
+
+    vkGetPhysicalDeviceProperties2(physicalDevice, &deviceProperties2);
+
     assert(bufferDeviceAddressFeatures.bufferDeviceAddress);
     //assert(accelerationStructureFeatures.accelerationStructureHostCommands);  // Does not support AS build on the host?
     assert(accelerationStructureFeatures.accelerationStructure);
@@ -1192,6 +1233,27 @@ private:
 
     vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+
+    printf("[CLAS properties]\n");
+    printf("maxVerticesPerCluster  = %u\n", clusterASProps.maxVerticesPerCluster);
+    printf("maxTrianglesPerCluster = %u\n", clusterASProps.maxTrianglesPerCluster);
+    printf("clusterScratchByteAlignment = %u\n", clusterASProps.clusterScratchByteAlignment);
+    printf("clusterByteAlignment        = %u\n", clusterASProps.clusterByteAlignment);
+    printf("clusterTemplateByteAlignment    = %u\n", clusterASProps.clusterTemplateByteAlignment);
+    printf("clusterBottomLevelByteAlignment = %u\n", clusterASProps.clusterBottomLevelByteAlignment);
+    printf("clusterTemplateBoundsByteAlignment = %u\n", clusterASProps.clusterTemplateBoundsByteAlignment);
+    printf("maxClusterGeometryIndex            = %u\n", clusterASProps.maxClusterGeometryIndex);
+
+    printf("[AS properties]\n");
+    printf("maxGeometryCount = %lu\n", asProps.maxGeometryCount);
+    printf("maxInstanceCount = %lu\n", asProps.maxInstanceCount);
+    printf("maxPrimitiveCount = %lu\n", asProps.maxPrimitiveCount);
+    printf("maxPerStageDescriptorAccelerationStructures = %u\n", asProps.maxPerStageDescriptorAccelerationStructures);
+    printf("maxPerStageDescriptorUpdateAfterBindAccelerationStructures = %u\n", asProps.maxPerStageDescriptorUpdateAfterBindAccelerationStructures);
+    printf("maxDescriptorSetAccelerationStructures = %u\n", asProps.maxDescriptorSetAccelerationStructures);
+    printf("maxDescriptorSetUpdateAfterBindAccelerationStructures = %u\n", asProps.maxDescriptorSetUpdateAfterBindAccelerationStructures);
+    printf("minAccelerationStructureScratchOffsetAlignment = %u\n", asProps.minAccelerationStructureScratchOffsetAlignment);
+
   }
 
   void createDescriptorSetLayout() {
@@ -1319,6 +1381,7 @@ private:
   struct VertexAndIndex {
     std::vector<glm::vec3> vertices;
     std::vector<uint32_t> indices;
+    std::vector<VkClusterAccelerationStructureGeometryIndexAndGeometryFlagsNV> geom_idx_and_flags;
     uint32_t vert_offset;
     uint32_t index_offset;
   };
@@ -1353,6 +1416,9 @@ private:
         out.indices.push_back(i0.vertex_index);
         out.indices.push_back(i1.vertex_index);
         out.indices.push_back(i2.vertex_index);
+        VkClusterAccelerationStructureGeometryIndexAndGeometryFlagsNV gigf{};
+        gigf.geometryIndex = g_cluster_tri_count / 10000;
+        out.geom_idx_and_flags.push_back(gigf);
         g_cluster_tri_count++;
 
         // Calculate normals (per face), accumulated, process in readClusters()
@@ -1417,15 +1483,20 @@ private:
     printf("Alignment: %u\n", vb_alignment);
     vkDestroyBuffer(device, tempVertexBuffer, nullptr);
 
-    size_t total_size = 0;
+    size_t total_size = 0;       // Vertex and index
+    size_t total_size_gigf = 0;  // Geometry index and flag
     for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
       const VertexAndIndex& vi = vertex_and_indices[i];
       total_size += vi.vertices.size() * sizeof(glm::vec3);
       total_size = AlignUp(total_size, vb_alignment);
       total_size += vi.indices.size() * sizeof(uint32_t);
       total_size = AlignUp(total_size, vb_alignment);
+
+      total_size_gigf += vi.indices.size() / 3 * sizeof(VkClusterAccelerationStructureGeometryIndexAndGeometryFlagsNV);
+      total_size_gigf = AlignUp(total_size_gigf, vb_alignment);
     }
-    printf("VB + IB buffer size: %u\n", total_size);
+    printf("VB + IB            buffer size: %zu\n", total_size);
+    printf("GeomIdx + GeomFlag buffer size: %zu\n", total_size_gigf);
 
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -1442,7 +1513,13 @@ private:
       throw std::runtime_error("Failed to allocate memory for cluster vertex and index");
     }
 
+    allocInfo.allocationSize = total_size_gigf;
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &clusterGeomIdxAndFlagMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for cluster geomidx and geomflag");
+    }
+
     size_t offset = 0;
+    size_t offset_gigf = 0;
     for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
       const VertexAndIndex& vi = vertex_and_indices[i];
       createInfo.size = sizeof(glm::vec3) * vi.vertices.size();
@@ -1454,6 +1531,11 @@ private:
       }
       vkBindBufferMemory(device, clusterVertexBuffer, clusterVertexAndIndexMemory, offset);
       clusterVertexBuffers.push_back(clusterVertexBuffer);
+      VkBuffer clusterVertexBufferDisplaced;  // Same size but bound to different memory
+      if (vkCreateBuffer(device, &createInfo, nullptr, &clusterVertexBufferDisplaced) != VK_SUCCESS) {
+        throw std::runtime_error("Could not create vertex buffer displaced");
+      }
+      clusterVertexBuffersDisplaced.push_back(clusterVertexBufferDisplaced);
 
       offset += vi.vertices.size() * sizeof(glm::vec3);
       offset = AlignUp(offset, vb_alignment);
@@ -1470,12 +1552,27 @@ private:
 
       offset += vi.indices.size() * sizeof(uint32_t);
       offset = AlignUp(offset, vb_alignment);
+
+      size_t ntris = vi.indices.size() / 3;
+      size_t gigf_size = ntris * sizeof(VkClusterAccelerationStructureGeometryIndexAndGeometryFlagsNV);
+
+      VkBuffer clusterGeomIdxGeomFlagBuffer;
+      createInfo.size = gigf_size;
+      if (vkCreateBuffer(device, &createInfo, nullptr, &clusterGeomIdxGeomFlagBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("Could not create geom idx and geom flag buffer");
+      }
+      vkBindBufferMemory(device, clusterGeomIdxGeomFlagBuffer, clusterGeomIdxAndFlagMemory, offset_gigf);
+      clusterGeomIdxAndFlagBuffers.push_back(clusterGeomIdxGeomFlagBuffer);
+
+      offset_gigf += gigf_size;
+      offset_gigf = AlignUp(offset_gigf, vb_alignment);
     }
 
     // Not using indirect
-    offset = 0;
-    void* data;
-    vkMapMemory(device, clusterVertexAndIndexMemory, 0, createInfo.size, 0, &data);
+    offset = 0; offset_gigf = 0;
+    void* data, * data_gigf;
+    vkMapMemory(device, clusterVertexAndIndexMemory, 0, total_size,      0, &data);
+    vkMapMemory(device, clusterGeomIdxAndFlagMemory, 0, total_size_gigf, 0, &data_gigf);
     for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
       const VertexAndIndex& vi = vertex_and_indices[i];
       memcpy(((uint8_t*)data) + offset, vi.vertices.data(), sizeof(glm::vec3) * vi.vertices.size());
@@ -1484,8 +1581,14 @@ private:
       memcpy(((uint8_t*)data) + offset, vi.indices.data(), sizeof(uint32_t)* vi.indices.size());
       offset += vi.indices.size() * sizeof(uint32_t);
       offset = AlignUp(offset, vb_alignment);
+      memcpy(((uint8_t*)data_gigf) + offset_gigf, vi.geom_idx_and_flags.data(), sizeof(VkClusterAccelerationStructureGeometryIndexAndGeometryFlagsNV)* vi.geom_idx_and_flags.size());
+      size_t ntris = vi.indices.size() / 3;
+      size_t gigf_size = ntris * sizeof(VkClusterAccelerationStructureGeometryIndexAndGeometryFlagsNV);
+      offset_gigf += gigf_size;
+      offset_gigf = AlignUp(offset_gigf, vb_alignment);
     }
     vkUnmapMemory(device, clusterVertexAndIndexMemory);
+    vkUnmapMemory(device, clusterGeomIdxAndFlagMemory);
 
     // Using indirect
     offset = 0;
@@ -1506,7 +1609,7 @@ private:
     }
     offset = AlignUp(offset, vb_alignment);
     allocInfo.allocationSize = offset;
-    printf("VB + IB Buffer for indirect size: %u\n", offset);
+    printf("VB + IB Buffer for indirect size: %zu\n", offset);
     if (vkAllocateMemory(device, &allocInfo, nullptr, &clusterVertexAndIndexMemoryForIndirect) != VK_SUCCESS) {
       throw std::runtime_error("Failed to allocate memory for cluster vertex and index for indirect");
     }
@@ -1538,6 +1641,8 @@ private:
       offset += sizeof(uint32_t) * vi.indices.size();
     }
     vkUnmapMemory(device, clusterVertexAndIndexMemoryForIndirect);
+
+    // 
 
     // Indirect Cmds and normal offsets
     uint32_t tri_count = 0;
@@ -1611,6 +1716,27 @@ private:
       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
       clusterVertexBufferForIndirectDisplaced, clusterVertexBufferForIndirectDisplacedMemory);
+
+    // Directed
+    clusterVertexBuffersDisplaced.resize(g_cluster_count);
+    for (uint32_t i = 0; i < vertex_and_indices.size(); i++) {
+      const VertexAndIndex& vi = vertex_and_indices[i];
+      VkBufferCreateInfo bufInfo{};
+      bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+      bufInfo.size = vi.vertices.size() * sizeof(glm::vec3);
+      bufInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT; // 可根据需要添加
+      bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+      VkBuffer buffer;
+      if (vkCreateBuffer(device, &bufInfo, nullptr, &buffer) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create displaced vertex buffer for cluster");
+      }
+
+      VkDeviceSize offset = cluster_vert_idx_offsets[i] * sizeof(glm::vec3);
+      vkBindBufferMemory(device, buffer, clusterVertexBufferForIndirectDisplacedMemory, offset);
+      clusterVertexBuffersDisplaced[i] = buffer;
+    }
+
   }
 
   void createSwapChain() {
@@ -2903,7 +3029,8 @@ private:
     VkClusterAccelerationStructureTriangleClusterInputNV clusterTriangleInput{};
     clusterTriangleInput.sType = VK_STRUCTURE_TYPE_CLUSTER_ACCELERATION_STRUCTURE_TRIANGLE_CLUSTER_INPUT_NV;
     clusterTriangleInput.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    clusterTriangleInput.maxClusterUniqueGeometryCount = 0;
+    clusterTriangleInput.maxClusterUniqueGeometryCount = 2; // Maximum 2
+    clusterTriangleInput.maxGeometryIndexValue = g_cluster_tri_count / 10000 + 1;
     clusterTriangleInput.maxClusterTriangleCount = 64;
     clusterTriangleInput.maxClusterVertexCount = 64;
     clusterTriangleInput.maxTotalTriangleCount = g_cluster_tri_count;
@@ -2936,7 +3063,7 @@ private:
       scratchBuffer, scratchMemory);
 
     bool useExplicit = false;
-    bool useDedicatedVertices = false;
+    bool useDedicatedVertices = true;
 
     if (!update) {
       if (useExplicit) {
@@ -3000,20 +3127,22 @@ private:
       for (uint32_t c = 0; c < g_cluster_count; c++) {
         const VertexAndIndex& vi = vertex_and_indices[c];
         // input
-        VkClusterAccelerationStructureBuildTriangleClusterInfoNV buildInfoOld = triangleClusterBuildInfos[c];
         VkClusterAccelerationStructureBuildTriangleClusterInfoNV& buildInfo = triangleClusterBuildInfos[c];
         buildInfo = {};
         buildInfo.clusterID = c;
         buildInfo.vertexCount = vi.vertices.size();
         buildInfo.triangleCount = vi.indices.size() / 3;
         buildInfo.baseGeometryIndexAndGeometryFlags.geometryFlags = VK_CLUSTER_ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT_NV;
+        buildInfo.baseGeometryIndexAndGeometryFlags.geometryIndex = 0;
         buildInfo.positionTruncateBitCount = trunc;
+        buildInfo.geometryIndexAndFlagsBuffer = getBufferDeviceAddress(clusterGeomIdxAndFlagBuffers[c]);
+        buildInfo.geometryIndexAndFlagsBufferStride = sizeof(VkClusterAccelerationStructureGeometryIndexAndGeometryFlagsNV);
 
         if (useDedicatedVertices) {
           buildInfo.indexBuffer = getBufferDeviceAddress(clusterIndexBuffers[c]);
           buildInfo.indexBufferStride = sizeof(uint32_t);
           buildInfo.indexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_32BIT_NV;
-          buildInfo.vertexBuffer = getBufferDeviceAddress(clusterVertexBuffers[c]);
+          buildInfo.vertexBuffer = getBufferDeviceAddress(clusterVertexBuffersDisplaced[c]);
           buildInfo.vertexBufferStride = sizeof(glm::vec3);
         }
         else {
@@ -3095,12 +3224,18 @@ private:
         printf("\n");
         vkUnmapMemory(device, clusterSizeMemory);
 
-        if (0) {
+        if (1) {
           printf("Dst Addrs:");
+          uint64_t prev_addr{ 0 };
           vkMapMemory(device, clusterDstMemory, 0, clusterDstBufferSize, 0, (void**)&data);
           for (uint32_t i = 0; i < g_cluster_count; i++) {
             uint64_t addr = ((uint64_t*)(data))[i];
             printf(" %p", (void*)(addr));
+            if (i > 0) {
+              printf(" (%d B from prev)", addr - prev_addr);
+            }
+            printf("\n");
+            prev_addr = addr;
           }
           printf("\n");
           vkUnmapMemory(device, clusterDstMemory);
@@ -4278,6 +4413,97 @@ private:
     }
   }
 
+  void initImGui() {
+    printf("Checking IMGUI version: %s\n", IMGUI_VERSION);
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+
+    VkDescriptorPoolSize imgui_pool_sizes[] =
+    {
+        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+    };
+
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000 * IM_ARRAYSIZE(imgui_pool_sizes);
+    pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(imgui_pool_sizes);
+    pool_info.pPoolSizes = imgui_pool_sizes;
+
+    vkCreateDescriptorPool(device, &pool_info, nullptr, &imguiDescriptorPool);
+
+
+    // 4. 初始化 Vulkan 后端（新版需要提供 PipelineRenderingCreateInfo 或 color attachment 格式）
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = instance;
+    init_info.PhysicalDevice = physicalDevice;
+    init_info.Device = device;
+    init_info.QueueFamily = findQueueFamilies(physicalDevice).graphicsFamily.value();
+    init_info.Queue = graphicsQueue;
+    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.DescriptorPool = imguiDescriptorPool;
+    init_info.MinImageCount = MAX_FRAMES_IN_FLIGHT;
+    init_info.ImageCount = swapChainImages.size();
+    init_info.UseDynamicRendering = false;
+    init_info.PipelineInfoMain.RenderPass = renderPass;
+    init_info.PipelineInfoMain.Subpass = 0;
+
+    // 初始化 Vulkan 后端
+    bool ret = ImGui_ImplVulkan_Init(&init_info);      // 这里的 renderPass 是你现有的渲染通道
+    printf("ImGui_ImplVulkan_Init returned %d\n", ret);
+  }
+
+
+  // Start and end ImGui in a frame.
+  void startImGuiForFrame() {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+  }
+
+  void renderImGuiAndEndImGuiForFrame() {
+    bool show_demo_window = true;
+    ImGui::SetNextWindowSize(ImVec2(360, 320), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(32, 32), ImGuiCond_Once);
+    ImGui::Begin("VK CLAS Test.");
+    ImGui::Checkbox("Cluster", &g_is_cluster);
+    ImGui::SameLine();
+    ImGui::Checkbox("template", &g_is_cluster_template);
+    ImGui::Checkbox("RT", &g_is_rt);
+    ImGui::Separator();
+    ImGui::Text("cluster_vert_count = %u", g_cluster_vert_count);
+    ImGui::Text("vert_count = %u", g_vertex_count);
+    ImGui::Separator();
+    ImGui::Checkbox("rotate", &g_is_rotate);
+    if (g_is_cluster) {
+      const char* coloring_modes[] = { "Cluster ID", "Geometry ID" };
+      ImGui::Combo("Coloring by", (int*)&g_coloring_mode, coloring_modes, _countof(coloring_modes));
+    }
+    ImGui::PushItemWidth(96);
+    if (g_coloring_mode == 0) {
+      ImGui::InputInt("highlight cluster id", &g_highlighted_cluster_id);
+    }
+    else {
+      ImGui::InputInt("highlight geometry id", &g_highlighted_cluster_id);
+    }
+    ImGui::PopItemWidth();
+    ImGui::End();
+    ImGui::Render();
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+  }
+
   uint32_t g_vertex_count = 0;
   uint32_t g_index_count = 0;
 
@@ -4327,12 +4553,18 @@ private:
   VkDeviceMemory rtOutputImageMemories[MAX_FRAMES_IN_FLIGHT];
   VkImageView rtOutputImageViews[MAX_FRAMES_IN_FLIGHT];
 
+  VkDescriptorPool imguiDescriptorPool;
+
   std::vector<VertexAndIndex> vertex_and_indices;
 
   // Not using indirect
   std::vector<VkBuffer> clusterVertexBuffers;
+  std::vector<VkBuffer> clusterVertexBuffersDisplaced;
+  VkDeviceMemory clusterVertexDisplacedMemory;
   std::vector<VkBuffer> clusterIndexBuffers;
   VkDeviceMemory clusterVertexAndIndexMemory;
+  std::vector<VkBuffer> clusterGeomIdxAndFlagBuffers;
+  VkDeviceMemory clusterGeomIdxAndFlagMemory;
   // Using indirect
   VkBuffer clusterVertexBufferForIndirect;
   VkBuffer clusterIndexBufferForIndirect;

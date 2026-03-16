@@ -11,6 +11,8 @@ layout(binding=2) uniform RtPerSceneData {  // Keep in sync with raytrace.rgen
     mat4 InverseView;
     mat4 InverseProj;
     int IsUsingCluster;
+    int ColoringMode;  // 0 = cluster, 1 = geometry
+	int HighlightedClusterID;
 };
 
 layout(binding=3) readonly buffer VertexBuf {
@@ -52,13 +54,15 @@ const vec3 PALETTE[] = {
 
 void main() {
   uint pidx = gl_PrimitiveID;
+  uint gidx = gl_GeometryIndexEXT;
   uint index = 0;
   uint vidx0, vidx1, vidx2;
+  uint cidx = gl_ClusterIDNV_;
   if (IsUsingCluster != 0) {
-    pidx += vertexOffsets[gl_ClusterIDNV_] + indexOffsets[gl_ClusterIDNV_];
-	vidx0 = indexes[indexOffsets[gl_ClusterIDNV_] * 3 + gl_PrimitiveID * 3] + vertexOffsets[gl_ClusterIDNV_];
-	vidx1 = indexes[indexOffsets[gl_ClusterIDNV_] * 3 + gl_PrimitiveID * 3 + 1] + vertexOffsets[gl_ClusterIDNV_];
-	vidx2 = indexes[indexOffsets[gl_ClusterIDNV_] * 3 + gl_PrimitiveID * 3 + 2] + vertexOffsets[gl_ClusterIDNV_];
+    pidx += vertexOffsets[cidx] + indexOffsets[cidx];
+	vidx0 = indexes[indexOffsets[cidx] * 3 + gl_PrimitiveID * 3] + vertexOffsets[cidx];
+	vidx1 = indexes[indexOffsets[cidx] * 3 + gl_PrimitiveID * 3 + 1] + vertexOffsets[cidx];
+	vidx2 = indexes[indexOffsets[cidx] * 3 + gl_PrimitiveID * 3 + 2] + vertexOffsets[cidx];
   } else {
 	index = pidx * 3;
 	vidx0 = indexes[index];
@@ -74,10 +78,32 @@ void main() {
   float dp = dot(n, normalize(vec3(0,1,0)));
   float x = dp * 0.5 + 0.5;
 
-  uint cidx = 0;
-  if (IsUsingCluster != 0) {
-	cidx = gl_ClusterIDNV_ % 7;
+  if (HighlightedClusterID != -1 && IsUsingCluster != 0) {
+    if (ColoringMode == 0) {
+      if (HighlightedClusterID == cidx) {  // Highlight individual cluster
+        prd.hitValue = vec3(0.0, 0.0, 1.0);
+      } else {
+        prd.hitValue = PALETTE[0];
+      }
+    } else {
+      if (HighlightedClusterID == gidx) {  // Highlight individual cluster
+        prd.hitValue = vec3(0.0, 0.0, 1.0);
+      } else {
+        prd.hitValue = PALETTE[0];
+      }
+    }
+    prd.hitValue *= x;
+    return;
   }
-  prd.hitValue = PALETTE[cidx];
+
+  uint col_idx = 0;
+  if (IsUsingCluster != 0) {
+    if (ColoringMode == 0) {
+      col_idx = cidx % 7;
+    } else {
+      col_idx = gidx % 7;
+    }
+  }
+  prd.hitValue = PALETTE[col_idx];
   prd.hitValue *= x;
 }
