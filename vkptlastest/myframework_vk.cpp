@@ -8,10 +8,12 @@ const bool enableValidationLayers = true;
 
 #include <assert.h>
 #include <algorithm>
+#include <fstream>
 #include <numeric>
 #include <stdexcept>
 #include <set>
 #include <string>
+#include <vector>
 
 #ifdef max
 #undef max
@@ -96,6 +98,7 @@ void MyFrameworkVk::InitDeviceAndCommandQ() {
   createLogicalDevice();
   createCommandPool();
   createCommandBuffer();
+  createSyncObjects();
 }
 
 void MyFrameworkVk::createInstance() {
@@ -684,4 +687,449 @@ void MyFrameworkVk::InitRenderPassAndFramebuffers() {
       throw std::runtime_error("Failed to create framebuffer");
     }
   }
+}
+
+void MyFrameworkVk::createSyncObjects() {
+  VkSemaphoreCreateInfo semaphoreInfo{};
+  semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+  if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create semaphore");
+  }
+
+  semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+  if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create semaphore");
+  }
+
+  VkFenceCreateInfo fenceInfo{};
+  fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+  fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+  if (vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create fence");
+  }
+}
+
+static std::vector<char> readFile(const std::string& filename) {
+  std::ifstream ifs(filename, std::ios::ate | std::ios::binary);
+  if (!ifs.is_open()) {
+    throw std::runtime_error("Failed to open file");
+  }
+  size_t fileSize = (size_t)ifs.tellg();
+  std::vector<char> buffer(fileSize);
+  ifs.seekg(0);
+  ifs.read(buffer.data(), fileSize);
+  ifs.close();
+  return buffer;
+}
+
+MyFrameworkVk::MyRtShaderListInfo MyFrameworkVk::CreateMyRtPipeline() {
+  MyRtShaderListInfo ret{};
+
+  // Pipeline Descriptor Set Layout
+  VkDescriptorSetLayoutBinding rtPipeDSLB[2]{};
+  rtPipeDSLB[0].binding = 0;
+  rtPipeDSLB[0].descriptorCount = 1;
+  rtPipeDSLB[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+  rtPipeDSLB[0].pImmutableSamplers = nullptr;
+  rtPipeDSLB[0].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  rtPipeDSLB[1].binding = 1;
+  rtPipeDSLB[1].descriptorCount = 1;
+  rtPipeDSLB[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  rtPipeDSLB[1].pImmutableSamplers = nullptr;
+  rtPipeDSLB[1].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  VkDescriptorSetLayoutCreateInfo dslci{};
+  dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  dslci.bindingCount = _countof(rtPipeDSLB);
+  dslci.pBindings = rtPipeDSLB;
+  if (vkCreateDescriptorSetLayout(device, &dslci, nullptr, &ret.rtPipeDSL) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create RT descriptor set layout");
+  }
+
+  // Pipeline Layout
+  VkPipelineLayoutCreateInfo rtPipelineLayoutInfo{ };
+  rtPipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  rtPipelineLayoutInfo.setLayoutCount = 1;
+  rtPipelineLayoutInfo.pSetLayouts = &ret.rtPipeDSL;
+  rtPipelineLayoutInfo.pushConstantRangeCount = 0;
+  rtPipelineLayoutInfo.pPushConstantRanges = nullptr;
+  if (vkCreatePipelineLayout(device, &rtPipelineLayoutInfo, nullptr, &ret.rtPipelineLayout) != VK_SUCCESS) {
+    throw std::runtime_error("Could not create rt pipeline layout");
+  }
+
+  // Pipeline
+  VkPipelineShaderStageCreateInfo stages[1]{};
+  std::vector<char> raygenShaderCode = readFile("shaders/rgen.spv");
+  VkShaderModule raygenShaderModule = createShaderModule(raygenShaderCode);
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].pName = "main";
+  stages[0].module = raygenShaderModule;
+  stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  // Shader Group / HitGroup
+  VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[1]{};
+  shaderGroupInfos[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+  shaderGroupInfos[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+  shaderGroupInfos[0].anyHitShader = VK_SHADER_UNUSED_KHR;
+  shaderGroupInfos[0].closestHitShader = VK_SHADER_UNUSED_KHR;
+  shaderGroupInfos[0].generalShader = 0;  // Raygen
+  shaderGroupInfos[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+  VkRayTracingPipelineCreateInfoKHR rtPipelineCreateInfo{};
+  rtPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+  rtPipelineCreateInfo.flags = 0;
+  rtPipelineCreateInfo.stageCount = _countof(stages);
+  rtPipelineCreateInfo.pStages = stages;
+  rtPipelineCreateInfo.groupCount = _countof(shaderGroupInfos);
+  rtPipelineCreateInfo.pGroups = shaderGroupInfos;
+  rtPipelineCreateInfo.maxPipelineRayRecursionDepth = 1;
+  rtPipelineCreateInfo.pLibraryInfo = nullptr;
+  rtPipelineCreateInfo.pLibraryInterface = nullptr;
+  rtPipelineCreateInfo.pDynamicState = nullptr;
+  rtPipelineCreateInfo.layout = ret.rtPipelineLayout;
+
+  PFN_vkCreateRayTracingPipelinesKHR funcCreateRayTracingPipelines =
+    (PFN_vkCreateRayTracingPipelinesKHR)vkGetInstanceProcAddr(
+      instance, "vkCreateRayTracingPipelinesKHR");
+  assert(funcCreateRayTracingPipelines);
+  if (funcCreateRayTracingPipelines(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtPipelineCreateInfo, nullptr, &ret.rtPipeline) != VK_SUCCESS) {
+    throw std::runtime_error("Could not create RT pipeline");
+  }
+
+  vkDestroyShaderModule(device, raygenShaderModule, nullptr);
+
+  // Create RT SBT
+  const size_t sbtSize = 32;
+  const size_t sbtAlignment = 64;
+  const size_t numSBTs = 1;   // Rgen only
+  const size_t sbtMemorySize = numSBTs * sbtAlignment;
+
+  createBuffer(sbtMemorySize,
+    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+    | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
+    | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+    | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+    ret.sbtBuffer,
+    ret.sbtMemory
+  );
+
+  char shaderGroupHandle[sbtSize * numSBTs]{};
+  PFN_vkGetRayTracingShaderGroupHandlesKHR funcGetRayTracingShaderGroupHandlesKHR =
+    (PFN_vkGetRayTracingShaderGroupHandlesKHR)vkGetInstanceProcAddr(
+      instance, "vkGetRayTracingShaderGroupHandlesKHR");
+  if (funcGetRayTracingShaderGroupHandlesKHR(device, ret.rtPipeline, 0, numSBTs, sbtSize * numSBTs, shaderGroupHandle) != VK_SUCCESS) {
+    throw std::runtime_error("Could not get RT shader group handles");
+  }
+
+  uint8_t* mapped{};
+  vkMapMemory(device, ret.sbtMemory, 0, sbtMemorySize, 0, (void**)&mapped);
+  memcpy(mapped, shaderGroupHandle, sbtSize);
+  vkUnmapMemory(device, ret.sbtMemory);
+
+  VkDeviceAddress sbtDeviceAddress = getBufferDeviceAddress(ret.sbtBuffer);
+
+  ret.rtRgenRegion.deviceAddress = sbtDeviceAddress;
+  ret.rtRgenRegion.size = sbtSize;
+  ret.rtRgenRegion.stride = sbtSize;
+
+  return ret;
+}
+
+VkShaderModule MyFrameworkVk::createShaderModule(const std::vector<char>& code) {
+  VkShaderModuleCreateInfo createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  createInfo.codeSize = code.size();
+  createInfo.pCode = (uint32_t*)(code.data());
+  VkShaderModule ret;
+  if (vkCreateShaderModule(device, &createInfo, nullptr, &ret) != VK_SUCCESS) {
+    throw std::runtime_error("Could not create shader module");
+  }
+  return ret;
+}
+
+void MyFrameworkVk::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+  VkBufferCreateInfo bufferInfo{};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = size;
+  bufferInfo.usage = usage;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create buffer!");
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+  VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+  if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
+    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    allocInfo.pNext = &allocFlagsInfo;
+  }
+
+  if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+    throw std::runtime_error("failed to allocate buffer memory!");
+  }
+
+  vkBindBufferMemory(device, buffer, bufferMemory, 0);
+}
+
+VkDeviceAddress MyFrameworkVk::getBufferDeviceAddress(VkBuffer& buf) {
+  VkBufferDeviceAddressInfo addrInfo{};
+  addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+  addrInfo.buffer = buf;
+  addrInfo.pNext = nullptr;
+  return vkGetBufferDeviceAddress(device, &addrInfo);
+}
+
+uint32_t MyFrameworkVk::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memProperties{};
+  vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+    if (typeFilter & (1 << i)) {
+      if ((memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+        return i;
+      }
+    }
+  }
+  throw std::runtime_error("Could not find suitable memory type");
+}
+
+// CreateUAVTexture2D
+void MyFrameworkVk::CreateUAVTexture2D(VkImageView iv, VkDescriptorSet dstSet, uint32_t dstBinding) {
+  VkDescriptorImageInfo ii{};
+  ii.imageView = iv;
+  ii.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+  
+  VkWriteDescriptorSet wds{};
+  wds.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  wds.dstSet = dstSet;
+  wds.dstBinding = dstBinding;
+  wds.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  wds.descriptorCount = 1;
+  wds.pImageInfo = &ii;
+
+  vkUpdateDescriptorSets(device, 1, &wds, 0, nullptr);
+}
+
+// CreateCBVSRVUAVHeap = VkDescriptorSet + VkDescriptorPool
+VkDescriptorSet MyFrameworkVk::CreateDescriptorSet(VkDescriptorSetLayout layout, VkDescriptorPool pool) {
+  VkDescriptorSetAllocateInfo dsai{};
+  dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  dsai.descriptorPool = pool;
+  dsai.descriptorSetCount = 1;
+  dsai.pSetLayouts = &layout;
+  VkDescriptorSet ret{};
+  if (vkAllocateDescriptorSets(device, &dsai, &ret) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate RT descriptor sets");
+  }
+  return ret;
+}
+
+VkDescriptorPool MyFrameworkVk::CreateCBVSRVUAVPool(std::vector<std::pair<VkDescriptorType, uint32_t>> sizes, uint32_t maxSets) {
+  VkDescriptorPool ret;
+  uint32_t sz = sizes.size();
+  std::vector<VkDescriptorPoolSize> poolSizes(sz);
+  for (uint32_t i = 0; i < sz; i++) {
+    poolSizes[i].type = sizes[i].first;
+    poolSizes[i].descriptorCount = sizes[i].second;
+  }
+  VkDescriptorPoolCreateInfo dpci{};
+  dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  dpci.poolSizeCount = poolSizes.size();
+  dpci.pPoolSizes = poolSizes.data();
+  dpci.maxSets = maxSets;
+  dpci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  if (vkCreateDescriptorPool(device, &dpci, nullptr, &ret) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create RT descriptor pool");
+  }
+  return ret;
+}
+
+void MyFrameworkVk::CreateRtOutputResource(uint32_t w, uint32_t h, VkImage& image, VkDeviceMemory& memory, VkImageView& imageView) {
+  // Image
+  VkImageCreateInfo imageInfo{};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  imageInfo.extent.width = w;
+  imageInfo.extent.height = h;
+  imageInfo.extent.depth = 1;
+  imageInfo.mipLevels = 1;
+  imageInfo.arrayLayers = 1;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  imageInfo.usage =
+    VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+    VK_IMAGE_USAGE_STORAGE_BIT;
+  QueueFamilyIndices qfi = findQueueFamilies(physicalDevice);
+  imageInfo.queueFamilyIndexCount = 0;
+  imageInfo.pQueueFamilyIndices = nullptr;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateImage(device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create RT output image");
+  }
+
+  // Memory
+  VkMemoryRequirements memReq{};
+  vkGetImageMemoryRequirements(device, image, &memReq);
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memReq.size;
+  allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+  allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+  allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+  allocInfo.pNext = &allocFlagsInfo;
+  if (vkAllocateMemory(device, &allocInfo, nullptr, &memory) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate memory for RT output image");
+  }
+  vkBindImageMemory(device, image, memory, 0);
+
+  VkImageViewCreateInfo imageViewInfo{};
+  imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  imageViewInfo.format = imageInfo.format;
+  imageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  imageViewInfo.subresourceRange.baseMipLevel = 0;
+  imageViewInfo.subresourceRange.levelCount = 1;
+  imageViewInfo.subresourceRange.baseArrayLayer = 0;
+  imageViewInfo.subresourceRange.layerCount = 1;
+  imageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  imageViewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  imageViewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  imageViewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  imageViewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  imageViewInfo.image = image;
+  if (vkCreateImageView(device, &imageViewInfo, nullptr, &imageView) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create output image view");
+  }
+  
+  // Format change Cmd List
+  vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+  vkResetFences(device, 1, &inFlightFence);
+  vkResetCommandBuffer(commandBuffer, 0);
+
+  VkCommandBufferBeginInfo beginInfo{};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = 0;
+  beginInfo.pInheritanceInfo = nullptr;
+  if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to begin command buffer");
+  }
+
+  transitionImageLayout(image,
+    VK_FORMAT_R32G32B32A32_SFLOAT,
+    VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+  vkEndCommandBuffer(commandBuffer);
+
+  // Submit CMD List
+  VkSubmitInfo submitInfo{};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submitInfo.waitSemaphoreCount = 0;
+  submitInfo.pWaitSemaphores = nullptr;
+  VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR };
+  submitInfo.pWaitDstStageMask = waitStages;
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &commandBuffer;
+  submitInfo.signalSemaphoreCount = 0;
+  submitInfo.pSignalSemaphores = nullptr;
+  if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to submit image barriers to Q");
+  }
+
+  vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+}
+
+void MyFrameworkVk::transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+  VkImageMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = oldLayout;
+  barrier.newLayout = newLayout;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = image;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.srcAccessMask = 0;
+  barrier.dstAccessMask = 0;
+
+  VkPipelineStageFlags sourceStage{}, destinationStage{};
+
+  if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+    sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  }
+  else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  }
+  else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = 0;
+
+    sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+  }
+  else {
+    throw std::invalid_argument("unsupported layout transition!");
+  }
+
+  vkCmdPipelineBarrier(commandBuffer,
+    sourceStage, destinationStage,
+    0, 0, nullptr, 0, nullptr, 1, &barrier);
+  endSingleTimeCommands(commandBuffer);
+}
+
+VkCommandBuffer MyFrameworkVk::beginSingleTimeCommands() {
+  VkCommandBufferAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandPool = commandPool;
+  allocInfo.commandBufferCount = 1;
+
+  VkCommandBuffer commandBuffer;
+  vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+  VkCommandBufferBeginInfo beginInfo{};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+  vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+  return commandBuffer;
+}
+
+void MyFrameworkVk::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
+  vkEndCommandBuffer(commandBuffer);
+
+  VkSubmitInfo submitInfo{};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &commandBuffer;
+
+  vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+  vkQueueWaitIdle(graphicsQueue);
+
+  vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }

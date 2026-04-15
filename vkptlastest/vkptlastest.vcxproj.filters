@@ -27,4 +27,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="shaders\raytrace.rgen">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
+  </ItemGroup>
 </Project>
