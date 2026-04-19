@@ -3,15 +3,28 @@
 #include <stdio.h>
 #include <stdexcept>
 
+#include <glm/glm.hpp>
+
 MyFrameworkVk* g_framework{};
 
 const uint32_t WIN_W = 800, WIN_H = 600;
 
-MyFrameworkVk::MyRtShaderListInfo g_info;
+MyFrameworkVk::MyRtPipeline g_my_rt_pipeline;
+
 VkDescriptorSet g_ds;
 VkImage g_rt_output_image;
 VkImageView g_rt_output_image_view;
 VkDeviceMemory g_rt_output_memory;
+VkBuffer g_vb;
+VkDeviceMemory g_vb_memory;
+VkBuffer g_ib;
+VkDeviceMemory g_ib_memory;
+VkAccelerationStructureKHR g_blas;
+VkBuffer g_blas_result_buf;
+VkDeviceMemory g_blas_result_memory;
+VkAccelerationStructureKHR g_tlas;
+VkBuffer g_tlas_result_buf;
+VkDeviceMemory g_tlas_result_memory;
 
 static bool should_exit = false;
 
@@ -35,13 +48,15 @@ void Render() {
   VkDevice device = g_framework->GetLogicalDevice();
   VkFence fence = g_framework->inFlightFence;
   VkCommandBuffer commandBuffer = g_framework->commandBuffer;
-  VkSemaphore semaphore = g_framework->imageAvailableSemaphore;
+  static uint32_t lastImageIndex;
 
+  VkSemaphore semaphore = g_framework->imageAvailableSemaphore[lastImageIndex];
   vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
   vkResetFences(device, 1, &fence);
   uint32_t imageIndex;
   vkAcquireNextImageKHR(device, g_framework->swapChain, UINT64_MAX, semaphore, VK_NULL_HANDLE, &imageIndex);
   vkResetCommandBuffer(g_framework->commandBuffer, 0);
+  lastImageIndex = imageIndex;
 
   VkCommandBufferBeginInfo beginInfo{};
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -64,42 +79,31 @@ void Render() {
   vkCmdEndRenderPass(commandBuffer);
 
   // RT op must be outside of a pass
-  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, g_info.rtPipeline);
-  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, g_info.rtPipelineLayout, 0, 1, &g_ds, 0, nullptr);
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, g_my_rt_pipeline.rtPipeline);
+  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, g_my_rt_pipeline.rtPipelineLayout, 0, 1, &g_ds, 0, nullptr);
   PFN_vkCmdTraceRaysKHR funcCmdTraceRaysKHR =
     (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(
       g_framework->instance, "vkCmdTraceRaysKHR");
-  funcCmdTraceRaysKHR(commandBuffer, &g_info.rtRgenRegion, &g_info.rtMissRegion, &g_info.rtHitRegion, &g_info.rtCallRegion, WIN_W, WIN_H, 1);
+  funcCmdTraceRaysKHR(commandBuffer,
+    &g_my_rt_pipeline.rtRgenRegion,
+    &g_my_rt_pipeline.rtMissRegion,
+    &g_my_rt_pipeline.rtHitRegion,
+    &g_my_rt_pipeline.rtCallRegion, WIN_W, WIN_H, 1);
 
   // BLIT
-  VkImageMemoryBarrier barrier{};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-  barrier.image = g_rt_output_image;
-  barrier.srcAccessMask = 0;
-  barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  vkCmdPipelineBarrier(commandBuffer,
-    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-    VK_PIPELINE_STAGE_TRANSFER_BIT,
-    0, 0, nullptr, 0, nullptr, 1, &barrier);
+  g_framework->ImageMemoryBarrier(commandBuffer,
+    g_rt_output_image,
+    VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    0, VK_ACCESS_TRANSFER_READ_BIT,
+    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT
+  );
 
-  barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  barrier.image = g_framework->swapChainImages[imageIndex];
-  barrier.srcAccessMask = 0;
-  barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  vkCmdPipelineBarrier(commandBuffer,
-    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-    VK_PIPELINE_STAGE_TRANSFER_BIT,
-    0, 0, nullptr, 0, nullptr, 1, &barrier);
+  g_framework->ImageMemoryBarrier(commandBuffer,
+    g_framework->swapChainImages[imageIndex],
+    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    0, VK_ACCESS_TRANSFER_WRITE_BIT,
+    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT
+  );
 
   VkImageBlit blit{};
   blit.srcOffsets[1] = { WIN_W, WIN_H, 1 };
@@ -114,24 +118,19 @@ void Render() {
     g_framework->swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
     1, &blit, VK_FILTER_LINEAR);
 
-  barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  barrier.dstAccessMask = 0;
-  vkCmdPipelineBarrier(commandBuffer,
-    VK_PIPELINE_STAGE_TRANSFER_BIT,
-    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-    0, 0, nullptr, 0, nullptr, 1, &barrier);
+  g_framework->ImageMemoryBarrier(commandBuffer,
+    g_framework->swapChainImages[imageIndex],
+    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    VK_ACCESS_TRANSFER_WRITE_BIT, 0,
+    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
+  );
 
-  barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-  barrier.dstAccessMask = 0;
-  barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-  barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-  barrier.image = g_rt_output_image;
-  vkCmdPipelineBarrier(commandBuffer,
-    VK_PIPELINE_STAGE_TRANSFER_BIT,
-    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-    0, 0, nullptr, 0, nullptr, 1, &barrier);
+  g_framework->ImageMemoryBarrier(commandBuffer,
+    g_rt_output_image,
+    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+    VK_ACCESS_TRANSFER_WRITE_BIT, 0,
+    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
+  );
 
   if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
     throw std::runtime_error("Could not end command buffer");
@@ -181,16 +180,36 @@ int main() {
   g_framework->InitDeviceAndCommandQ();
   g_framework->InitSwapchain();
   g_framework->InitRenderPassAndFramebuffers();
-  g_info = g_framework->CreateMyRtPipeline();
+
+  // Info
+  MyFrameworkVk::MyRtShaderListInfo info{};
+  info.raygen_shader = "shaders/rgen.spv";
+  info.miss_shader = "shaders/miss.spv";
+  info.closest_hit_shader = "shaders/rchit.spv";
+
+  g_framework->CreateMyRtPipeline(&g_my_rt_pipeline, info);
   std::vector<std::pair<VkDescriptorType, uint32_t>> sizes = {
     { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
     { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 }
   };
+
   uint32_t nfif = g_framework->swapChainFramebuffers.size();
   VkDescriptorPool pool = g_framework->CreateCBVSRVUAVPool(sizes, nfif);
-  g_ds = g_framework->CreateDescriptorSet(g_info.rtPipeDSL, pool);
+  g_ds = g_framework->CreateDescriptorSet(g_my_rt_pipeline.rtPipeDSL, pool);
   g_framework->CreateRtOutputResource(WIN_W, WIN_H, g_rt_output_image, g_rt_output_memory, g_rt_output_image_view);
   g_framework->CreateUAVTexture2D(g_rt_output_image_view, g_ds, 1);
+  std::vector<glm::vec3> verts = {
+    { -0.5, -0.5, 0 },
+    { +0.5, -0.5, 0 },
+    { 0, +0.5, 0 }
+  };
+  std::vector<uint32_t> idxes = { 0, 1, 2 };
+  g_framework->CreateBufferForCPUSideData(verts.data(), sizeof(verts[0]) * verts.size(), g_vb, g_vb_memory);
+  g_framework->CreateBufferForCPUSideData(idxes.data(), sizeof(idxes[0]) * idxes.size(), g_ib, g_ib_memory);
+  g_framework->BuildBLAS(g_blas, g_blas_result_buf, g_blas_result_memory, g_vb, g_ib, 3);
+  g_framework->BuildTLAS(g_tlas, g_blas, g_blas_result_buf, g_tlas_result_buf, g_tlas_result_memory);
+  g_framework->CreateSRVAccelerationStructure(g_tlas, g_ds, 0);
+
   MainLoop();
   printf("MyFrameworkVk is done.\n");
   exit(0);

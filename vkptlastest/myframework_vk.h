@@ -26,10 +26,16 @@ public:
     }
   };
   struct MyRtShaderListInfo {
+    const char* raygen_shader{};  // Byte code path
+    const char* closest_hit_shader{};
+    const char* miss_shader{};
+  };
+  struct MyRtPipeline {
     VkPipeline rtPipeline{};
     VkDescriptorSetLayout rtPipeDSL{};
     VkPipelineLayout rtPipelineLayout{};
 
+    // Matches DX12's hit groups
     VkStridedDeviceAddressRegionKHR rtRgenRegion, rtMissRegion, rtHitRegion, rtCallRegion;
     VkDeviceMemory sbtMemory;
     VkBuffer sbtBuffer;
@@ -41,7 +47,8 @@ public:
   void InitSwapchain();
   void InitRenderPassAndFramebuffers();
 
-  MyRtShaderListInfo CreateMyRtPipeline();
+  void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline, MyRtShaderListInfo& info);
+  static std::vector<char> ReadFile(const std::string& filename);
 
   GLFWwindow* GetWindow() {
     return window;
@@ -51,9 +58,25 @@ public:
   }
 
   void CreateUAVTexture2D(VkImageView iv, VkDescriptorSet dstSet, uint32_t dstBinding);
+  void CreateSRVAccelerationStructure(VkAccelerationStructureKHR as, VkDescriptorSet dstSet, uint32_t binding);
   VkDescriptorPool CreateCBVSRVUAVPool(std::vector<std::pair<VkDescriptorType, uint32_t>> sizes, uint32_t maxSets);
   VkDescriptorSet CreateDescriptorSet(VkDescriptorSetLayout layout, VkDescriptorPool pool);
   void CreateRtOutputResource(uint32_t w, uint32_t h, VkImage& image, VkDeviceMemory& memory, VkImageView& imageView);
+  void ImageMemoryBarrier(VkCommandBuffer commandBuffer,
+    VkImage image,
+    VkImageLayout oldLayout, VkImageLayout newLayout,
+    VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask,
+    VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask);
+  void BuildBLAS(VkAccelerationStructureKHR& as,
+    VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
+    VkBuffer vb, VkBuffer ib, uint32_t maxVertex);
+  void BuildTLAS(VkAccelerationStructureKHR& outTlas,
+    const VkAccelerationStructureKHR& blas0, const VkBuffer& blas0Buffer,
+    VkBuffer& outTlasResultBuffer, VkDeviceMemory& outTlasResultMemory
+    );
+  void CreateBufferForCPUSideData(void* data, uint32_t len, VkBuffer& buf, VkDeviceMemory& mem);
+
+  VkShaderModule CreateShaderModule(const std::vector<char>& code);
 
 private:
   void createInstance();
@@ -74,9 +97,8 @@ private:
   void createCommandPool();
   void createCommandBuffer();
   void createSyncObjects();
-  VkShaderModule createShaderModule(const std::vector<char>& code);
   void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-  VkDeviceAddress getBufferDeviceAddress(VkBuffer& buf);
+  VkDeviceAddress getBufferDeviceAddress(const VkBuffer& buf);
   uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
   void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
   VkCommandBuffer beginSingleTimeCommands();
@@ -102,7 +124,7 @@ public:
   VkCommandBuffer commandBuffer;
   VkRenderPass renderPass;
   std::vector<VkFramebuffer> swapChainFramebuffers;
-  VkSemaphore imageAvailableSemaphore;
+  std::vector<VkSemaphore> imageAvailableSemaphore;
   VkSemaphore renderFinishedSemaphore;
   VkFence inFlightFence;
 };
