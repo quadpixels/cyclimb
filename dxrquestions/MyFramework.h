@@ -49,68 +49,6 @@ public:
   MyFramework* framework;
 };
 
-class MyParisIvyLeafScene : public MyScene {
-public:
-  MyParisIvyLeafScene(MyFramework* f);
-  void Render() override;
-  void Update(float secs) override;
-  void OnKeyDown(uint32_t k) override;
-
-  struct MyConstantBufferStruct {
-    uint32_t is_dump_debuginfo;
-    uint32_t is_omm;
-    uint32_t omm_primidx0;  // 0x9d58180 or 0x9d58190
-    uint32_t omm_primidx1;
-  };
-  MyConstantBufferStruct my_cb_cpu{};
-  ID3D12Resource* my_cb_resource;
-  ID3D12RootSignature* global_rootsig;
-  ID3D12Resource* rt_output_resource;
-  ID3D12Resource* my_debug_resource;
-  ID3D12Resource* my_debug_resource_cpu;
-  ID3D12DescriptorHeap* cbvsrvuav_heap, * texture_srv_heap;
-  ID3D12DescriptorHeap* cbvsrvuav_heap_omm;
-  ID3D12Resource* vertex_buffer;
-  D3D12_VERTEX_BUFFER_VIEW vbv;
-  MyRtPipeline my_rt_pipeline{};
-  ID3D12RootSignature* rast_rootsig{};
-  ID3D12PipelineState* rast_pipeline{};
-  ID3D12Resource* blas_result{};
-  ID3D12Resource* tlas_result{};
-  ID3D12Resource* blas_result_omm{};  // OMM-enabled BLAS, built using NVAPI
-  ID3D12Resource* tlas_result_omm{};  // OMM-enabled TLAS, built using NVAPI
-  bool is_rt{ false };
-  bool is_omm{ false };
-  struct Vertex {
-    alignas(16) glm::vec3 pos;
-    alignas(16) glm::vec3 color;
-    alignas(16) glm::vec2 uv; int mat_idx;
-    int pad{};
-  };
-  ID3D12Resource* diffuse_texture, * alpha_texture;
-  ID3D12Resource* omm_array_data_resource, * omm_desc_array_resource;
-
-  std::vector<Vertex> vertices = {
-    { { -0.5, -0.5, 0}, { 1, 0, 0 }, { 0, 1 }, -1 },
-    { {  0.5,  0.5, 0}, { 0, 1, 0 }, { 1, 0 }, -1 },
-    { { -0.5,  0.5, 0}, { 0, 0, 1 }, { 0, 0 }, -1 },
-
-    { { -0.5, -0.5, 0}, { 1, 0, 0 }, { 0, 1 }, -1 },
-    { {  0.5, -0.5, 0}, { 0, 0, 1 }, { 1, 1 }, -1 },
-    { {  0.5,  0.5, 0}, { 0, 1, 0 }, { 1, 0 }, -1 },
-  };
-
-  enum PrimIdxMappingState {
-    NotStarted,
-    GetNonOMMResult,
-    GetOMMResult,
-    Done
-  };
-  PrimIdxMappingState prim_idx_mapping_state{ PrimIdxMappingState::NotStarted };
-  std::vector<int> prim_idxes_non_omm;
-  std::vector<int> prim_idxes_omm;
-};
-
 class MyFramework {
 public:
   // Shared by all scenes.
@@ -160,7 +98,7 @@ public:
   void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline, ID3D12RootSignature* global_rootsig, const std::vector<struct MyRtShaderListInfo>& my_infos);
   void CreateComputePipeline(ID3D12PipelineState** pso, ID3D12RootSignature* root_sig, const void* shader_bytecode, uint32_t shader_bytecode_length);
   template<class T> void CreateVertexBuffer(std::vector<T>& verts, ID3D12Resource** res, D3D12_VERTEX_BUFFER_VIEW* vbv);
-  void CreateBufferForCPUSideData(void* data, uint32_t len, ID3D12Resource** res);
+  void CreateBufferForCPUSideData(const void* data, uint32_t len, ID3D12Resource** res);
   void CreateBufferForUAVAccess(uint32_t len, ID3D12Resource** res);
   void CreateBufferForCPUAccess(uint32_t len, ID3D12Resource** res);
   void CreateBufferForAS(uint32_t len, ID3D12Resource** res);
@@ -222,6 +160,8 @@ public:
     std::vector<uint32_t> vert_counts, std::vector<uint32_t> index_counts,
     std::vector<D3D12_RAYTRACING_GEOMETRY_FLAGS> geom_flags
   );
+  void BuildDummyDXR12OMM(ID3D12Resource* vertex_buffer, uint32_t stride,
+    ID3D12Resource** blas_result_omm, ID3D12Resource** tlas_result_omm);
 
   constexpr static uint32_t WIN_W = 512, WIN_H = 512;
   constexpr static uint32_t FRAME_COUNT = 2;

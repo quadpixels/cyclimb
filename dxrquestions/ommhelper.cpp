@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include <filesystem>
+#include <fstream>
 
 #include <glm/glm.hpp>
 #include <omm.hpp>
@@ -13,6 +14,13 @@ const int NUM_VERTS = 6;
 static std::vector<glm::vec2> g_uvs = {
   { 0,1}, {1,0}, {0,0}, {0,1}, {1,1}, {1,0}
 };
+
+struct OmmLoadedData {
+  omm::Cpu::DeserializedResult dres{ nullptr };
+  const omm::Cpu::BakeResultDesc* resDesc{ nullptr };
+};
+
+static OmmLoadedData g_omm;
 
 static void Log(omm::MessageSeverity severity, const char* message, void* userArg)
 {
@@ -36,7 +44,82 @@ static void Log(omm::MessageSeverity severity, const char* message, void* userAr
   printf("[omm-sdk] [%s] %s\n", sev, message);
 }
 
-const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t level) {
+struct OmmLoadedState {
+  omm::Baker baker = nullptr;
+  omm::Cpu::DeserializedResult dres = nullptr;
+  std::vector<uint8_t> fileBytes;
+  const omm::Cpu::BakeResultDesc* resDesc = nullptr;
+};
+
+static OmmLoadedState g_omm_loaded;
+
+static bool initOmmBakerIfNeeded() {
+  if (g_omm_loaded.baker) return true;
+
+  omm::BakerCreationDesc desc{};
+  desc.type = omm::BakerType::CPU;
+  desc.messageInterface.messageCallback = &Log;
+  omm::Result r = omm::CreateBaker(desc, &g_omm_loaded.baker);
+  return r == omm::Result::SUCCESS;
+}
+
+const omm::Cpu::BakeResultDesc* loadOmmFromBin(const std::filesystem::path& binPath) {
+  if (!std::filesystem::exists(binPath)) {
+    printf("[loadOmmFromBin] file not found: %s\n", binPath.string().c_str());
+    return nullptr;
+  }
+  if (!initOmmBakerIfNeeded()) {
+    printf("[loadOmmFromBin] init baker failed\n");
+    return nullptr;
+  }
+
+  if (g_omm_loaded.dres) {
+    omm::Cpu::DestroyDeserializedResult(g_omm_loaded.dres);
+    g_omm_loaded.dres = nullptr;
+    g_omm_loaded.resDesc = nullptr;
+  }
+
+  std::ifstream ifs(binPath, std::ios::binary | std::ios::ate);
+  if (!ifs) return nullptr;
+  std::streamsize sz = ifs.tellg();
+  if (sz <= 0) return nullptr;
+  ifs.seekg(0, std::ios::beg);
+
+  g_omm_loaded.fileBytes.resize((size_t)sz);
+  if (!ifs.read(reinterpret_cast<char*>(g_omm_loaded.fileBytes.data()), sz)) {
+    g_omm_loaded.fileBytes.clear();
+    return nullptr;
+  }
+
+  omm::Cpu::BlobDesc blob{};
+  blob.data = g_omm_loaded.fileBytes.data();
+  blob.size = (uint64_t)g_omm_loaded.fileBytes.size();
+
+  omm::Result r = omm::Cpu::Deserialize(g_omm_loaded.baker, blob, &g_omm_loaded.dres);
+  if (r != omm::Result::SUCCESS || !g_omm_loaded.dres) {
+    printf("[loadOmmFromBin] Deserialize failed\n");
+    return nullptr;
+  }
+
+  const omm::Cpu::DeserializedDesc* dd = nullptr;
+  r = omm::Cpu::GetDeserializedDesc(g_omm_loaded.dres, &dd);
+  if (r != omm::Result::SUCCESS || !dd || dd->numResultDescs <= 0 || !dd->resultDescs) {
+    printf("[loadOmmFromBin] no resultDescs in blob\n");
+    return nullptr;
+  }
+
+  g_omm_loaded.resDesc = &dd->resultDescs[0];
+  return g_omm_loaded.resDesc;
+}
+
+
+const omm::Cpu::BakeResultDesc* bakeOrLoadOmmForMask(uint32_t level) {
+  const auto* loaded = loadOmmFromBin("mask_omm/omm.bin");
+  if (loaded) {
+    printf("[bakeOrLoadOmmForMask] loaded from bin\n");
+    return loaded;
+  }
+
   printf("[bakeOmmForMask]\n");
   std::filesystem::path mask_path(g_alpha_map_filename);
 

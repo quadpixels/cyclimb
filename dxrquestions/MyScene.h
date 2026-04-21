@@ -1,3 +1,4 @@
+#pragma once
 #include "MyFramework.h"
 #include "textrender1.hpp"
 
@@ -102,4 +103,24 @@ public:
   bool has_nvapi{ true };
   void do_ChangeChoice(int delta);
   void do_ChangeOption(int delta);
+};
+
+class MyRotatingTriangleScene : public MyScene {
+public:
+  std::vector<glm::vec3> tri_pos_rots;
+  MyRotatingTriangleScene(MyFramework* f);
+  void Render() override;
+  void Update(float secs) override;
+  void OnKeyDown(uint32_t k) override;
+  void OnKeyUp(uint32_t k) override;
+
+  void BuildOrUpdateBLAS(bool is_update);
+
+  ID3D12RootSignature* global_rootsig;
+  ID3D12Resource* rt_output_resource;
+  MyRtPipeline my_rt_pipeline{};
+  ID3D12Resource* blas_result;
+  ID3D12Resource* tlas_result;
+  ID3D12Resource* perscene_cb;
+  ID3D12DescriptorHeap* cbvsrvuav_heap, * cbvsrvuav_heap_cpu;
 };

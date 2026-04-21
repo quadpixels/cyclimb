@@ -16,6 +16,7 @@
 
 #include "MyFramework.h"
 #include "MyScene.h"
+#include "MyParisIvyLeafScene.h"
 #include "textrender1.hpp"
 
 #define CE(x) { \
@@ -32,8 +33,8 @@ namespace dxc {
 }
 
 MyFramework* g_myframework{};
-MyScene* g_scenes[4];
-uint32_t g_scene_idx = 1;
+MyScene* g_scenes[6];
+uint32_t g_scene_idx = 0;
 HWND g_hwnd{};
 long long g_last_ms{ 0 };
 static bool g_init_done = false;
@@ -153,9 +154,11 @@ int main() {
   g_myframework->InitRayTracingValidation();
 #endif
   g_scenes[0] = new MyParisIvyLeafScene(g_myframework);
-  g_scenes[1] = new MyLssScene(g_myframework);
-  g_scenes[2] = new MyInstanceFlagScene(g_myframework);
-  g_scenes[3] = new MyCullingScene(g_myframework);
+  g_scenes[1] = new MyParisIvyLeafSceneDXR12OMM(g_myframework);
+  g_scenes[2] = new MyLssScene(g_myframework);
+  g_scenes[3] = new MyInstanceFlagScene(g_myframework);
+  g_scenes[4] = new MyCullingScene(g_myframework);
+  g_scenes[5] = new MyRotatingTriangleScene(g_myframework);
   g_init_done = true;
 
   MSG msg = { 0 };
