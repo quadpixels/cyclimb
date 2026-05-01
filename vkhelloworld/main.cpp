@@ -1,8 +1,13 @@
-#define VK_USE_PLATFORM_WIN32_KHR
+﻿#define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
+
+// Make NVRHI-VK build
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+#include <vulkan/vulkan.hpp>
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -29,6 +34,14 @@
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
+
+#include "omm-gpu-nvrhi/omm-gpu-nvrhi.h"
+#include "nvrhi/vulkan.h"
+
+// ImGuI
+#include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_vulkan.h"
 
 // OMM handling
 bool g_use_omm{ false };
@@ -60,6 +73,8 @@ std::vector<Vertex> g_vertices = {
       { { 0.5, -0.5, 0}, { 0, 0, 1 }, { 1, 0 }, -1 },
       { { 0.5, 0.5, 0}, { 0, 1, 0 }, { 1, 1 }, -1 },
 };
+
+uint32_t g_alpha_tex_w{ 0 }, g_alpha_tex_h{ 0 };
 
 GLFWwindow* window{};
 const uint32_t WIDTH = 800;
@@ -254,6 +269,8 @@ public:
   void run() {
     initWindow();
     initVulkan();
+    initImGui();
+    initOMMBaker();
     mainLoop();
     cleanup();
   }
@@ -279,6 +296,7 @@ private:
     createTextureImageView();
     createTextureSampler();
     createVertexBuffer();
+    createUVBuffer();
     createDescriptorSetLayout();
     createDescriptorPool();
     createDescriptorSets();
@@ -292,6 +310,367 @@ private:
     createRtDescriptorSets();
     createRtPipeline();
     createRtSBT();
+  }
+
+  void initImGui() {
+    printf("Checking IMGUI version: %s\n", IMGUI_VERSION);
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+
+    VkDescriptorPoolSize imgui_pool_sizes[] =
+    {
+        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+    };
+
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000 * IM_ARRAYSIZE(imgui_pool_sizes);
+    pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(imgui_pool_sizes);
+    pool_info.pPoolSizes = imgui_pool_sizes;
+
+    vkCreateDescriptorPool(device, &pool_info, nullptr, &imguiDescriptorPool);
+
+
+    // 4. 初始化 Vulkan 后端（新版需要提供 PipelineRenderingCreateInfo 或 color attachment 格式）
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = instance;
+    init_info.PhysicalDevice = physicalDevice;
+    init_info.Device = device;
+    init_info.QueueFamily = findQueueFamilies(physicalDevice).graphicsFamily.value();
+    init_info.Queue = graphicsQueue;
+    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.DescriptorPool = imguiDescriptorPool;
+    init_info.MinImageCount = MAX_FRAMES_IN_FLIGHT;
+    init_info.ImageCount = swapChainImages.size();
+    init_info.UseDynamicRendering = false;
+    init_info.PipelineInfoMain.RenderPass = renderPass;
+    init_info.PipelineInfoMain.Subpass = 0;
+
+    // 初始化 Vulkan 后端
+    bool ret = ImGui_ImplVulkan_Init(&init_info);      // 这里的 renderPass 是你现有的渲染通道
+    printf("ImGui_ImplVulkan_Init returned %d\n", ret);
+  }
+
+  void initOMMBaker() {
+    vk::detail::defaultDispatchLoaderDynamic.init(vkGetInstanceProcAddr);
+    vk::detail::defaultDispatchLoaderDynamic.init(instance, vkGetInstanceProcAddr);
+
+    nvrhi::vulkan::DeviceDesc desc{};
+    desc.instance = instance;
+    desc.physicalDevice = physicalDevice;
+    desc.device = device;
+    desc.graphicsQueue = graphicsQueue;
+    desc.graphicsQueueIndex = graphicsQueueFamilyIndex;
+    desc.deviceExtensions = deviceExtensions.data();
+    desc.numDeviceExtensions = deviceExtensions.size();
+    nvrhi::DeviceHandle nvrhiDevice = nvrhi::vulkan::createDevice(desc);
+    auto commandList = nvrhiDevice->createCommandList();
+    commandList->open();
+    omm::GpuBakeNvrhi baker(nvrhiDevice, commandList, false);
+    printf("[initOMMBaker] Successfully created a GPU Baker.\n");
+
+    nvrhi::TextureDesc texDesc{};
+    texDesc.width = 256;
+    texDesc.height = 256;
+    texDesc.depth = 1;
+    texDesc.arraySize = 1;
+    texDesc.mipLevels = 1;
+    texDesc.dimension = nvrhi::TextureDimension::Texture2D;
+    texDesc.format = nvrhi::Format::SRGBA8_UNORM;
+    texDesc.debugName = "AlphaTexture";
+    texDesc.isShaderResource = true;
+    texDesc.initialState = nvrhi::ResourceStates::Unknown;
+    texDesc.keepInitialState = false;
+
+    nvrhi::TextureHandle alphaTextureNvrhi =
+      nvrhiDevice->createHandleForNativeTexture(
+        nvrhi::ObjectTypes::VK_Image,
+        alphaMapImage[0],
+        texDesc
+      );
+
+    omm::GpuBakeNvrhi::Input input{};
+    input.alphaTexture = alphaTextureNvrhi;
+    input.alphaTextureChannel = 0;
+    input.operation = omm::GpuBakeNvrhi::Operation::SetupAndBake;
+
+    // alpha test rule
+    input.alphaCutoff = 0.5f;
+    input.alphaCutoffLessEqual = omm::OpacityState::Transparent;
+    input.alphaCutoffGreater = omm::OpacityState::Opaque;
+
+    // UV buffer
+    nvrhi::BufferDesc bufDesc{};
+    nvrhi::BufferHandle uvBufferHandle;
+    bufDesc.byteSize = sizeof(glm::vec2) * g_vertices.size();
+    bufDesc.debugName = "UVBufferForOMMBaker";
+    bufDesc.canHaveRawViews = true;
+    bufDesc.canHaveUAVs = false;
+    bufDesc.canHaveTypedViews = true;
+    bufDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    bufDesc.keepInitialState = true;
+    bufDesc.setFormat(nvrhi::Format::RG32_FLOAT);
+
+    uvBufferHandle = nvrhiDevice->createHandleForNativeBuffer(
+      nvrhi::ObjectTypes::VK_Buffer,
+      uvBuffer,
+      bufDesc
+    );
+
+    // Index Buffer
+    bufDesc = {};
+    nvrhi::BufferHandle indexBufferHandle;
+    bufDesc.byteSize = sizeof(uint32_t) * g_vertices.size();
+    bufDesc.debugName = "IndexBufferForOMMBaker";
+    bufDesc.canHaveRawViews = true;
+    bufDesc.canHaveUAVs = false;
+    bufDesc.canHaveTypedViews = true;
+    bufDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+    bufDesc.keepInitialState = true;
+    bufDesc.setFormat(nvrhi::Format::R32_UINT);
+
+    indexBufferHandle = nvrhiDevice->createHandleForNativeBuffer(
+      nvrhi::ObjectTypes::VK_Buffer,
+      indexBuffer,
+      bufDesc
+    );
+
+    input.texCoordBuffer = uvBufferHandle;
+    input.texCoordFormat = nvrhi::Format::R32_FLOAT; // 对应 float2 UV
+    input.texCoordStrideInBytes = sizeof(glm::vec2);
+
+    // triangle index buffer
+    input.indexBuffer = indexBufferHandle;
+    input.numIndices = 6;
+
+    // OMM quality / format
+    input.maxSubdivisionLevel = 5;
+    input.format = nvrhi::rt::OpacityMicromapFormat::OC1_4_State;
+
+    // misc
+    input.dynamicSubdivisionScale = 0.0f;
+    input.enableStats = true;
+    input.enableSpecialIndices = false;
+    input.force32BitIndices = false;
+    input.enableTexCoordDeduplication = true;
+    input.computeOnly = false;
+    input.maxOutOmmArraySize = 0xFFFFFFFF;
+
+    omm::GpuBakeNvrhi::PreDispatchInfo info = {};
+    baker.GetPreDispatchInfo(input, info);
+    printf("OMM PreDispatch Info:\n");
+    printf("ommArrayBufferSize            = %u\n", info.ommArrayBufferSize);
+    printf("ommDescArrayHistogramSize     = %u\n", info.ommDescArrayHistogramSize);
+    printf("ommDescBufferSize             = %u\n", info.ommDescBufferSize);
+    printf("ommIndexBufferSize            = %u\n", info.ommIndexBufferSize);
+    printf("ommIndexCount                 = %u\n", info.ommIndexCount);
+    printf("ommIndexFormat                = %u\n", info.ommIndexFormat);
+    printf("ommIndexHistogramSize         = %u\n", info.ommIndexHistogramSize);
+    printf("ommPostDispatchInfoBufferSize = %u\n", info.ommPostDispatchInfoBufferSize);
+
+    // Output is in gpu_omm_output
+    auto createRawUavBuffer = [&](size_t byteSize, const char* name)
+      {
+        nvrhi::BufferDesc desc{};
+        desc.byteSize = std::max<size_t>(byteSize, 4);
+        desc.debugName = name;
+        desc.canHaveRawViews = true;
+        desc.canHaveUAVs = true;
+        desc.canHaveTypedViews = true;
+        desc.initialState = nvrhi::ResourceStates::Common;
+        desc.keepInitialState = false;
+
+        return nvrhiDevice->createBuffer(desc);
+      };
+
+    nvrhi::BufferHandle& ommArrayBuffer = gpu_omm_output.ommArrayBuffer;
+    nvrhi::BufferHandle& ommDescBuffer = gpu_omm_output.ommDescBuffer;
+    nvrhi::BufferHandle& ommIndexBuffer = gpu_omm_output.ommIndexBuffer;
+    nvrhi::BufferHandle& ommDescArrayHistogramBuffer = gpu_omm_output.ommDescArrayHistogramBuffer;
+    nvrhi::BufferHandle& ommIndexHistogramBuffer = gpu_omm_output.ommIndexHistogramBuffer;
+    nvrhi::BufferHandle& ommPostDispatchInfoBuffer = gpu_omm_output.ommPostDispatchInfoBuffer;
+
+    ommArrayBuffer = createRawUavBuffer(
+      info.ommArrayBufferSize,
+      "OMM Array Buffer"
+    );
+
+    ommDescBuffer = createRawUavBuffer(
+      info.ommDescBufferSize,
+      "OMM Desc Buffer"
+    );
+
+    ommIndexBuffer = createRawUavBuffer(
+      info.ommIndexBufferSize,
+      "OMM Index Buffer"
+    );
+
+    ommDescArrayHistogramBuffer = createRawUavBuffer(
+      info.ommDescArrayHistogramSize,
+      "OMM Desc Array Histogram Buffer"
+    );
+
+    ommIndexHistogramBuffer = createRawUavBuffer(
+      info.ommIndexHistogramSize,
+      "OMM Index Histogram Buffer"
+    );
+
+    ommPostDispatchInfoBuffer = createRawUavBuffer(
+      info.ommPostDispatchInfoBufferSize,
+      "OMM Post Dispatch Info Buffer"
+    );
+
+    commandList->beginTrackingTextureState(
+      alphaTextureNvrhi,
+      nvrhi::TextureSubresourceSet(),
+      nvrhi::ResourceStates::ShaderResource
+    );
+
+    commandList->beginTrackingBufferState(
+      uvBufferHandle,
+      nvrhi::ResourceStates::ShaderResource
+    );
+
+    commandList->beginTrackingBufferState(
+      indexBufferHandle,
+      nvrhi::ResourceStates::ShaderResource
+    );
+
+    commandList->beginTrackingBufferState(ommDescArrayHistogramBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommIndexHistogramBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommDescBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommPostDispatchInfoBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommArrayBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommIndexBuffer, nvrhi::ResourceStates::Common);
+
+    baker.Dispatch(commandList, input, gpu_omm_output);
+
+    // Copy back
+    auto createReadbackBuffer = [&](nvrhi::BufferHandle src, const char* name)
+      {
+        nvrhi::BufferDesc desc{};
+        desc.byteSize = src->getDesc().byteSize;
+        desc.debugName = name;
+        desc.cpuAccess = nvrhi::CpuAccessMode::Read;
+        desc.initialState = nvrhi::ResourceStates::Common;
+        desc.keepInitialState = false;
+
+        return nvrhiDevice->createBuffer(desc);
+      };
+
+    nvrhi::BufferHandle ommArrayReadback =
+      createReadbackBuffer(ommArrayBuffer, "OMM Array Readback");
+
+    nvrhi::BufferHandle ommDescReadback =
+      createReadbackBuffer(ommDescBuffer, "OMM Desc Readback");
+
+    nvrhi::BufferHandle ommIndexReadback =
+      createReadbackBuffer(ommIndexBuffer, "OMM Index Readback");
+
+    nvrhi::BufferHandle ommDescHistogramReadback =
+      createReadbackBuffer(ommDescArrayHistogramBuffer, "OMM Desc Histogram Readback");
+
+    nvrhi::BufferHandle ommIndexHistogramReadback =
+      createReadbackBuffer(ommIndexHistogramBuffer, "OMM Index Histogram Readback");
+
+    nvrhi::BufferHandle ommPostInfoReadback =
+      createReadbackBuffer(ommPostDispatchInfoBuffer, "OMM Post Info Readback");
+
+    commandList->beginTrackingBufferState(ommArrayReadback, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommDescReadback, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommIndexReadback, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommDescHistogramReadback, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommIndexHistogramReadback, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(ommPostInfoReadback, nvrhi::ResourceStates::Common);
+
+    commandList->copyBuffer(ommArrayReadback, 0, ommArrayBuffer, 0, ommArrayBuffer->getDesc().byteSize);
+    commandList->copyBuffer(ommDescReadback, 0, ommDescBuffer, 0, ommDescBuffer->getDesc().byteSize);
+    commandList->copyBuffer(ommIndexReadback, 0, ommIndexBuffer, 0, ommIndexBuffer->getDesc().byteSize);
+    commandList->copyBuffer(ommDescHistogramReadback, 0, ommDescArrayHistogramBuffer, 0, ommDescArrayHistogramBuffer->getDesc().byteSize);
+    commandList->copyBuffer(ommIndexHistogramReadback, 0, ommIndexHistogramBuffer, 0, ommIndexHistogramBuffer->getDesc().byteSize);
+    commandList->copyBuffer(ommPostInfoReadback, 0, ommPostDispatchInfoBuffer, 0, ommPostDispatchInfoBuffer->getDesc().byteSize);
+
+    commandList->close();
+
+    nvrhiDevice->executeCommandList(commandList);
+    nvrhiDevice->waitForIdle();
+
+    printf("Executed OMM buliding commandlist\n");
+
+    // Print out
+    auto readBuffer = [&](nvrhi::BufferHandle buffer, size_t size = SIZE_MAX)
+      {
+        std::vector<uint8_t> data;
+
+        const size_t byteSize =
+          (size == SIZE_MAX)
+          ? buffer->getDesc().byteSize
+          : std::min<size_t>(size, buffer->getDesc().byteSize);
+
+        if (byteSize == 0)
+          return data;
+
+        void* mapped = nvrhiDevice->mapBuffer(buffer, nvrhi::CpuAccessMode::Read);
+        assert(mapped);
+
+        data.resize(byteSize);
+        memcpy(data.data(), mapped, byteSize);
+
+        nvrhiDevice->unmapBuffer(buffer);
+
+        return data;
+      };
+
+    std::vector<uint8_t> postInfoData = readBuffer(ommPostInfoReadback);
+
+    omm::GpuBakeNvrhi::PostDispatchInfo postInfo{};
+    omm::GpuBakeNvrhi::ReadPostDispatchInfo(
+      postInfoData.data(),
+      postInfoData.size(),
+      postInfo
+    );
+
+    printf("OMM PostDispatch Info:\n");
+    printf("ommArrayBufferSize       = %u\n", postInfo.ommArrayBufferSize);
+    printf("ommDescBufferSize        = %u\n", postInfo.ommDescBufferSize);
+    printf("ommTotalOpaqueCount      = %u\n", postInfo.ommTotalOpaqueCount);
+    printf("ommTotalTransparentCount = %u\n", postInfo.ommTotalTransparentCount);
+    printf("ommTotalUnknownCount     = %u\n", postInfo.ommTotalUnknownCount);
+
+    std::vector<uint8_t> ommArrayData = readBuffer(ommArrayReadback, postInfo.ommArrayBufferSize);
+    std::vector<uint8_t> ommDescData = readBuffer(ommDescReadback, postInfo.ommDescBufferSize);
+    std::vector<uint8_t> ommIndexData = readBuffer(ommIndexReadback, ommIndexBuffer->getDesc().byteSize);
+    std::vector<uint8_t> ommDescHistogramData = readBuffer(ommDescHistogramReadback);
+    std::vector<uint8_t> ommIndexHistogramData = readBuffer(ommIndexHistogramReadback);
+
+    // Print first few bytes
+    auto dumpBytes = [](const char* name, const std::vector<uint8_t>& data, size_t n = 64)
+      {
+        printf("%s (%zu bytes):\n", name, data.size());
+        for (size_t i = 0; i < std::min(n, data.size()); ++i)
+        {
+          printf("%02X ", data[i]);
+          if ((i + 1) % 16 == 0) printf("\n");
+        }
+        printf("\n");
+      };
+
+    dumpBytes("OMM Array", ommArrayData);
+    dumpBytes("OMM Desc", ommDescData);
+    dumpBytes("OMM Index", ommIndexData);
   }
 
   void mainLoop() {
@@ -768,8 +1147,18 @@ private:
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
     // Feature train/chain
+    VkPhysicalDeviceDynamicRenderingFeatures dynamicRendering{};
+    dynamicRendering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
+    dynamicRendering.dynamicRendering = VK_TRUE;
+
+    VkPhysicalDeviceSynchronization2Features sync2{};
+    sync2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+    sync2.synchronization2 = VK_TRUE;
+    sync2.pNext = &dynamicRendering;
+
     VkPhysicalDeviceRayTracingValidationFeaturesNV rtValidationFeatures{};
     rtValidationFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV;
+    rtValidationFeatures.pNext = &sync2;
 
     VkPhysicalDeviceOpacityMicromapFeaturesEXT ommFeatures{};
     ommFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
@@ -1161,6 +1550,7 @@ private:
     VkCommandPoolCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     createInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+    graphicsQueueFamilyIndex = createInfo.queueFamilyIndex;
     createInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     if (vkCreateCommandPool(device, &createInfo, nullptr, &commandPool) != VK_SUCCESS) {
       throw std::runtime_error("Could not create command pool");
@@ -1221,6 +1611,9 @@ private:
     vkCmdDraw(commandBuffer, 6, 1, 0, 0);
 
     vkCmdEndRenderPass(commandBuffer);
+
+    renderImGuiAndEndImGuiForFrame();
+
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not end command buffer");
     }
@@ -1361,15 +1754,33 @@ private:
       VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
       0, 0, nullptr, 0, nullptr, 1, &barrier);
 
+    renderImGuiAndEndImGuiForFrame();
+
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not end RT command buffer");
     }
   }
 
-  void drawFrame() {
+  void startImGuiForFrame() {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+  }
 
+  void renderImGuiAndEndImGuiForFrame() {
+    ImGui::SetNextWindowSize(ImVec2(360, 320), ImGuiCond_Once);
+    ImGui::SetNextWindowPos(ImVec2(32, 32), ImGuiCond_Once);
+    ImGui::Begin("VK OMM Test.");
+    ImGui::End();
+    ImGui::Render();
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+  }
+
+  void drawFrame() {
     vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(device, 1, &inFlightFence);
+
+    startImGuiForFrame();
 
     uint32_t imageIndex;
     vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
@@ -1494,6 +1905,54 @@ private:
     vkMapMemory(device, indexBufferMemory, 0, createInfo.size, 0, &data);
     memcpy(data, indices.data(), sizeof(uint32_t) * indices.size());
     vkUnmapMemory(device, indexBufferMemory);
+  }
+
+  void createUVBuffer() {
+    VkBufferCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    createInfo.size = sizeof(glm::vec2) * g_vertices.size();
+    createInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+      | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+    ;
+    createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &createInfo, nullptr, &uvBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Could not create UV buffer");
+    }
+
+    VkMemoryRequirements memReq{};
+    vkGetBufferMemoryRequirements(device, uvBuffer, &memReq);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
+    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    allocInfo.pNext = &allocFlagsInfo;
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &uvBufferMemory) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate memory for vertex buffer");
+    }
+    vkBindBufferMemory(device, uvBuffer, uvBufferMemory, 0);
+
+    std::vector<glm::vec2> uvs;
+    for (uint32_t i = 0; i < g_vertices.size(); i++) {
+      uvs.push_back(g_vertices[i].uv);
+    }
+
+    void* data;
+    vkMapMemory(device, uvBufferMemory, 0, createInfo.size, 0, &data);
+    memcpy(data, uvs.data(), sizeof(glm::vec2) * uvs.size());
+    vkUnmapMemory(device, uvBufferMemory);
   }
 
   // Quick test: 1 idx per BLAS
@@ -2036,6 +2495,7 @@ private:
     // Format change Cmd List
     vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
     vkResetFences(device, 1, &inFlightFence);
+
     vkResetCommandBuffer(commandBuffer, 0);
 
     VkCommandBufferBeginInfo beginInfo{};
@@ -2608,6 +3068,8 @@ private:
         int texHeight, texWidth, texChannels;
         if (fn.empty()) continue;
         stbi_uc* pixels = stbi_load(fn.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        printf("%s: width=%d height=%d channels=%d\n",
+          fn.c_str(), texWidth, texHeight, texChannels);
         VkDeviceSize imageSize = texHeight * texWidth * 4;
 
         VkBuffer stagingBuffer{};
@@ -2833,6 +3295,8 @@ private:
   VkDeviceMemory vertexBufferMemory;
   VkBuffer indexBuffer;
   VkDeviceMemory indexBufferMemory;
+  VkBuffer uvBuffer;
+  VkDeviceMemory uvBufferMemory;
   VkImage rtOutputImages[MAX_FRAMES_IN_FLIGHT];
   VkDeviceMemory rtOutputImageMemories[MAX_FRAMES_IN_FLIGHT];
   VkImageView rtOutputImageViews[MAX_FRAMES_IN_FLIGHT];
@@ -2879,6 +3343,11 @@ private:
 
   std::vector<VkBuffer> ommBuffersToDelete;
   std::vector<VkDeviceMemory> ommMemoriesToFree;
+
+  omm::GpuBakeNvrhi::Buffers gpu_omm_output;
+  VkDescriptorPool imguiDescriptorPool;
+
+  uint32_t graphicsQueueFamilyIndex{};
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -3088,6 +3557,14 @@ void parseOMMBinaryFile(const char* file_name) {
 }
 
 int main(int argc, char** argv) {
+  // Test NVRHI OMM
+  #define STR2(x) #x
+  #define STR(x) STR2(x)
+  printf("VK_HEADER_VERSION = %s\n", STR(VK_HEADER_VERSION));
+  #undef STR
+  #undef STR2
+
+
   if (argc > 1) {
     printf("Will read OMM dump file.\n");
     parseOMMBinaryFile(argv[1]);

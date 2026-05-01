@@ -71,12 +71,12 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(VULKAN_SDK)\Include;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(IncludePath)</IncludePath>
-    <LibraryPath>$(VULKAN_SDK)\lib;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64)</LibraryPath>
+    <IncludePath>$(VULKAN_SDK)\Include;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(ProjectDir);$(SolutionDir)\imgui;$(IncludePath)</IncludePath>
+    <LibraryPath>$(VULKAN_SDK)\lib;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(ProjectDir)\nvrhi\Debug;$(ProjectDir)\omm-gpu-nvrhi\Debug</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(VULKAN_SDK)\Include;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(IncludePath)</IncludePath>
-    <LibraryPath>$(VULKAN_SDK)\lib;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64)</LibraryPath>
+    <IncludePath>$(VULKAN_SDK)\Include;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(ProjectDir);$(IncludePath)</IncludePath>
+    <LibraryPath>$(VULKAN_SDK)\lib;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(ProjectDir)\nvrhi\Release;$(ProjectDir)\omm-gpu-nvrhi\Release</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -117,7 +117,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);vulkan-1.lib;$(USERPROFILE)\Downloads\OMM\build\libraries\omm-lib\Debug\omm-lib.lib</AdditionalDependencies>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);vulkan-1.lib;$(USERPROFILE)\Downloads\OMM\build\libraries\omm-lib\Debug\omm-lib.lib;nvrhi_vk.lib;nvrhi.lib;C:\Users\RS4.SD\Downloads\OMM\build\libraries\omm-gpu-nvrhi\Debug\omm-gpu-nvrhi.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -135,11 +135,19 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);vulkan-1.lib;$(USERPROFILE)\Downloads\OMM\build\libraries\omm-lib\Release\omm-lib.lib</AdditionalDependencies>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);vulkan-1.lib;$(USERPROFILE)\Downloads\OMM\build\libraries\omm-lib\Release\omm-lib.lib;nvrhi.lib;nvrhi_vk.lib;omm-gpu-nvrhi.lib</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\imgui\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="..\imgui\backends\imgui_impl_vulkan.cpp" />
+    <ClCompile Include="..\imgui\imgui.cpp" />
+    <ClCompile Include="..\imgui\imgui_demo.cpp" />
+    <ClCompile Include="..\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\imgui\imgui_widgets.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="omm-gpu-nvrhi\omm-gpu-nvrhi.cpp" />
     <ClCompile Include="ommhelper.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -190,6 +198,7 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="omm-gpu-nvrhi\omm-gpu-nvrhi.h" />
     <ClInclude Include="stb_image.h" />
   </ItemGroup>
   <ItemGroup>
