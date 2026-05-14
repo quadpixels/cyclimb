@@ -157,6 +157,17 @@ const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t primIdx, uint32_t level)
 
   printf("Result desc:\n");
   printf("  Array data size: %u\n", res_desc->arrayDataSize);
+  printf("  Array data: \n");
+  {
+    const char* ptr = static_cast<const char*>(res_desc->arrayData);
+    for (uint32_t i = 0; i < res_desc->arrayDataSize; i++) {
+      printf("%02x ", (ptr[i] & 0xFF));
+      if ((i % 16) == 15) {
+        printf("\n");
+      }
+    }
+    printf("\n");
+  }
   printf("  Index count %u, type %u, ", res_desc->indexCount, res_desc->indexFormat);
   assert(res_desc->indexFormat == omm::IndexFormat::UINT_32);
   for (uint32_t i = 0; i < res_desc->indexCount; i++) {

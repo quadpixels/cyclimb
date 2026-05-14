@@ -30,5 +30,11 @@ void main() {
   const vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
   const vec2 uv = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z;
 
-  prd.hitValue = texture(texSampler[0], uv).xyz;
+  {
+    prd.hitValue = texture(texSampler[0], uv).xyz;
+	if (prd.isAHSInvoked) {
+		prd.hitValue = (prd.hitValue + vec3(1,1,0)) * 0.5;
+	}
+	prd.isOpaque = true;
+  }
 }

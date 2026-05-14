@@ -45,11 +45,13 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 // OMM handling
 bool g_use_omm{ false };
+int g_omm_subdiv_levels[2] = { 8, 3 };
+bool g_use_gpubaker_results{ false };  // Use pre-existing results or bake on the spot?
 const omm::Cpu::BakeResultDesc* bakeOmmForMask(uint32_t prim_idx, uint32_t level);
 
 const char* g_tex_files[2] = {
-      "textures/Paris_ivy_leaf_a_diff.png",
-      "textures/Paris_ivy_leaf_a_mask.png",
+    "textures/Paris_ivy_leaf_a_diff.png",
+    "textures/Paris_ivy_leaf_a_mask.png",
 };
 
 std::vector<std::string> g_diff_maps(128), g_alpha_maps(128);
@@ -88,6 +90,8 @@ const bool enableValidationLayers = false;
 const bool enableValidationLayers = true;
 #endif
 bool g_is_rt = false;
+bool g_should_recreate_as = false;
+bool g_omm_use_gpubaker_results = false;
 const uint32_t MAX_FRAMES_IN_FLIGHT = 3;
 class HelloTriangleApplication;
 HelloTriangleApplication* g_app;
@@ -269,6 +273,7 @@ public:
   void run() {
     initWindow();
     initVulkan();
+    initNvrhiOnce();
     initImGui();
     initOMMBaker();
     mainLoop();
@@ -289,6 +294,7 @@ private:
     createSwapChain();
     createImageViews();
     createRenderPass();
+    createImGuiRenderPass();
     createCommandPool();
     createCommandBuffer();
     readOBJ();
@@ -302,6 +308,7 @@ private:
     createDescriptorSets();
     createGraphicsPipeline();
     createFramebuffers();
+    createImGuiFramebuffers();
     createSyncObjects();
     createAS();
     createRtOutputImage();
@@ -356,7 +363,7 @@ private:
     init_info.MinImageCount = MAX_FRAMES_IN_FLIGHT;
     init_info.ImageCount = swapChainImages.size();
     init_info.UseDynamicRendering = false;
-    init_info.PipelineInfoMain.RenderPass = renderPass;
+    init_info.PipelineInfoMain.RenderPass = imguiRenderPass;
     init_info.PipelineInfoMain.Subpass = 0;
 
     // 初始化 Vulkan 后端
@@ -364,7 +371,145 @@ private:
     printf("ImGui_ImplVulkan_Init returned %d\n", ret);
   }
 
+  struct BakedTriangleOmm
+  {
+    nvrhi::BufferHandle ommArrayBuffer;
+    nvrhi::BufferHandle ommDescBuffer;
+    nvrhi::BufferHandle ommIndexBuffer;
+    nvrhi::BufferHandle ommDescArrayHistogramBuffer;
+    nvrhi::BufferHandle ommIndexHistogramBuffer;
+    nvrhi::BufferHandle ommPostDispatchInfoBuffer;
+
+    uint32_t ommArrayBufferSize = 0;
+    uint32_t ommDescBufferSize = 0;
+    uint32_t ommIndexBufferSize = 0;
+    uint32_t ommIndexCount = 0;
+    uint32_t ommDescArrayHistogramBufferSize = 0;
+    uint32_t ommIndexHistogramBufferSize = 0;
+    nvrhi::Format ommIndexFormat = nvrhi::Format::UNKNOWN;
+
+    std::vector<omm::Cpu::OpacityMicromapUsageCount> ommDescArrayHistogram;
+    std::vector<omm::Cpu::OpacityMicromapUsageCount> ommIndexHistogram;
+  };
+
+  BakedTriangleOmm BakeOneTriangleOMM(
+    omm::GpuBakeNvrhi& baker,
+    nvrhi::DeviceHandle nvrhiDevice,
+    nvrhi::CommandListHandle commandList,
+    nvrhi::TextureHandle alphaTexture,
+    nvrhi::BufferHandle uvBuffer,
+    nvrhi::BufferHandle triangleIndexBuffer,
+    uint32_t subdivisionLevel)
+  {
+    omm::GpuBakeNvrhi::Input input{};
+    input.operation = omm::GpuBakeNvrhi::Operation::SetupAndBake;
+
+    input.alphaTexture = alphaTexture;
+    input.alphaTextureChannel = 0;
+    input.alphaCutoff = 0.5f;
+    input.alphaCutoffLessEqual = omm::OpacityState::Transparent;
+    input.alphaCutoffGreater = omm::OpacityState::Opaque;
+
+    input.texCoordBuffer = uvBuffer;
+    input.texCoordFormat = nvrhi::Format::R32_FLOAT;
+    input.texCoordStrideInBytes = sizeof(glm::vec2);
+
+    input.indexBuffer = triangleIndexBuffer;
+    input.numIndices = 3;
+
+    input.maxSubdivisionLevel = subdivisionLevel;
+    input.format = nvrhi::rt::OpacityMicromapFormat::OC1_4_State;
+
+    input.dynamicSubdivisionScale = 1.0f;
+    input.enableStats = true;
+    input.enableSpecialIndices = false;
+    input.force32BitIndices = false;
+    input.enableTexCoordDeduplication = true;
+    input.computeOnly = false;
+    input.maxOutOmmArraySize = 0xFFFFFFFF;
+    input.bilinearFilter = true;
+
+    omm::GpuBakeNvrhi::PreDispatchInfo info{};
+    baker.GetPreDispatchInfo(input, info);
+
+    auto createRawUavBuffer = [&](size_t byteSize, const char* name)
+      {
+        nvrhi::BufferDesc desc{};
+        desc.byteSize = std::max<size_t>(byteSize, 4);
+        desc.debugName = name;
+        desc.canHaveRawViews = true;
+        desc.canHaveUAVs = true;
+        desc.canHaveTypedViews = true;
+        desc.initialState = nvrhi::ResourceStates::Common;
+        desc.keepInitialState = true;
+        return nvrhiDevice->createBuffer(desc);
+      };
+
+    omm::GpuBakeNvrhi::Buffers output{};
+    output.ommArrayBuffer = createRawUavBuffer(info.ommArrayBufferSize, "Triangle OMM Array Buffer");
+    output.ommDescBuffer = createRawUavBuffer(info.ommDescBufferSize, "Triangle OMM Desc Buffer");
+    output.ommIndexBuffer = createRawUavBuffer(info.ommIndexBufferSize, "Triangle OMM Index Buffer");
+    output.ommDescArrayHistogramBuffer = createRawUavBuffer(info.ommDescArrayHistogramSize, "Triangle OMM Desc Histogram Buffer");
+    output.ommIndexHistogramBuffer = createRawUavBuffer(info.ommIndexHistogramSize, "Triangle OMM Index Histogram Buffer");
+    output.ommPostDispatchInfoBuffer = createRawUavBuffer(info.ommPostDispatchInfoBufferSize, "Triangle OMM Post Info Buffer");
+
+    commandList->beginTrackingBufferState(output.ommArrayBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(output.ommDescBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(output.ommIndexBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(output.ommDescArrayHistogramBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(output.ommIndexHistogramBuffer, nvrhi::ResourceStates::Common);
+    commandList->beginTrackingBufferState(output.ommPostDispatchInfoBuffer, nvrhi::ResourceStates::Common);
+
+    baker.Dispatch(commandList, input, output);
+
+    BakedTriangleOmm result{};
+    result.ommArrayBuffer = output.ommArrayBuffer;
+    result.ommDescBuffer = output.ommDescBuffer;
+    result.ommIndexBuffer = output.ommIndexBuffer;
+    result.ommDescArrayHistogramBuffer = output.ommDescArrayHistogramBuffer;
+    result.ommIndexHistogramBuffer = output.ommIndexHistogramBuffer;
+    result.ommPostDispatchInfoBuffer = output.ommPostDispatchInfoBuffer;
+
+    result.ommArrayBufferSize = info.ommArrayBufferSize;
+    result.ommDescBufferSize = info.ommDescBufferSize;
+    result.ommIndexBufferSize = info.ommIndexBufferSize;
+    result.ommIndexCount = info.ommIndexCount;
+    result.ommIndexFormat = info.ommIndexFormat;
+
+    result.ommDescArrayHistogramBufferSize = info.ommDescArrayHistogramSize;  // in bytes
+    result.ommIndexHistogramBufferSize = info.ommIndexHistogramSize;
+
+    return result;
+  }
+
+  nvrhi::BufferHandle CreateTriangleIndexBufferNvrhi(
+    nvrhi::DeviceHandle nvrhiDevice,
+    nvrhi::CommandListHandle commandList,
+    const uint32_t triIndices[3])
+  {
+    nvrhi::BufferDesc desc{};
+    desc.byteSize = sizeof(uint32_t) * 3;
+    desc.debugName = "PerTriangleIndexBuffer";
+    desc.format = nvrhi::Format::R32_UINT;
+    desc.canHaveRawViews = true;
+    desc.canHaveTypedViews = true;
+    desc.canHaveUAVs = true;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+
+    nvrhi::BufferHandle buffer = nvrhiDevice->createBuffer(desc);
+
+    commandList->beginTrackingBufferState(buffer, nvrhi::ResourceStates::Common);
+    commandList->writeBuffer(buffer, triIndices, sizeof(uint32_t) * 3);
+    commandList->setPermanentBufferState(buffer, nvrhi::ResourceStates::ShaderResource);
+
+    return buffer;
+  }
+
   void initOMMBaker() {
+    initNvrhiOnce();
+
+
     vk::detail::defaultDispatchLoaderDynamic.init(vkGetInstanceProcAddr);
     vk::detail::defaultDispatchLoaderDynamic.init(instance, vkGetInstanceProcAddr);
 
@@ -376,187 +521,83 @@ private:
     desc.graphicsQueueIndex = graphicsQueueFamilyIndex;
     desc.deviceExtensions = deviceExtensions.data();
     desc.numDeviceExtensions = deviceExtensions.size();
-    nvrhi::DeviceHandle nvrhiDevice = nvrhi::vulkan::createDevice(desc);
-    auto commandList = nvrhiDevice->createCommandList();
-    commandList->open();
-    omm::GpuBakeNvrhi baker(nvrhiDevice, commandList, false);
-    printf("[initOMMBaker] Successfully created a GPU Baker.\n");
+    nvrhi::DeviceHandle nvrhiDevice = m_nvrhiDevice;
+    auto commandList = m_nvrhiCommandList;
 
-    nvrhi::TextureDesc texDesc{};
-    texDesc.width = 256;
-    texDesc.height = 256;
-    texDesc.depth = 1;
-    texDesc.arraySize = 1;
-    texDesc.mipLevels = 1;
-    texDesc.dimension = nvrhi::TextureDimension::Texture2D;
-    texDesc.format = nvrhi::Format::SRGBA8_UNORM;
-    texDesc.debugName = "AlphaTexture";
-    texDesc.isShaderResource = true;
-    texDesc.initialState = nvrhi::ResourceStates::Unknown;
-    texDesc.keepInitialState = false;
+    {  // commandList opens
+      commandList->open();
+      omm::GpuBakeNvrhi baker(nvrhiDevice, commandList, false);
+      printf("[initOMMBaker] Successfully created a GPU Baker.\n");
 
-    nvrhi::TextureHandle alphaTextureNvrhi =
-      nvrhiDevice->createHandleForNativeTexture(
-        nvrhi::ObjectTypes::VK_Image,
-        alphaMapImage[0],
-        texDesc
+      uint32_t tri0[3] = { 0, 1, 2 };
+      uint32_t tri1[3] = { 3, 4, 5 };
+
+      auto tri0IndexBuffer = CreateTriangleIndexBufferNvrhi(nvrhiDevice, commandList, tri0);
+      auto tri1IndexBuffer = CreateTriangleIndexBufferNvrhi(nvrhiDevice, commandList, tri1);
+      printf("Executed OMM buliding commandlist\n");
+
+      // Alpha Texture
+      nvrhi::TextureDesc texDesc{};
+      texDesc.width = 256;
+      texDesc.height = 256;
+      texDesc.depth = 1;
+      texDesc.arraySize = 1;
+      texDesc.mipLevels = 1;
+      texDesc.dimension = nvrhi::TextureDimension::Texture2D;
+      texDesc.format = nvrhi::Format::RGBA8_UNORM;
+      texDesc.debugName = "AlphaTexture";
+      texDesc.isShaderResource = true;
+      texDesc.initialState = nvrhi::ResourceStates::Unknown;
+      texDesc.keepInitialState = false;
+
+      // UV Buffer
+      nvrhi::BufferDesc bufDesc{};
+      nvrhi::BufferHandle uvBufferHandle;
+      bufDesc.byteSize = sizeof(glm::vec2) * g_vertices.size();
+      bufDesc.debugName = "UVBufferForOMMBaker";
+      bufDesc.canHaveRawViews = true;
+      bufDesc.canHaveUAVs = false;
+      bufDesc.canHaveTypedViews = true;
+      bufDesc.initialState = nvrhi::ResourceStates::ShaderResource;
+      bufDesc.keepInitialState = true;
+      bufDesc.setFormat(nvrhi::Format::RG32_FLOAT);
+
+      uvBufferHandle = nvrhiDevice->createHandleForNativeBuffer(
+        nvrhi::ObjectTypes::VK_Buffer, uvBuffer, bufDesc);
+
+      nvrhi::TextureHandle alphaTextureNvrhi =
+        nvrhiDevice->createHandleForNativeTexture(
+          nvrhi::ObjectTypes::VK_Image,
+          alphaMapImage[0],
+          texDesc
+        );
+
+      tri0Omm_gpu = BakeOneTriangleOMM(
+        baker,
+        nvrhiDevice,
+        commandList,
+        alphaTextureNvrhi,
+        uvBufferHandle,
+        tri0IndexBuffer,
+        g_omm_subdiv_levels[0]
       );
 
-    omm::GpuBakeNvrhi::Input input{};
-    input.alphaTexture = alphaTextureNvrhi;
-    input.alphaTextureChannel = 0;
-    input.operation = omm::GpuBakeNvrhi::Operation::SetupAndBake;
+      tri1Omm_gpu = BakeOneTriangleOMM(
+        baker,
+        nvrhiDevice,
+        commandList,
+        alphaTextureNvrhi,
+        uvBufferHandle,
+        tri1IndexBuffer,
+        g_omm_subdiv_levels[1]
+      );
+      commandList->close();
+      nvrhiDevice->executeCommandList(commandList);
+      nvrhiDevice->waitForIdle();
 
-    // alpha test rule
-    input.alphaCutoff = 0.5f;
-    input.alphaCutoffLessEqual = omm::OpacityState::Transparent;
-    input.alphaCutoffGreater = omm::OpacityState::Opaque;
-
-    // UV buffer
-    nvrhi::BufferDesc bufDesc{};
-    nvrhi::BufferHandle uvBufferHandle;
-    bufDesc.byteSize = sizeof(glm::vec2) * g_vertices.size();
-    bufDesc.debugName = "UVBufferForOMMBaker";
-    bufDesc.canHaveRawViews = true;
-    bufDesc.canHaveUAVs = false;
-    bufDesc.canHaveTypedViews = true;
-    bufDesc.initialState = nvrhi::ResourceStates::ShaderResource;
-    bufDesc.keepInitialState = true;
-    bufDesc.setFormat(nvrhi::Format::RG32_FLOAT);
-
-    uvBufferHandle = nvrhiDevice->createHandleForNativeBuffer(
-      nvrhi::ObjectTypes::VK_Buffer,
-      uvBuffer,
-      bufDesc
-    );
-
-    // Index Buffer
-    bufDesc = {};
-    nvrhi::BufferHandle indexBufferHandle;
-    bufDesc.byteSize = sizeof(uint32_t) * g_vertices.size();
-    bufDesc.debugName = "IndexBufferForOMMBaker";
-    bufDesc.canHaveRawViews = true;
-    bufDesc.canHaveUAVs = false;
-    bufDesc.canHaveTypedViews = true;
-    bufDesc.initialState = nvrhi::ResourceStates::ShaderResource;
-    bufDesc.keepInitialState = true;
-    bufDesc.setFormat(nvrhi::Format::R32_UINT);
-
-    indexBufferHandle = nvrhiDevice->createHandleForNativeBuffer(
-      nvrhi::ObjectTypes::VK_Buffer,
-      indexBuffer,
-      bufDesc
-    );
-
-    input.texCoordBuffer = uvBufferHandle;
-    input.texCoordFormat = nvrhi::Format::R32_FLOAT; // 对应 float2 UV
-    input.texCoordStrideInBytes = sizeof(glm::vec2);
-
-    // triangle index buffer
-    input.indexBuffer = indexBufferHandle;
-    input.numIndices = 6;
-
-    // OMM quality / format
-    input.maxSubdivisionLevel = 5;
-    input.format = nvrhi::rt::OpacityMicromapFormat::OC1_4_State;
-
-    // misc
-    input.dynamicSubdivisionScale = 0.0f;
-    input.enableStats = true;
-    input.enableSpecialIndices = false;
-    input.force32BitIndices = false;
-    input.enableTexCoordDeduplication = true;
-    input.computeOnly = false;
-    input.maxOutOmmArraySize = 0xFFFFFFFF;
-
-    omm::GpuBakeNvrhi::PreDispatchInfo info = {};
-    baker.GetPreDispatchInfo(input, info);
-    printf("OMM PreDispatch Info:\n");
-    printf("ommArrayBufferSize            = %u\n", info.ommArrayBufferSize);
-    printf("ommDescArrayHistogramSize     = %u\n", info.ommDescArrayHistogramSize);
-    printf("ommDescBufferSize             = %u\n", info.ommDescBufferSize);
-    printf("ommIndexBufferSize            = %u\n", info.ommIndexBufferSize);
-    printf("ommIndexCount                 = %u\n", info.ommIndexCount);
-    printf("ommIndexFormat                = %u\n", info.ommIndexFormat);
-    printf("ommIndexHistogramSize         = %u\n", info.ommIndexHistogramSize);
-    printf("ommPostDispatchInfoBufferSize = %u\n", info.ommPostDispatchInfoBufferSize);
-
-    // Output is in gpu_omm_output
-    auto createRawUavBuffer = [&](size_t byteSize, const char* name)
-      {
-        nvrhi::BufferDesc desc{};
-        desc.byteSize = std::max<size_t>(byteSize, 4);
-        desc.debugName = name;
-        desc.canHaveRawViews = true;
-        desc.canHaveUAVs = true;
-        desc.canHaveTypedViews = true;
-        desc.initialState = nvrhi::ResourceStates::Common;
-        desc.keepInitialState = false;
-
-        return nvrhiDevice->createBuffer(desc);
-      };
-
-    nvrhi::BufferHandle& ommArrayBuffer = gpu_omm_output.ommArrayBuffer;
-    nvrhi::BufferHandle& ommDescBuffer = gpu_omm_output.ommDescBuffer;
-    nvrhi::BufferHandle& ommIndexBuffer = gpu_omm_output.ommIndexBuffer;
-    nvrhi::BufferHandle& ommDescArrayHistogramBuffer = gpu_omm_output.ommDescArrayHistogramBuffer;
-    nvrhi::BufferHandle& ommIndexHistogramBuffer = gpu_omm_output.ommIndexHistogramBuffer;
-    nvrhi::BufferHandle& ommPostDispatchInfoBuffer = gpu_omm_output.ommPostDispatchInfoBuffer;
-
-    ommArrayBuffer = createRawUavBuffer(
-      info.ommArrayBufferSize,
-      "OMM Array Buffer"
-    );
-
-    ommDescBuffer = createRawUavBuffer(
-      info.ommDescBufferSize,
-      "OMM Desc Buffer"
-    );
-
-    ommIndexBuffer = createRawUavBuffer(
-      info.ommIndexBufferSize,
-      "OMM Index Buffer"
-    );
-
-    ommDescArrayHistogramBuffer = createRawUavBuffer(
-      info.ommDescArrayHistogramSize,
-      "OMM Desc Array Histogram Buffer"
-    );
-
-    ommIndexHistogramBuffer = createRawUavBuffer(
-      info.ommIndexHistogramSize,
-      "OMM Index Histogram Buffer"
-    );
-
-    ommPostDispatchInfoBuffer = createRawUavBuffer(
-      info.ommPostDispatchInfoBufferSize,
-      "OMM Post Dispatch Info Buffer"
-    );
-
-    commandList->beginTrackingTextureState(
-      alphaTextureNvrhi,
-      nvrhi::TextureSubresourceSet(),
-      nvrhi::ResourceStates::ShaderResource
-    );
-
-    commandList->beginTrackingBufferState(
-      uvBufferHandle,
-      nvrhi::ResourceStates::ShaderResource
-    );
-
-    commandList->beginTrackingBufferState(
-      indexBufferHandle,
-      nvrhi::ResourceStates::ShaderResource
-    );
-
-    commandList->beginTrackingBufferState(ommDescArrayHistogramBuffer, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommIndexHistogramBuffer, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommDescBuffer, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommPostDispatchInfoBuffer, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommArrayBuffer, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommIndexBuffer, nvrhi::ResourceStates::Common);
-
-    baker.Dispatch(commandList, input, gpu_omm_output);
+      alphaTextureNvrhi.Detach();
+      uvBufferHandle.Detach();
+    }  // commandList closes
 
     // Copy back
     auto createReadbackBuffer = [&](nvrhi::BufferHandle src, const char* name)
@@ -567,94 +608,23 @@ private:
         desc.cpuAccess = nvrhi::CpuAccessMode::Read;
         desc.initialState = nvrhi::ResourceStates::Common;
         desc.keepInitialState = false;
-
         return nvrhiDevice->createBuffer(desc);
       };
-
-    nvrhi::BufferHandle ommArrayReadback =
-      createReadbackBuffer(ommArrayBuffer, "OMM Array Readback");
-
-    nvrhi::BufferHandle ommDescReadback =
-      createReadbackBuffer(ommDescBuffer, "OMM Desc Readback");
-
-    nvrhi::BufferHandle ommIndexReadback =
-      createReadbackBuffer(ommIndexBuffer, "OMM Index Readback");
-
-    nvrhi::BufferHandle ommDescHistogramReadback =
-      createReadbackBuffer(ommDescArrayHistogramBuffer, "OMM Desc Histogram Readback");
-
-    nvrhi::BufferHandle ommIndexHistogramReadback =
-      createReadbackBuffer(ommIndexHistogramBuffer, "OMM Index Histogram Readback");
-
-    nvrhi::BufferHandle ommPostInfoReadback =
-      createReadbackBuffer(ommPostDispatchInfoBuffer, "OMM Post Info Readback");
-
-    commandList->beginTrackingBufferState(ommArrayReadback, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommDescReadback, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommIndexReadback, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommDescHistogramReadback, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommIndexHistogramReadback, nvrhi::ResourceStates::Common);
-    commandList->beginTrackingBufferState(ommPostInfoReadback, nvrhi::ResourceStates::Common);
-
-    commandList->copyBuffer(ommArrayReadback, 0, ommArrayBuffer, 0, ommArrayBuffer->getDesc().byteSize);
-    commandList->copyBuffer(ommDescReadback, 0, ommDescBuffer, 0, ommDescBuffer->getDesc().byteSize);
-    commandList->copyBuffer(ommIndexReadback, 0, ommIndexBuffer, 0, ommIndexBuffer->getDesc().byteSize);
-    commandList->copyBuffer(ommDescHistogramReadback, 0, ommDescArrayHistogramBuffer, 0, ommDescArrayHistogramBuffer->getDesc().byteSize);
-    commandList->copyBuffer(ommIndexHistogramReadback, 0, ommIndexHistogramBuffer, 0, ommIndexHistogramBuffer->getDesc().byteSize);
-    commandList->copyBuffer(ommPostInfoReadback, 0, ommPostDispatchInfoBuffer, 0, ommPostDispatchInfoBuffer->getDesc().byteSize);
-
-    commandList->close();
-
-    nvrhiDevice->executeCommandList(commandList);
-    nvrhiDevice->waitForIdle();
-
-    printf("Executed OMM buliding commandlist\n");
 
     // Print out
     auto readBuffer = [&](nvrhi::BufferHandle buffer, size_t size = SIZE_MAX)
       {
         std::vector<uint8_t> data;
-
-        const size_t byteSize =
-          (size == SIZE_MAX)
-          ? buffer->getDesc().byteSize
-          : std::min<size_t>(size, buffer->getDesc().byteSize);
-
-        if (byteSize == 0)
-          return data;
-
+        const size_t byteSize = (size == SIZE_MAX) ? buffer->getDesc().byteSize
+                                                   : std::min<size_t>(size, buffer->getDesc().byteSize);
+        if (byteSize == 0) return data;
         void* mapped = nvrhiDevice->mapBuffer(buffer, nvrhi::CpuAccessMode::Read);
         assert(mapped);
-
         data.resize(byteSize);
         memcpy(data.data(), mapped, byteSize);
-
         nvrhiDevice->unmapBuffer(buffer);
-
         return data;
       };
-
-    std::vector<uint8_t> postInfoData = readBuffer(ommPostInfoReadback);
-
-    omm::GpuBakeNvrhi::PostDispatchInfo postInfo{};
-    omm::GpuBakeNvrhi::ReadPostDispatchInfo(
-      postInfoData.data(),
-      postInfoData.size(),
-      postInfo
-    );
-
-    printf("OMM PostDispatch Info:\n");
-    printf("ommArrayBufferSize       = %u\n", postInfo.ommArrayBufferSize);
-    printf("ommDescBufferSize        = %u\n", postInfo.ommDescBufferSize);
-    printf("ommTotalOpaqueCount      = %u\n", postInfo.ommTotalOpaqueCount);
-    printf("ommTotalTransparentCount = %u\n", postInfo.ommTotalTransparentCount);
-    printf("ommTotalUnknownCount     = %u\n", postInfo.ommTotalUnknownCount);
-
-    std::vector<uint8_t> ommArrayData = readBuffer(ommArrayReadback, postInfo.ommArrayBufferSize);
-    std::vector<uint8_t> ommDescData = readBuffer(ommDescReadback, postInfo.ommDescBufferSize);
-    std::vector<uint8_t> ommIndexData = readBuffer(ommIndexReadback, ommIndexBuffer->getDesc().byteSize);
-    std::vector<uint8_t> ommDescHistogramData = readBuffer(ommDescHistogramReadback);
-    std::vector<uint8_t> ommIndexHistogramData = readBuffer(ommIndexHistogramReadback);
 
     // Print first few bytes
     auto dumpBytes = [](const char* name, const std::vector<uint8_t>& data, size_t n = 64)
@@ -668,15 +638,87 @@ private:
         printf("\n");
       };
 
-    dumpBytes("OMM Array", ommArrayData);
-    dumpBytes("OMM Desc", ommDescData);
-    dumpBytes("OMM Index", ommIndexData);
+    auto PrintOneOMMStats = [&](const char* tag, BakedTriangleOmm& omm) {
+      printf("%s:\n", tag);
+      printf("array buf size = %u\n", omm.ommArrayBufferSize);
+      printf("desc buf size  = %u\n", omm.ommDescBufferSize);
+      printf("idx buf size   = %u\n", omm.ommIndexBufferSize);
+      printf("idx count      = %u, format = %u\n", omm.ommIndexCount, omm.ommIndexFormat);
+      
+      nvrhi::BufferHandle ommArrayBuffer = omm.ommArrayBuffer;
+      nvrhi::BufferHandle ommArrayReadback =
+        createReadbackBuffer(ommArrayBuffer, "OMM Array Readback");
+
+      commandList->open();
+      commandList->beginTrackingBufferState(ommArrayReadback, nvrhi::ResourceStates::Common);
+      commandList->copyBuffer(ommArrayReadback, 0, ommArrayBuffer, 0, ommArrayBuffer->getDesc().byteSize);
+      commandList->close();
+      nvrhiDevice->executeCommandList(commandList);
+      nvrhiDevice->waitForIdle();
+
+      std::vector<uint8_t> ommArrayData = readBuffer(ommArrayReadback, omm.ommArrayBufferSize);
+      dumpBytes("Array Data", ommArrayData);
+    };
+
+    auto PopulateCPUSideOMMHistograms = [&](BakedTriangleOmm& omm) {
+      auto descArrayHistogramReadback = createReadbackBuffer(omm.ommDescArrayHistogramBuffer, "DAHB");
+      auto indexHistogramReadback = createReadbackBuffer(omm.ommIndexHistogramBuffer, "IHB");
+
+      commandList->open();
+      commandList->beginTrackingBufferState(descArrayHistogramReadback, nvrhi::ResourceStates::Common);
+      commandList->copyBuffer(descArrayHistogramReadback, 0, omm.ommDescArrayHistogramBuffer, 0, omm.ommDescArrayHistogramBuffer->getDesc().byteSize);
+      commandList->beginTrackingBufferState(indexHistogramReadback, nvrhi::ResourceStates::Common);
+      commandList->copyBuffer(indexHistogramReadback, 0, omm.ommIndexHistogramBuffer, 0, omm.ommIndexHistogramBuffer->getDesc().byteSize);
+      commandList->close();
+      nvrhiDevice->executeCommandList(commandList);
+      nvrhiDevice->waitForIdle();
+
+      uint32_t sz_omuc = sizeof(omm::Cpu::OpacityMicromapUsageCount);
+      printf("DAHB size %u, sizeof(OpacityMicromapUsageCount) is %zu\n",
+        omm.ommDescArrayHistogramBufferSize, sz_omuc);
+      std::vector<uint8_t> buf = readBuffer(descArrayHistogramReadback, omm.ommDescArrayHistogramBufferSize);
+      omm.ommDescArrayHistogram.resize(buf.size() / sz_omuc);
+      memcpy(omm.ommDescArrayHistogram.data(), buf.data(), sz_omuc* omm.ommDescArrayHistogram.size());
+      for (uint32_t i = 0; i < omm.ommDescArrayHistogram.size(); i++) {
+        omm::Cpu::OpacityMicromapUsageCount* omuc = &(omm.ommDescArrayHistogram[i]);
+        printf(" [%u]: count=%u, format=%u, level=%u\n",
+          i,
+          omuc->count, omuc->format, omuc->subdivisionLevel);
+      }
+
+      printf("IHB size %u\n", omm.ommIndexHistogramBufferSize);
+      buf = readBuffer(indexHistogramReadback, omm.ommIndexHistogramBufferSize);
+      omm.ommIndexHistogram.resize(buf.size() / sz_omuc);
+      memcpy(omm.ommIndexHistogram.data(), buf.data(), sz_omuc* omm.ommIndexHistogram.size());
+      for (uint32_t i = 0; i < omm.ommIndexHistogram.size(); i++) {
+        omm::Cpu::OpacityMicromapUsageCount* omuc = &(omm.ommIndexHistogram[i]);
+        printf(" [%u]: count=%u, format=%u, level=%u\n",
+          i,
+          omuc->count, omuc->format, omuc->subdivisionLevel);
+      }
+    };
+
+    PrintOneOMMStats("Tri0 OMM", tri0Omm_gpu);
+    PrintOneOMMStats("Tri1 OMM", tri1Omm_gpu);
+
+    PopulateCPUSideOMMHistograms(tri0Omm_gpu);
+    PopulateCPUSideOMMHistograms(tri1Omm_gpu);
   }
 
   void mainLoop() {
     while (!glfwWindowShouldClose(window) && !should_exit) {
       glfwPollEvents();
       drawFrame();
+      if (g_should_recreate_as) {
+        g_should_recreate_as = false;
+        vkDeviceWaitIdle(device);
+        if (g_omm_use_gpubaker_results) {
+          initOMMBaker();
+        }
+        g_app->createAS();
+        g_app->updateRtDescriptorSets();
+        vkDeviceWaitIdle(device);
+      }
     }
     vkDeviceWaitIdle(device);
   }
@@ -1526,6 +1568,12 @@ private:
   void createFramebuffers() {
     swapChainFramebuffers.resize(swapChainImages.size());
     for (uint32_t i = 0; i < swapChainImages.size(); i++) {
+      {
+        char name[64];
+        sprintf_s(name, sizeof(name), "SwapchainImage_%u", i);
+        setObjectName((uint64_t)swapChainImages[i], VK_OBJECT_TYPE_IMAGE, name);
+      }
+
       VkImageView attachments[] = {
         swapChainImageViews[i]
       };
@@ -1607,12 +1655,20 @@ private:
 
     VkDeviceSize zero{ 0 };
     vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &zero);
-
     vkCmdDraw(commandBuffer, 6, 1, 0, 0);
-
     vkCmdEndRenderPass(commandBuffer);
 
+    renderPassInfo = {};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = imguiRenderPass;
+    renderPassInfo.framebuffer = imguiFramebuffers[imageIndex];
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = swapChainExtent;
+    renderPassInfo.clearValueCount = 0;
+    renderPassInfo.pClearValues = nullptr;
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     renderImGuiAndEndImGuiForFrame();
+    vkCmdEndRenderPass(commandBuffer);
 
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not end command buffer");
@@ -1715,7 +1771,7 @@ private:
     barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.image = swapChainImages[imageIndex];
-    barrier.srcAccessMask = 0;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(commandBuffer,
       VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
@@ -1736,12 +1792,14 @@ private:
       1, &blit, VK_FILTER_LINEAR);
 
     barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = 0;
+    barrier.dstAccessMask =
+      VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     vkCmdPipelineBarrier(commandBuffer,
       VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
       0, 0, nullptr, 0, nullptr, 1, &barrier);
 
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -1754,7 +1812,17 @@ private:
       VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
       0, 0, nullptr, 0, nullptr, 1, &barrier);
 
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = imguiRenderPass;
+    renderPassInfo.framebuffer = imguiFramebuffers[imageIndex];
+    renderPassInfo.renderArea.offset = { 0, 0 };
+    renderPassInfo.renderArea.extent = swapChainExtent;
+    renderPassInfo.clearValueCount = 0;
+    renderPassInfo.pClearValues = nullptr;
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     renderImGuiAndEndImGuiForFrame();
+    vkCmdEndRenderPass(commandBuffer);
 
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not end RT command buffer");
@@ -1768,9 +1836,17 @@ private:
   }
 
   void renderImGuiAndEndImGuiForFrame() {
-    ImGui::SetNextWindowSize(ImVec2(360, 320), ImGuiCond_Once);
+    ImGui::SetNextWindowSize(ImVec2(240, 240), ImGuiCond_Once);
     ImGui::SetNextWindowPos(ImVec2(32, 32), ImGuiCond_Once);
     ImGui::Begin("VK OMM Test.");
+    ImGui::Checkbox("RT", &g_is_rt);
+    {
+      if (ImGui::Button("Recreate AS")) {
+        g_should_recreate_as = true;
+      }
+      ImGui::SliderInt2("SubDiv", g_omm_subdiv_levels, 1, 8, "%d");
+      ImGui::Checkbox("Use GPU Baker Results", &g_omm_use_gpubaker_results);
+    }
     ImGui::End();
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
@@ -1830,11 +1906,13 @@ private:
     if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create semaphore");
     }
+    setObjectName((uint64_t)imageAvailableSemaphore, VK_OBJECT_TYPE_SEMAPHORE, "Image Available Semaphore");
 
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS) {
       throw std::runtime_error("Failed to create semaphore");
     }
+    setObjectName((uint64_t)renderFinishedSemaphore, VK_OBJECT_TYPE_SEMAPHORE, "Render Finished Semaphore");
 
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -1974,7 +2052,62 @@ private:
     VkMicromapEXT ommArray{};
     if (g_use_omm) {
       // 1. Baked OMM result
-      const omm::Cpu::BakeResultDesc* res_desc = bakeOmmForMask(prim_idx, prim_idx == 0 ? 3 : 5);
+      const omm::Cpu::BakeResultDesc* res_desc{};
+      std::vector<VkMicromapUsageEXT> descArrayHistEntries;
+      std::vector<VkMicromapUsageEXT> indexHistEntries;
+      uint32_t usageCountsCount{};
+      uint32_t indexHistEntryCount{};
+      void* arrayData{};
+      uint32_t arrayDataSize{};
+      uint32_t descArraySize{};
+      VkDeviceAddress arrayBufferDeviceAddress{};
+      VkDeviceAddress descDeviceAddress{};
+      VkDeviceAddress indexBufferDeviceAddress{};
+
+      BakedTriangleOmm* bto{ nullptr };
+      if (g_omm_use_gpubaker_results) {
+        if (prim_idx == 0) bto = &tri0Omm_gpu;
+        else if (prim_idx == 1) bto = &tri1Omm_gpu;
+        else throw std::runtime_error("bto is nullptr");
+        if (bto) {
+          usageCountsCount = bto->ommDescArrayHistogram.size();
+          descArrayHistEntries.clear();
+          for (uint32_t i = 0; i < usageCountsCount; i++) {
+            auto usage0 = bto->ommDescArrayHistogram[i];
+            VkMicromapUsageEXT usage{};
+            usage.count = usage0.count;
+            usage.format = usage0.format;
+            usage.subdivisionLevel = usage0.subdivisionLevel;
+            descArrayHistEntries.push_back(usage);
+          }
+
+          indexHistEntryCount = bto->ommIndexHistogram.size();
+          for (uint32_t i = 0; i < indexHistEntryCount; i++) {
+            auto usage0 = bto->ommIndexHistogram[i];
+            VkMicromapUsageEXT usage{};
+            usage.count = usage0.count;
+            usage.format = usage0.format;
+            usage.subdivisionLevel = usage0.subdivisionLevel;
+            indexHistEntries.push_back(usage);
+          }
+        }
+        arrayDataSize = bto->ommArrayBufferSize;
+        arrayBufferDeviceAddress = bto->ommArrayBuffer->getGpuVirtualAddress();
+        descDeviceAddress = bto->ommDescBuffer->getGpuVirtualAddress();
+        indexBufferDeviceAddress = bto->ommIndexBuffer->getGpuVirtualAddress();
+      }
+      else {
+        res_desc = bakeOmmForMask(prim_idx,
+          prim_idx == 0 ? g_omm_subdiv_levels[0] : g_omm_subdiv_levels[1]);
+        usageCountsCount = res_desc->descArrayHistogramCount;
+        VkMicromapUsageEXT usage{};
+        auto usage0 = res_desc->descArrayHistogram[0];
+        usage.count = usage0.count;
+        usage.format = usage0.format;
+        usage.subdivisionLevel = usage0.subdivisionLevel;
+        descArrayHistEntries.push_back(usage);
+        arrayDataSize = res_desc->arrayDataSize;
+      }
 
       // 2. OMM itself
       // FillMicromapBuildInfo
@@ -1983,14 +2116,8 @@ private:
       buildDesc.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
       buildDesc.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
       buildDesc.dstMicromap = NULL;
-      buildDesc.usageCountsCount = res_desc->descArrayHistogramCount;
-      assert(res_desc->descArrayHistogramCount == 1);
-      VkMicromapUsageEXT usage{};
-      auto usage0 = res_desc->descArrayHistogram[0];
-      usage.count = usage0.count;
-      usage.format = usage0.format;
-      usage.subdivisionLevel = usage0.subdivisionLevel;
-      buildDesc.pUsageCounts = &usage;
+      buildDesc.usageCountsCount = usageCountsCount;
+      buildDesc.pUsageCounts = descArrayHistEntries.data();
       buildDesc.data.deviceAddress = NULL;
       buildDesc.scratchData.deviceAddress = NULL;
       buildDesc.triangleArray.deviceAddress = NULL;
@@ -2038,47 +2165,60 @@ private:
         printf("Failed to create VkMicromap\n");
       }
 
-      // OMM Array Data
-      VkBuffer ommArrayBuffer{};
-      VkDeviceMemory ommArrayMemory{};
-      createBuffer(res_desc->arrayDataSize,
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-        | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        ommArrayBuffer, ommArrayMemory);
-      void* data{};
-      vkMapMemory(device, ommArrayMemory, 0, res_desc->arrayDataSize, 0, &data);
-      memcpy(data, res_desc->arrayData, res_desc->arrayDataSize);
-      vkUnmapMemory(device, ommArrayMemory);
+      if (!g_omm_use_gpubaker_results) {
+        // OMM Array Data
+        VkBuffer ommArrayBuffer{};
+        VkDeviceMemory ommArrayMemory{};
+        createBuffer(arrayDataSize,
+          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+          | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+          | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+          | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+          ommArrayBuffer, ommArrayMemory);
+        void* data{};
+        vkMapMemory(device, ommArrayMemory, 0, arrayDataSize, 0, &data);
+        memcpy(data, res_desc->arrayData, arrayDataSize);
+        vkUnmapMemory(device, ommArrayMemory);
 
-      // OMM descriptor array
-      VkBuffer ommDescArrayBuffer{};
-      VkDeviceMemory ommDescArrayMemory{};
-      static_assert(sizeof(VkMicromapTriangleEXT) == sizeof(omm::Cpu::OpacityMicromapDesc));
-      size_t size = res_desc->descArrayCount * sizeof(VkMicromapTriangleEXT);
-      createBuffer(size,
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-        | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        ommDescArrayBuffer, ommDescArrayMemory);
-      vkMapMemory(device, ommDescArrayMemory, 0, size, 0, &data);
-      memcpy(data, res_desc->descArray, size);
-      vkUnmapMemory(device, ommDescArrayMemory);
+        // OMM descriptor array
+        VkBuffer ommDescArrayBuffer{};
+        VkDeviceMemory ommDescArrayMemory{};
+        static_assert(sizeof(VkMicromapTriangleEXT) == sizeof(omm::Cpu::OpacityMicromapDesc));
+        descArraySize = res_desc->descArrayCount * sizeof(VkMicromapTriangleEXT);
+        createBuffer(descArraySize,
+          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+          | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+          | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+          | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+          ommDescArrayBuffer, ommDescArrayMemory);
+        vkMapMemory(device, ommDescArrayMemory, 0, descArraySize, 0, &data);
+        memcpy(data, res_desc->descArray, descArraySize);
+        vkUnmapMemory(device, ommDescArrayMemory);
+
+        arrayBufferDeviceAddress = getBufferDeviceAddress(ommArrayBuffer);
+        descDeviceAddress = getBufferDeviceAddress(ommDescArrayBuffer);
+
+        ommBuffersToDelete.push_back(ommArrayBuffer);
+        ommBuffersToDelete.push_back(ommDescArrayBuffer);
+        ommMemoriesToFree.push_back(ommArrayMemory);
+        ommMemoriesToFree.push_back(ommDescArrayMemory);
+      }
+      else {
+
+      }
 
       // FillMicromapBuildInfo for real
       buildDesc.pNext = nullptr;
       buildDesc.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
       buildDesc.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
       buildDesc.dstMicromap = ommArray;
-      buildDesc.usageCountsCount = res_desc->descArrayHistogramCount;
-      buildDesc.pUsageCounts = &usage;
-      buildDesc.data.deviceAddress = getBufferDeviceAddress(ommArrayBuffer);
+      buildDesc.usageCountsCount = descArrayHistEntries.size();
+      buildDesc.pUsageCounts = descArrayHistEntries.data();
+      buildDesc.data.deviceAddress = arrayBufferDeviceAddress;
       buildDesc.scratchData.deviceAddress = getBufferDeviceAddress(ommScratchBuffer);
-      buildDesc.triangleArray.deviceAddress = getBufferDeviceAddress(ommDescArrayBuffer);
+      buildDesc.triangleArray.deviceAddress = descDeviceAddress;
       buildDesc.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
 
       VkCommandBuffer commandBuffer = beginSingleTimeCommands();
@@ -2101,33 +2241,48 @@ private:
       // 3. OMM BLAS Info for BLAS build
       VkBuffer ommIndexBuffer{};
       VkDeviceMemory ommIndexMemory{};
-      assert(res_desc->indexFormat == omm::IndexFormat::UINT_32);
-      size = sizeof(uint32_t) * res_desc->indexCount;
-      createBuffer(size,
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-        | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-        | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-        ommIndexBuffer, ommIndexMemory);
-      vkMapMemory(device, ommIndexMemory, 0, size, 0, &data);
-      memcpy(data, res_desc->indexBuffer, size);
-      vkUnmapMemory(device, ommIndexMemory);
+      if (!g_omm_use_gpubaker_results) {
+        assert(res_desc->indexFormat == omm::IndexFormat::UINT_32);
+        uint32_t indexSize = sizeof(uint32_t) * res_desc->indexCount;
+        createBuffer(indexSize,
+          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+          | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+          | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+          | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+          ommIndexBuffer, ommIndexMemory);
+        void* data{};
+        vkMapMemory(device, ommIndexMemory, 0, indexSize, 0, &data);
+        memcpy(data, res_desc->indexBuffer, indexSize);
+        vkUnmapMemory(device, ommIndexMemory);
+
+        indexBufferDeviceAddress = getBufferDeviceAddress(ommIndexBuffer);
+      }
+
+      if (!g_omm_use_gpubaker_results) {
+        indexHistEntryCount = res_desc->indexHistogramCount;
+        indexHistEntries.clear();
+        for (uint32_t i = 0; i < indexHistEntryCount; i++) {
+          VkMicromapUsageEXT ih{};
+          auto ih0 = res_desc->indexHistogram[i];
+          ih.count = ih0.count;
+          ih.format = ih0.format;
+          indexHistEntries.push_back(ih);
+        }
+      }
+      else {
+
+      }
 
       // FillOmmTrianglesDesc
       ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
       ommBlasDesc.pNext = nullptr;
       ommBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
-      ommBlasDesc.indexBuffer.deviceAddress = getBufferDeviceAddress(ommIndexBuffer);
+      ommBlasDesc.indexBuffer.deviceAddress = indexBufferDeviceAddress;
       ommBlasDesc.indexStride = sizeof(uint32_t);
       ommBlasDesc.baseTriangle = 0;
-      ommBlasDesc.usageCountsCount = res_desc->indexHistogramCount;
-      VkMicromapUsageEXT ih0{};  // ih = index histogram
-      assert(res_desc->indexHistogramCount == 1);
-      auto u0 = res_desc->indexHistogram[0];
-      ih0.count = u0.count;
-      ih0.format = u0.format;
-      ommBlasDesc.pUsageCounts = &ih0;
+      ommBlasDesc.usageCountsCount = indexHistEntryCount;//
+      ommBlasDesc.pUsageCounts = indexHistEntries.data();
       ommBlasDesc.micromap = ommArray;
 
       triASData.pNext = &ommBlasDesc;
@@ -2136,12 +2291,8 @@ private:
       vkFreeMemory(device, ommScratchMemory, nullptr);
 
       ommBuffersToDelete.push_back(ommBuffer);
-      ommBuffersToDelete.push_back(ommArrayBuffer);
-      ommBuffersToDelete.push_back(ommDescArrayBuffer);
       ommBuffersToDelete.push_back(ommIndexBuffer);
       ommMemoriesToFree.push_back(ommMemory);
-      ommMemoriesToFree.push_back(ommArrayMemory);
-      ommMemoriesToFree.push_back(ommDescArrayMemory);
       ommMemoriesToFree.push_back(ommIndexMemory);
     }
 
@@ -2253,7 +2404,21 @@ private:
     return blas;
   }
 
+  public:
   void createAS() {
+    if (blas0) {
+      PFN_vkDestroyAccelerationStructureKHR funcDestroyAccelerationStructureKHR =
+        (PFN_vkDestroyAccelerationStructureKHR)vkGetInstanceProcAddr(
+          instance, "vkDestroyAccelerationStructureKHR");
+      assert(funcDestroyAccelerationStructureKHR);
+      funcDestroyAccelerationStructureKHR(device, blas, nullptr);
+      funcDestroyAccelerationStructureKHR(device, tlas, nullptr);
+      funcDestroyAccelerationStructureKHR(device, blas0, nullptr);
+      funcDestroyAccelerationStructureKHR(device, blas1, nullptr);
+      vkDestroyBuffer(device, blasResultBuffer0, nullptr);
+      vkDestroyBuffer(device, blasResultBuffer1, nullptr);
+      vkDestroyBuffer(device, tlasResultBuffer, nullptr);
+    }
     blas0 = buildBLAS(0, blasResultBuffer0, blasResultMemory0);
     blas1 = buildBLAS(1, blasResultBuffer1, blasResultMemory1);
 
@@ -2415,6 +2580,8 @@ private:
     vkDestroyBuffer(device, tlasScratchBuffer, nullptr);
   }
 
+  private:
+
   uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
     VkPhysicalDeviceMemoryProperties memProperties{};
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
@@ -2452,6 +2619,9 @@ private:
       if (vkCreateImage(device, &imageInfo, nullptr, &(rtOutputImages[i])) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create RT output image");
       }
+      char buf[64];
+      sprintf_s(buf, sizeof(buf), "RTOutputImage_%u", i);
+      setObjectName((uint64_t)rtOutputImages[i], VK_OBJECT_TYPE_IMAGE, buf);
     }
 
     VkMemoryRequirements memReq{};
@@ -2623,16 +2793,9 @@ private:
     }
   }
 
-  void createRtDescriptorSets() {
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = rtDescriptorPool;
-    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, rtDescriptorSetLayout);
-    allocInfo.pSetLayouts = layouts.data();
-    if (vkAllocateDescriptorSets(device, &allocInfo, rtDescriptorSets) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate RT descriptor sets");
-    }
+  public:
+  void updateRtDescriptorSets() {
+    VkWriteDescriptorSet writeDesc[5 * MAX_FRAMES_IN_FLIGHT]{};
 
     // Update TLAS to descriptor set
     VkWriteDescriptorSetAccelerationStructureKHR writeDescAS{};
@@ -2640,7 +2803,6 @@ private:
     writeDescAS.accelerationStructureCount = 1;
     writeDescAS.pAccelerationStructures = &tlas;
 
-    VkWriteDescriptorSet writeDesc[5 * MAX_FRAMES_IN_FLIGHT]{};
     writeDesc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writeDesc[0].dstSet = rtDescriptorSets[0];
     writeDesc[0].dstBinding = 0;
@@ -2712,6 +2874,21 @@ private:
     }
 
     vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
+  }
+
+  private:
+  void createRtDescriptorSets() {
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = rtDescriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, rtDescriptorSetLayout);
+    allocInfo.pSetLayouts = layouts.data();
+    if (vkAllocateDescriptorSets(device, &allocInfo, rtDescriptorSets) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate RT descriptor sets");
+    }
+
+    updateRtDescriptorSets();
 
     // Allocate Set2 descriptor set
     allocInfo.descriptorPool = rtDescriptorSet1Pool;
@@ -2863,6 +3040,7 @@ private:
     rtPipelineCreateInfo.pLibraryInterface = nullptr;
     rtPipelineCreateInfo.pDynamicState = nullptr;
     rtPipelineCreateInfo.layout = rtPipelineLayout;
+    rtPipelineCreateInfo.flags = VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT;
 
     PFN_vkCreateRayTracingPipelinesKHR funcCreateRayTracingPipelines =
       (PFN_vkCreateRayTracingPipelinesKHR)vkGetInstanceProcAddr(
@@ -3110,6 +3288,9 @@ private:
           VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
           *img, *image_memory);
+        char buf[100];
+        sprintf_s(buf, sizeof(buf), "%s-%s texture", fn.c_str(), types[ty]);
+        setObjectName((uint64_t)img, VK_OBJECT_TYPE_IMAGE, buf);
 
         transitionImageLayout(*img, VK_FORMAT_R8G8B8A8_SRGB,
           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -3270,6 +3451,118 @@ private:
     vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
   }
 
+  void initNvrhiOnce()
+  {
+    if (m_nvrhiDevice)
+      return;
+
+    auto& dldi = vk::detail::defaultDispatchLoaderDynamic;
+    dldi.init(vkGetInstanceProcAddr);
+    dldi.init(instance, vkGetInstanceProcAddr);
+
+    nvrhi::vulkan::DeviceDesc desc{};
+    desc.instance = instance;
+    desc.physicalDevice = physicalDevice;
+    desc.device = device;
+    desc.graphicsQueue = graphicsQueue;
+    desc.graphicsQueueIndex = graphicsQueueFamilyIndex;
+    desc.deviceExtensions = deviceExtensions.data();
+    desc.numDeviceExtensions = static_cast<uint32_t>(deviceExtensions.size());
+
+    m_nvrhiDevice = nvrhi::vulkan::createDevice(desc);
+    m_nvrhiCommandList = m_nvrhiDevice->createCommandList();
+  }
+
+  void setObjectName(uint64_t handle, VkObjectType type, const char* name)
+  {
+    VkDebugUtilsObjectNameInfoEXT info{};
+    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+    info.objectType = type;
+    info.objectHandle = handle;
+    info.pObjectName = name;
+
+    auto fpSetDebugUtilsObjectNameEXT =
+      reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+        vkGetInstanceProcAddr(instance, "vkSetDebugUtilsObjectNameEXT"));
+
+    if (fpSetDebugUtilsObjectNameEXT)
+      fpSetDebugUtilsObjectNameEXT(device, &info);
+  }
+
+  void createImGuiRenderPass()
+  {
+    VkAttachmentDescription colorAttachment{};
+    colorAttachment.format = swapChainImageFormat;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    // 关键：保留 blit 到 swapchain 的 RT 结果
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+    // blit 后你会手动 transition 到 COLOR_ATTACHMENT_OPTIMAL
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    // render pass 结束后直接给 present
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference colorAttachmentRef{};
+    colorAttachmentRef.attachment = 0;
+    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorAttachmentRef;
+
+    VkSubpassDependency dep{};
+    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dep.dstSubpass = 0;
+    dep.srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.dstAccessMask =
+      VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo rpInfo{};
+    rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpInfo.attachmentCount = 1;
+    rpInfo.pAttachments = &colorAttachment;
+    rpInfo.subpassCount = 1;
+    rpInfo.pSubpasses = &subpass;
+    rpInfo.dependencyCount = 1;
+    rpInfo.pDependencies = &dep;
+
+    if (vkCreateRenderPass(device, &rpInfo, nullptr, &imguiRenderPass) != VK_SUCCESS)
+      throw std::runtime_error("Failed to create ImGui overlay render pass");
+  }
+
+  void createImGuiFramebuffers()
+  {
+    imguiFramebuffers.resize(swapChainImageViews.size());
+
+    for (uint32_t i = 0; i < swapChainImageViews.size(); ++i)
+    {
+      VkImageView attachments[] = {
+          swapChainImageViews[i]
+      };
+
+      VkFramebufferCreateInfo fbInfo{};
+      fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+      fbInfo.renderPass = imguiRenderPass; // 关键：不是 renderPass
+      fbInfo.attachmentCount = 1;
+      fbInfo.pAttachments = attachments;
+      fbInfo.width = swapChainExtent.width;
+      fbInfo.height = swapChainExtent.height;
+      fbInfo.layers = 1;
+
+      if (vkCreateFramebuffer(device, &fbInfo, nullptr, &imguiFramebuffers[i]) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ImGui framebuffer");
+    }
+  }
 private:
   VkInstance instance;
   VkDebugUtilsMessengerEXT debugMessenger;
@@ -3344,8 +3637,12 @@ private:
   std::vector<VkBuffer> ommBuffersToDelete;
   std::vector<VkDeviceMemory> ommMemoriesToFree;
 
-  omm::GpuBakeNvrhi::Buffers gpu_omm_output;
+  nvrhi::DeviceHandle m_nvrhiDevice;
+  nvrhi::CommandListHandle m_nvrhiCommandList;
+  BakedTriangleOmm tri0Omm_gpu, tri1Omm_gpu;
   VkDescriptorPool imguiDescriptorPool;
+  VkRenderPass imguiRenderPass{};
+  std::vector<VkFramebuffer> imguiFramebuffers;
 
   uint32_t graphicsQueueFamilyIndex{};
 };
@@ -3390,172 +3687,6 @@ static void Log(omm::MessageSeverity severity, const char* message, void* userAr
   printf("[omm-sdk] [%s] %s\n", sev, message);
 }
 
-void parseOMMBinaryFile(const char* file_name) {
-  {
-    FILE* f;
-    fopen_s(&f, file_name, "rb");
-    fseek(f, 0, SEEK_END);
-    long ofst = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    std::vector<uint8_t> data(ofst);
-    fread(data.data(), 1, ofst, f);
-    fclose(f);
-    omm::Cpu::BlobDesc blobDesc;
-    blobDesc.data = (void*)data.data();
-    blobDesc.size = data.size();
-
-    // Use official binary reader
-    omm::BakerCreationDesc desc{};
-    desc.type = omm::BakerType::CPU;
-    desc.messageInterface.messageCallback = &Log;
-
-    omm::Baker baker;
-    omm::Result res = omm::CreateBaker(desc, &baker);
-    assert(res == omm::Result::SUCCESS);
-    omm::Cpu::DeserializedResult dr;
-    omm::Result err = omm::Cpu::Deserialize(baker, blobDesc, &dr);
-    assert(res == omm::Result::SUCCESS);
-    const omm::Cpu::DeserializedDesc* deserializedDesc = nullptr;
-    res = omm::Cpu::GetDeserializedDesc(dr, &deserializedDesc);
-    assert(res == omm::Result::SUCCESS);
-    printf("%d input descs", deserializedDesc->numInputDescs);
-  }
-
-#define Read(x) assert(1==fread(&x, sizeof(x), 1, f));
-  FILE* f;
-  fopen_s(&f, file_name, "rb");
-  printf("Opening OMM binary file %s\n", file_name);
-  if (!f) {
-    printf("Oh! file %s is not good.\n", file_name);
-    exit(0);
-  }
-  char xxh64_hash[8];
-  assert(1 == fread(xxh64_hash, 8, 1, f));
-  int major{}, minor{}, patch{};
-  assert(1 == fread(&major, 4, 1, f));
-  assert(1 == fread(&minor, 4, 1, f));
-  assert(1 == fread(&patch, 4, 1, f));
-  int input_desc_version{};
-  assert(1 == fread(&input_desc_version, 4, 1, f));
-  printf("OMM ver: %d.%d.%d, input desc ver %d\n", major, minor, patch, input_desc_version);
-
-
-  int flags{};
-  assert(1 == fread(&flags, 4, 1, f));
-  if (flags & int(omm::Cpu::SerializeFlags::Compress)) {
-    printf("Oh! Don't know how to deal with compressed OMM binary.\n");
-    exit(0);
-  }
-
-  if (input_desc_version >= 2) {
-    int decompressed_size{};
-    Read(decompressed_size);
-    printf("decompressed size: %d\n", decompressed_size);
-  }
-
-  int num_input_descs{};
-  Read(num_input_descs);
-  printf("%d input descs\n", num_input_descs);
-  for (int i = 0; i < num_input_descs; i++) {
-    int bakeFlags;
-    Read(bakeFlags);
-
-    // start texture
-    int num_mips = 0;
-    Read(num_mips);
-    printf("%d mips.\n", num_mips);
-
-    for (int i = 0; i < num_mips; i++) {
-      /*
-          int2 size;
-          int2 sizeLog2;
-          float2 sizef;
-          bool sizeIsPow2;
-          float2 rcpSize;
-          int2 sizeMinusOne;
-          uintptr_t dataOffset;
-          size_t numElements;
-          uintptr_t dataOffsetSAT;
-      */
-      int size_x{}, size_y{}; float rcpSize_x{}, rcpSize_y{};
-      uint32_t dataOffset{};
-      size_t numElements{};
-      uint32_t dataOffsetSAT{};
-      Read(size_x); Read(size_y);
-      Read(rcpSize_x); Read(rcpSize_y);
-      Read(dataOffset);
-      Read(numElements);
-      Read(dataOffsetSAT);
-
-      printf("mip[%d]: %dx%d (rcp:%gx%g)\n", i, size_x, size_y, rcpSize_x, rcpSize_y);
-    }
-
-    int tiling_mode{};
-    Read(tiling_mode);
-    printf("Tiling mode: %d\n", tiling_mode);
-
-    int texture_flags{}; float alpha_cutoff{};
-    if (input_desc_version >= 3) {
-      Read(texture_flags);
-      Read(alpha_cutoff);
-    }
-
-    int texture_format{};
-    Read(texture_format);
-
-    size_t data_size{};
-    Read(data_size);
-
-    std::vector<uint8_t> data(data_size);
-    assert(data_size == fread(data.data(), 1, data_size, f));
-
-    size_t data_sat_size{};
-    Read(data_sat_size);
-    if (data_sat_size > 0) {
-      std::vector<uint8_t> data_sat(data_sat_size);
-      assert(data_sat_size == fread(data_sat.data(), 1, data_sat_size, f));
-    }
-    // end texture
-
-    int addressing_mode, filter, alpha_mode;
-    float border_alpha;
-    Read(addressing_mode);
-    Read(filter);
-    Read(border_alpha);
-    Read(alpha_mode);
-    
-    int texcoord_format;
-    Read(texcoord_format);
-
-    size_t texcoord_size{};
-    Read(texcoord_size);
-    if (texcoord_size != 0) {
-      std::vector<uint8_t> texcoords(texcoord_size, 16);
-      assert(texcoord_size == fread(texcoords.data(), 1, texcoord_size, f));
-      printf("texcoords:");
-      for (uint8_t tc : texcoords) {
-        printf(" %d", int(tc));
-      }
-    }
-
-    assert(0 && "unimplemented");
-  }
- 
-  int num_result_descs{};
-  Read(num_result_descs);
-  printf("%d result descs\n", num_result_descs);
-
-  for (int i = 0; i < num_result_descs; i++) {
-    uint32_t element_count{};
-    Read(element_count);
-    printf("%zu\n", ftell(f));
-    printf("OMM array: %u bytes\n", element_count);
-  }
-
-  fclose(f);
-#undef Read
-}
-
 int main(int argc, char** argv) {
   // Test NVRHI OMM
   #define STR2(x) #x
@@ -3564,12 +3695,6 @@ int main(int argc, char** argv) {
   #undef STR
   #undef STR2
 
-
-  if (argc > 1) {
-    printf("Will read OMM dump file.\n");
-    parseOMMBinaryFile(argv[1]);
-    return 0;
-  }
   g_app = new HelloTriangleApplication();
 
   try {

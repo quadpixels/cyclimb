@@ -75,7 +75,7 @@
     <LibraryPath>$(VULKAN_SDK)\lib;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(ProjectDir)\nvrhi\Debug;$(ProjectDir)\omm-gpu-nvrhi\Debug</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(VULKAN_SDK)\Include;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(ProjectDir);$(IncludePath)</IncludePath>
+    <IncludePath>$(VULKAN_SDK)\Include;$(USERPROFILE)\Downloads\OMM\libraries\omm-lib\include;$(ProjectDir);$(SolutionDir)\ImGui;$(IncludePath)</IncludePath>
     <LibraryPath>$(VULKAN_SDK)\lib;$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(ProjectDir)\nvrhi\Release;$(ProjectDir)\omm-gpu-nvrhi\Release</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">

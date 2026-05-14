@@ -10,6 +10,9 @@ layout(binding=1, rgba32f) uniform image2D image;
 layout(location=0) rayPayloadEXT hitPayload payload;
 
 void main() {
+  payload.isOpaque = false;
+  payload.isAHSInvoked = false;
+
   const vec2 uv = (vec2(gl_LaunchIDEXT.xy) + vec2(0.5)) / vec2(gl_LaunchSizeEXT.xy);
   vec3 origin;
   origin.xy = vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
@@ -18,6 +21,8 @@ void main() {
   uint rayFlags = gl_RayFlagsNoneEXT;
   float tMin = 0.01f;
   float tMax = 10000.0f;
+
+  imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(0.8, 0.8, 1.0, 1.0));
 
   traceRayEXT(TLAS,
               rayFlags,
@@ -32,5 +37,11 @@ void main() {
               0
   );
 
-  imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(payload.hitValue, 1.0));
+  if (payload.isOpaque) {  // Result comes from CHS
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(payload.hitValue, 1.0));
+  } else {
+    if (payload.isAHSInvoked) {
+      imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(1.0, 1.0, 0.0, 1.0));
+    }
+  }
 }

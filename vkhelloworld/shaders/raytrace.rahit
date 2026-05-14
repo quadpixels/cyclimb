@@ -5,6 +5,7 @@
 #include "raycommon.glsl"
 
 layout(location=0) rayPayloadInEXT hitPayload prd;
+layout(binding=1, rgba32f) uniform image2D image;
 hitAttributeEXT vec2 attribs;
 
 layout(binding=3) uniform sampler2D texSampler1;
@@ -27,9 +28,12 @@ void main() {
   const vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
   const vec2 uv = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z;
   vec3 t = texture(texSampler1, uv).xyz;
+  prd.isAHSInvoked = true;
   if (t.x < 0.5) {
-	ignoreIntersectionEXT;
+    // Coloring will be done in RGS
+    ignoreIntersectionEXT;
   } else {
+    prd.isOpaque = true;
 	prd.hitValue = vec3(uv, 1).xyz;
   }
 }
