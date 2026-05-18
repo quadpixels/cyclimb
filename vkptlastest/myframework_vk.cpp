@@ -17,6 +17,9 @@ const bool enableValidationLayers = true;
 #include <string>
 #include <vector>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #ifdef max
 #undef max
 #endif
@@ -390,6 +393,10 @@ MyFrameworkVk::QueueFamilyIndices MyFrameworkVk::findQueueFamilies(VkPhysicalDev
     if (verbose)
       printf("\n");
   }
+
+  // cached for later usage
+  queueFamilyIndices = indices;
+
   return indices;
 }
 
@@ -604,7 +611,7 @@ void MyFrameworkVk::InitSwapchain() {
     }
   }
 
-  createSyncObjects();
+  CreateSyncObjects();
 }
 
 void MyFrameworkVk::createCommandPool() {
@@ -692,7 +699,50 @@ void MyFrameworkVk::InitRenderPassAndFramebuffers() {
   }
 }
 
-void MyFrameworkVk::createSyncObjects() {
+void MyFrameworkVk::InitImGuiRenderPass() {
+  VkAttachmentDescription colorAttachment{};
+  colorAttachment.format = swapChainImageFormat;
+  colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+  VkAttachmentReference colorAttachmentRef{};
+  colorAttachmentRef.attachment = 0;
+  colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+  VkSubpassDescription subpass{};
+  subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpass.colorAttachmentCount = 1;
+  subpass.pColorAttachments = &colorAttachmentRef;
+
+  VkSubpassDependency dep{};
+  dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+  dep.dstSubpass = 0;
+  dep.srcStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dep.dstAccessMask =
+    VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+  VkRenderPassCreateInfo rpInfo{};
+  rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  rpInfo.attachmentCount = 1;
+  rpInfo.pAttachments = &colorAttachment;
+  rpInfo.subpassCount = 1;
+  rpInfo.pSubpasses = &subpass;
+  rpInfo.dependencyCount = 1;
+  rpInfo.pDependencies = &dep;
+
+  if (vkCreateRenderPass(device, &rpInfo, nullptr, &imguiRenderPass) != VK_SUCCESS)
+    throw std::runtime_error("Failed to create ImGui overlay render pass");
+}
+
+void MyFrameworkVk::CreateSyncObjects() {
   VkSemaphoreCreateInfo semaphoreInfo{};
   uint32_t N = swapChainImages.size();
   imageAvailableSemaphore.resize(N);
@@ -713,6 +763,30 @@ void MyFrameworkVk::createSyncObjects() {
   fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
   if (vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create fence");
+  }
+}
+
+void MyFrameworkVk::CreateImGuiFramebuffers()
+{
+  assert(imguiRenderPass != VK_NULL_HANDLE);  // Must create ImGui Render Pass first
+  imguiFramebuffers.resize(swapChainImageViews.size());
+  for (uint32_t i = 0; i < swapChainImageViews.size(); ++i)
+  {
+    VkImageView attachments[] = {
+        swapChainImageViews[i]
+    };
+
+    VkFramebufferCreateInfo fbInfo{};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = imguiRenderPass;
+    fbInfo.attachmentCount = 1;
+    fbInfo.pAttachments = attachments;
+    fbInfo.width = swapChainExtent.width;
+    fbInfo.height = swapChainExtent.height;
+    fbInfo.layers = 1;
+
+    if (vkCreateFramebuffer(device, &fbInfo, nullptr, &imguiFramebuffers[i]) != VK_SUCCESS)
+      throw std::runtime_error("Failed to create ImGui framebuffer");
   }
 }
 
@@ -869,7 +943,7 @@ void MyFrameworkVk::CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline, MyRtShaderL
   const size_t sbtAlignment = 64;
   const size_t sbtMemorySize = numSBTs * sbtAlignment;
 
-  createBuffer(sbtMemorySize,
+  CreateBuffer(sbtMemorySize,
     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
     | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
     | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
@@ -929,7 +1003,7 @@ VkShaderModule MyFrameworkVk::CreateShaderModule(const std::vector<char>& code) 
   return ret;
 }
 
-void MyFrameworkVk::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
+void MyFrameworkVk::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
   VkBufferCreateInfo bufferInfo{};
   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bufferInfo.size = size;
@@ -1124,7 +1198,7 @@ void MyFrameworkVk::CreateRtOutputResource(uint32_t w, uint32_t h, VkImage& imag
     throw std::runtime_error("Failed to begin command buffer");
   }
 
-  transitionImageLayout(image,
+  TransitionImageLayout(image,
     VK_FORMAT_R32G32B32A32_SFLOAT,
     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -1148,7 +1222,7 @@ void MyFrameworkVk::CreateRtOutputResource(uint32_t w, uint32_t h, VkImage& imag
   vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
 }
 
-void MyFrameworkVk::transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+void MyFrameworkVk::TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
   VkCommandBuffer commandBuffer = beginSingleTimeCommands();
   VkImageMemoryBarrier barrier{};
   barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1258,8 +1332,12 @@ void MyFrameworkVk::ImageMemoryBarrier(VkCommandBuffer commandBuffer,
 
 // Vert: vec3
 // Idx:  uint32
-void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as, VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
-  VkBuffer vb, VkBuffer ib, uint32_t maxVertex) {
+void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as, 
+  VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
+  VkBuffer vb, VkBuffer ib, uint32_t maxVertex,
+  uint32_t vertex_stride,
+  MyOmmAttachmentInfo* omminfo
+  ) {
   VkDeviceAddress vbDeviceAddr = getBufferDeviceAddress(vb);
   VkDeviceAddress ibDeviceAddr = getBufferDeviceAddress(ib);
 
@@ -1267,7 +1345,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as, VkBuffer& outBlasR
   asgtd.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
   asgtd.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
   asgtd.vertexData.deviceAddress = vbDeviceAddr;
-  asgtd.vertexStride = sizeof(glm::vec3);
+  asgtd.vertexStride = vertex_stride,
   asgtd.indexType = VK_INDEX_TYPE_UINT32;
   asgtd.indexData.deviceAddress = ibDeviceAddr;
   asgtd.maxVertex = maxVertex - 1;
@@ -1296,7 +1374,109 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as, VkBuffer& outBlasR
   asbgi.ppGeometries = nullptr;
   asbgi.scratchData.deviceAddress = 0;
 
-  uint32_t primCount{ 1 };
+  // OMM-related
+  VkAccelerationStructureTrianglesOpacityMicromapEXT ommBlasDesc{};
+  VkMicromapBuildInfoEXT buildDesc{};
+  buildDesc.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
+  if (omminfo) {
+    buildDesc.pNext = nullptr;
+    buildDesc.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+    buildDesc.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+    buildDesc.dstMicromap = NULL;
+    buildDesc.usageCountsCount = omminfo->usageCounts.size();
+    buildDesc.pUsageCounts = omminfo->usageCounts.data();
+    buildDesc.data.deviceAddress = NULL;
+    buildDesc.scratchData.deviceAddress = NULL;
+    buildDesc.triangleArray.deviceAddress = NULL;
+    buildDesc.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
+
+    VkMicromapBuildSizesInfoEXT preBuildInfo = { VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT };
+    PFN_vkGetMicromapBuildSizesEXT funcGetMicromapBuildSizes =
+      (PFN_vkGetMicromapBuildSizesEXT)vkGetInstanceProcAddr(
+        instance, "vkGetMicromapBuildSizesEXT");
+    funcGetMicromapBuildSizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildDesc, &preBuildInfo);
+    printf("OMM build size: scratch=%ld, as=%ld\n", preBuildInfo.buildScratchSize, preBuildInfo.micromapSize);
+
+    VkBuffer ommBuffer{};
+    VkDeviceMemory ommMemory{};
+    CreateBuffer(preBuildInfo.micromapSize,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+      0,
+      ommBuffer, ommMemory);
+
+    VkBuffer ommScratchBuffer{};
+    VkDeviceMemory ommScratchMemory{};
+    CreateBuffer(preBuildInfo.buildScratchSize,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+      0,
+      ommScratchBuffer, ommScratchMemory);
+
+    VkMicromapCreateInfoEXT ommDesc = { VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT };
+    ommDesc.pNext = nullptr;
+    ommDesc.createFlags = 0;
+    ommDesc.buffer = ommBuffer;
+    ommDesc.offset = 0;
+    ommDesc.size = preBuildInfo.micromapSize;
+    ommDesc.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+    ommDesc.deviceAddress = 0;
+    auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(
+      instance, "vkCreateMicromapEXT");
+    if (func_vkCreateMicromap(device, &ommDesc, nullptr, &omminfo->outOmmArray) != VK_SUCCESS) {
+      printf("Failed to create VkMicromap\n");
+    }
+
+    buildDesc.pNext = nullptr;
+    buildDesc.type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT;
+    buildDesc.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+    buildDesc.dstMicromap = omminfo->outOmmArray;
+    buildDesc.usageCountsCount = omminfo->usageCounts.size();
+    buildDesc.pUsageCounts = omminfo->usageCounts.data();
+    buildDesc.data.deviceAddress = omminfo->arrayBufferAddress;
+    buildDesc.scratchData.deviceAddress = getBufferDeviceAddress(ommScratchBuffer);
+    buildDesc.triangleArray.deviceAddress = omminfo->arrayDescsAddress;
+    buildDesc.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
+
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+    PFN_vkCmdBuildMicromapsEXT funcCmdBuildMicromaps =
+      (PFN_vkCmdBuildMicromapsEXT)vkGetInstanceProcAddr(
+        instance, "vkCmdBuildMicromapsEXT");
+    funcCmdBuildMicromaps(commandBuffer, 1, &buildDesc);
+    VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.srcQueueFamilyIndex = (~0U);
+    barrier.dstQueueFamilyIndex = (~0U);
+    barrier.buffer = ommScratchBuffer;
+    barrier.offset = 0;
+    barrier.size = preBuildInfo.buildScratchSize;
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+      0, 0, nullptr, 1, &barrier, 0, nullptr);
+    endSingleTimeCommands(commandBuffer);
+
+    // FillOmmTrianglesDesc
+    ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
+    ommBlasDesc.pNext = nullptr;
+    ommBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
+    ommBlasDesc.indexBuffer.deviceAddress = omminfo->indexBufferAddress;
+    ommBlasDesc.indexStride = sizeof(uint32_t);
+    ommBlasDesc.baseTriangle = 0;
+    ommBlasDesc.usageCountsCount = omminfo->indexHistograms.size();
+    ommBlasDesc.pUsageCounts = omminfo->indexHistograms.data();
+    ommBlasDesc.micromap = omminfo->outOmmArray;
+
+    asg.geometry.triangles.pNext = &ommBlasDesc;
+
+    vkDestroyBuffer(device, ommScratchBuffer, nullptr);
+    vkFreeMemory(device, ommScratchMemory, nullptr);
+  }
+
+  uint32_t primCount{ asbri.primitiveCount };
   VkAccelerationStructureBuildSizesInfoKHR asBuildSizeInfo{};
   asBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
   PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
@@ -1314,7 +1494,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as, VkBuffer& outBlasR
 
   VkBuffer blasScratchBuffer{};
   VkDeviceMemory blasScratchMemory{};
-  createBuffer(asBuildSizeInfo.buildScratchSize,
+  CreateBuffer(asBuildSizeInfo.buildScratchSize,
     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
     | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
     | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
@@ -1322,7 +1502,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as, VkBuffer& outBlasR
     blasScratchBuffer,
     blasScratchMemory);
 
-  createBuffer(asBuildSizeInfo.accelerationStructureSize,
+  CreateBuffer(asBuildSizeInfo.accelerationStructureSize,
     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
     | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
     | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
@@ -1374,7 +1554,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as, VkBuffer& outBlasR
 }
 
 void MyFrameworkVk::CreateBufferForCPUSideData(void* data, uint32_t len, VkBuffer& buf, VkDeviceMemory& mem) {
-  createBuffer(len,
+  CreateBuffer(len,
     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
     | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
     | VK_BUFFER_USAGE_TRANSFER_DST_BIT
@@ -1395,43 +1575,60 @@ void MyFrameworkVk::CreateBufferForCPUSideData(void* data, uint32_t len, VkBuffe
 
 void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas, const VkAccelerationStructureKHR& blas0, const VkBuffer& blas0Buffer,
   VkBuffer& outTlasResultBuffer, VkDeviceMemory& outTlasResultMemory) {
+  std::vector<VkAccelerationStructureKHR> blases = { blas0 };
+  std::vector<VkBuffer> blas_buffers = { blas0Buffer };
+  BuildTLAS(outTlas, blases, blas_buffers, outTlasResultBuffer, outTlasResultMemory);
+}
+
+void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas,
+  std::vector<VkAccelerationStructureKHR> blases, std::vector<VkBuffer> blas_buffers,
+  VkBuffer& outTlasResultBuffer, VkDeviceMemory& outTlasResultMemory
+) {
   VkBuffer tlasInstancesBuffer{};
   VkDeviceMemory tlasInstancesMemory{};
+  const uint32_t N = blases.size();
 
-  size_t size = sizeof(VkAccelerationStructureInstanceKHR);
-  createBuffer(size, 
+  size_t size = sizeof(VkAccelerationStructureInstanceKHR) * N;
+  CreateBuffer(size,
     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
     | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
     | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
     tlasInstancesBuffer, tlasInstancesMemory);
 
-  // Get BLAS0's address
-  VkDeviceAddress blas0ResultDeviceAddr = getBufferDeviceAddress(blas0Buffer);
-  VkDeviceAddress blas0ASAddress{};
+  // Get BLASes' address
+  std::vector<VkDeviceAddress> blas_addresses(N);
+  for (uint32_t i = 0; i < N; i++) {
+    VkDeviceAddress blas_result_device_addr = getBufferDeviceAddress(blas_buffers[i]);
+    VkDeviceAddress blas_as_addr{};
 
-  VkAccelerationStructureDeviceAddressInfoKHR blasAddrInfo{};
-  blasAddrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-  blasAddrInfo.accelerationStructure = blas0;
-  PFN_vkGetAccelerationStructureDeviceAddressKHR funcGetAccelerationStructureDeviceAddressKHR =
-    (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetInstanceProcAddr(
-      instance, "vkGetAccelerationStructureDeviceAddressKHR");
-  blas0ASAddress = funcGetAccelerationStructureDeviceAddressKHR(device, &blasAddrInfo);
+    VkAccelerationStructureDeviceAddressInfoKHR blasAddrInfo{};
+    blasAddrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    blasAddrInfo.accelerationStructure = blases[i];
+    PFN_vkGetAccelerationStructureDeviceAddressKHR funcGetAccelerationStructureDeviceAddressKHR =
+      (PFN_vkGetAccelerationStructureDeviceAddressKHR)vkGetInstanceProcAddr(
+        instance, "vkGetAccelerationStructureDeviceAddressKHR");
+    blas_addresses[i] = funcGetAccelerationStructureDeviceAddressKHR(device, &blasAddrInfo);
+  }
 
   // Instance
-  void* data;
-  VkAccelerationStructureInstanceKHR asInst{};
-  asInst.accelerationStructureReference = blas0ASAddress;
-  asInst.transform.matrix[0][0] = 1.0f;
-  asInst.transform.matrix[1][1] = 1.0f;
-  asInst.transform.matrix[2][2] = 1.0f;
-  asInst.instanceCustomIndex = 0;
-  asInst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-  asInst.mask = 0xFF;
-  asInst.instanceShaderBindingTableRecordOffset = 0;
+  std::vector<VkAccelerationStructureInstanceKHR> instances(N);
+  for (uint32_t i = 0; i < N; i++) {
+    VkAccelerationStructureInstanceKHR asInst{};
+    asInst.accelerationStructureReference = blas_addresses[i];
+    asInst.transform.matrix[0][0] = 1.0f;
+    asInst.transform.matrix[1][1] = 1.0f;
+    asInst.transform.matrix[2][2] = 1.0f;
+    asInst.instanceCustomIndex = 0;
+    asInst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    asInst.mask = 0xFF;
+    asInst.instanceShaderBindingTableRecordOffset = 0;
+    instances[i] = asInst;
+  }
 
+  void* data;
   vkMapMemory(device, tlasInstancesMemory, 0, size, 0, &data);
-  memcpy(data, &asInst, size);
+  memcpy(data, instances.data(), size);
   vkUnmapMemory(device, tlasInstancesMemory);
 
   // Geom
@@ -1455,7 +1652,7 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas, const VkAccel
   buildInstInfo.ppGeometries = nullptr;
   buildInstInfo.scratchData.deviceAddress = 0;
 
-  uint32_t instCount = 1;
+  uint32_t instCount = N;
   VkAccelerationStructureBuildSizesInfoKHR tlasBuildSizeInfo{};
   tlasBuildSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
   PFN_vkGetAccelerationStructureBuildSizesKHR funcGetAccelerationStructureBuildSizes =
@@ -1473,7 +1670,7 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas, const VkAccel
   // TLAS scratch
   VkBuffer tlasScratchBuffer;
   VkDeviceMemory tlasScratchMemory;
-  createBuffer(tlasBuildSizeInfo.buildScratchSize,
+  CreateBuffer(tlasBuildSizeInfo.buildScratchSize,
     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
     | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
     | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
@@ -1481,13 +1678,13 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas, const VkAccel
     tlasScratchBuffer, tlasScratchMemory);
 
   // TLAS result
-  createBuffer(tlasBuildSizeInfo.accelerationStructureSize,
+  CreateBuffer(tlasBuildSizeInfo.accelerationStructureSize,
     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
     | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
     | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
     0,
     outTlasResultBuffer, outTlasResultMemory);
-  
+
   VkAccelerationStructureCreateInfoKHR tlasCreateInfo{};
   tlasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
   tlasCreateInfo.size = tlasBuildSizeInfo.accelerationStructureSize;
@@ -1503,7 +1700,7 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas, const VkAccel
   // Prepare cmd list
   VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
   buildRangeInfo.firstVertex = 0;
-  buildRangeInfo.primitiveCount = 1;  // instance count
+  buildRangeInfo.primitiveCount = N;  // instance count
   buildRangeInfo.primitiveOffset = 0;
   buildRangeInfo.transformOffset = 0;
   buildInstInfo.scratchData.deviceAddress = getBufferDeviceAddress(tlasScratchBuffer);
@@ -1532,4 +1729,185 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas, const VkAccel
   vkFreeMemory(device, tlasScratchMemory, nullptr);
   vkDestroyBuffer(device, tlasInstancesBuffer, nullptr);
   vkDestroyBuffer(device, tlasScratchBuffer, nullptr);
+}
+
+void MyFrameworkVk::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
+  VkImageCreateInfo imageInfo{};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent.width = width;
+  imageInfo.extent.height = height;
+  imageInfo.extent.depth = 1;
+  imageInfo.mipLevels = 1;
+  imageInfo.arrayLayers = 1;
+  imageInfo.format = format;
+  imageInfo.tiling = tiling;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.usage = usage;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateImage(device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create image!");
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetImageMemoryRequirements(device, image, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+  if (vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
+    throw std::runtime_error("failed to allocate image memory!");
+  }
+
+  vkBindImageMemory(device, image, imageMemory, 0);
+}
+
+void MyFrameworkVk::setObjectName(uint64_t handle, VkObjectType type, const char* name)
+{
+  VkDebugUtilsObjectNameInfoEXT info{};
+  info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+  info.objectType = type;
+  info.objectHandle = handle;
+  info.pObjectName = name;
+
+  auto fpSetDebugUtilsObjectNameEXT =
+    reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+      vkGetInstanceProcAddr(instance, "vkSetDebugUtilsObjectNameEXT"));
+
+  if (fpSetDebugUtilsObjectNameEXT)
+    fpSetDebugUtilsObjectNameEXT(device, &info);
+}
+
+void MyFrameworkVk::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+  VkBufferImageCopy region{};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;
+  region.bufferImageHeight = 0;
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.mipLevel = 0;
+  region.imageSubresource.baseArrayLayer = 0;
+  region.imageSubresource.layerCount = 1;
+  region.imageOffset.x = 0;
+  region.imageOffset.y = 0;
+  region.imageOffset.z = 0;
+  region.imageExtent.width = width;
+  region.imageExtent.height = height;
+  region.imageExtent.depth = 1;
+
+  vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+  endSingleTimeCommands(commandBuffer);
+}
+
+VkImageView MyFrameworkVk::createImageView(VkImage image, VkFormat format) {
+  VkImageViewCreateInfo viewInfo{};
+  viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewInfo.image = image;
+  viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewInfo.format = format;
+  viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  viewInfo.subresourceRange.baseMipLevel = 0;
+  viewInfo.subresourceRange.levelCount = 1;
+  viewInfo.subresourceRange.baseArrayLayer = 0;
+  viewInfo.subresourceRange.layerCount = 1;
+
+  VkImageView imageView;
+  if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create texture image view!");
+  }
+
+  return imageView;
+}
+
+void MyFrameworkVk::LoadImageFromFile(const char* fn, VkImage& image, VkImageView& image_view, VkDeviceMemory& image_memory) {
+  int texHeight, texWidth, texChannels;
+  stbi_uc* pixels = stbi_load(fn, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+  printf("%s: width=%d height=%d channels=%d\n", fn, texWidth, texHeight, texChannels);
+  VkDeviceSize imageSize = texHeight * texWidth * 4;
+
+  VkBuffer stagingBuffer{};
+  VkDeviceMemory stagingBufferMemory;
+
+  VkBufferCreateInfo createInfo{};
+  createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  createInfo.size = imageSize;
+  createInfo.usage =
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  if (vkCreateBuffer(device, &createInfo, nullptr, &stagingBuffer) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create texture staging buffer");
+  }
+
+  VkMemoryRequirements memReq;
+  vkGetBufferMemoryRequirements(device, stagingBuffer, &memReq);
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = std::max(memReq.size, imageSize);
+  allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+    | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (vkAllocateMemory(device, &allocInfo, nullptr, &stagingBufferMemory) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate memory for staging buffer");
+  }
+
+  void* mapped{};
+  vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &mapped);
+  memcpy(mapped, pixels, imageSize);
+  vkUnmapMemory(device, stagingBufferMemory);
+  vkBindBufferMemory(device, stagingBuffer, stagingBufferMemory, 0);
+
+  stbi_image_free(pixels);
+
+  createImage(texWidth, texHeight,
+    VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+    VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    image, image_memory);
+  char buf[100];
+  sprintf_s(buf, sizeof(buf), "%s texture", fn);
+  setObjectName((uint64_t)image, VK_OBJECT_TYPE_IMAGE, buf);
+
+  TransitionImageLayout(image, VK_FORMAT_R8G8B8A8_SRGB,
+    VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  copyBufferToImage(stagingBuffer, image, texWidth, texHeight);
+  TransitionImageLayout(image, VK_FORMAT_R8G8B8A8_SRGB,
+    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+  vkDestroyBuffer(device, stagingBuffer, nullptr);
+  vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+  image_view = createImageView(image, VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+VkSampler MyFrameworkVk::CreateTextureSampler() {
+  VkSamplerCreateInfo samplerInfo{};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = VK_FILTER_LINEAR;
+  samplerInfo.minFilter = VK_FILTER_LINEAR;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.anisotropyEnable = VK_TRUE;
+  VkPhysicalDeviceProperties properties{};
+  vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+  samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  samplerInfo.mipLodBias = 0.0f;
+  samplerInfo.minLod = 0.0f;
+  samplerInfo.maxLod = 0.0f;
+  VkSampler ret;
+  if (vkCreateSampler(device, &samplerInfo, nullptr, &ret) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create texture sampler!");
+  }
+  return ret;
 }

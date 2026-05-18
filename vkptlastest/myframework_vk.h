@@ -41,11 +41,30 @@ public:
     VkBuffer sbtBuffer;
   };
 
+  struct MyOmmAttachmentInfo {
+    // Input
+    VkDeviceSize arrayDataSize;
+    VkDeviceAddress arrayBufferAddress;
+    VkDeviceAddress arrayDescsAddress;
+    void* descArray;
+    uint32_t descArrayCount;
+    VkDeviceAddress indexBufferAddress;
+    uint32_t num_idxes;
+
+    std::vector<VkMicromapUsageEXT> usageCounts;
+    std::vector<VkMicromapUsageEXT> indexHistograms;
+
+    // Output
+    VkMicromapEXT outOmmArray;
+  };
+
   // Shared by all scenes.
   void InitWindow(const char* appName, uint32_t width, uint32_t height, GLFWkeyfun keyCallback);
   void InitDeviceAndCommandQ();
   void InitSwapchain();
   void InitRenderPassAndFramebuffers();
+  void InitImGuiRenderPass();
+  void CreateImGuiFramebuffers();
 
   void CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline, MyRtShaderListInfo& info);
   static std::vector<char> ReadFile(const std::string& filename);
@@ -69,14 +88,25 @@ public:
     VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask);
   void BuildBLAS(VkAccelerationStructureKHR& as,
     VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
-    VkBuffer vb, VkBuffer ib, uint32_t maxVertex);
+    VkBuffer vb, VkBuffer ib, uint32_t maxVertex,
+    uint32_t vertex_stride = sizeof(float)*3,
+    MyOmmAttachmentInfo* omminfo = nullptr);
   void BuildTLAS(VkAccelerationStructureKHR& outTlas,
     const VkAccelerationStructureKHR& blas0, const VkBuffer& blas0Buffer,
     VkBuffer& outTlasResultBuffer, VkDeviceMemory& outTlasResultMemory
     );
+  void BuildTLAS(VkAccelerationStructureKHR& outTlas,
+    std::vector<VkAccelerationStructureKHR> blases, std::vector<VkBuffer> blas_buffers,
+    VkBuffer& outTlasResultBuffer, VkDeviceMemory& outTlasResultMemory
+  );
   void CreateBufferForCPUSideData(void* data, uint32_t len, VkBuffer& buf, VkDeviceMemory& mem);
 
+  void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
   VkShaderModule CreateShaderModule(const std::vector<char>& code);
+  void LoadImageFromFile(const char* fn, VkImage& image, VkImageView& image_view, VkDeviceMemory& imageMemory);
+  VkSampler CreateTextureSampler();
+  void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+  void CreateSyncObjects();
 
 private:
   void createInstance();
@@ -96,13 +126,14 @@ private:
   VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
   void createCommandPool();
   void createCommandBuffer();
-  void createSyncObjects();
-  void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
   VkDeviceAddress getBufferDeviceAddress(const VkBuffer& buf);
   uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-  void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
   VkCommandBuffer beginSingleTimeCommands();
   void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+  void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+  void setObjectName(uint64_t handle, VkObjectType type, const char* name);
+  void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+  VkImageView createImageView(VkImage image, VkFormat format);
 
 public:
   GLFWwindow* window{};
@@ -127,4 +158,8 @@ public:
   std::vector<VkSemaphore> imageAvailableSemaphore;
   VkSemaphore renderFinishedSemaphore;
   VkFence inFlightFence;
+  QueueFamilyIndices queueFamilyIndices;
+
+  VkRenderPass imguiRenderPass;
+  std::vector<VkFramebuffer> imguiFramebuffers;
 };

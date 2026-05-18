@@ -45,6 +45,9 @@
     <ClCompile Include="..\imgui\backends\imgui_impl_vulkan.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\vkptlastest\myframework_vk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="shaders\shader.vert">
@@ -71,6 +74,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="omm-gpu-nvrhi\omm-gpu-nvrhi.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\vkptlastest\myframework_vk.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
