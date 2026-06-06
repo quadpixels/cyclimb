@@ -107,6 +107,8 @@ public:
   VkSampler CreateTextureSampler();
   void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
   void CreateSyncObjects();
+  VkCommandBuffer BeginSingleTimeCommands();
+  void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
 
 private:
   void createInstance();
@@ -128,8 +130,6 @@ private:
   void createCommandBuffer();
   VkDeviceAddress getBufferDeviceAddress(const VkBuffer& buf);
   uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-  VkCommandBuffer beginSingleTimeCommands();
-  void endSingleTimeCommands(VkCommandBuffer commandBuffer);
   void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
   void setObjectName(uint64_t handle, VkObjectType type, const char* name);
   void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);

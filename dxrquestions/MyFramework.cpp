@@ -1979,6 +1979,8 @@ void MyFramework::BuildDummyDXR12OMM(ID3D12Resource* vertex_buffer, uint32_t str
   ID3D12Resource* omm_index_res{};
   ID3D12Resource* scratch_res{};
   ID3D12Resource* omm_result_res{};
+  ID3D12Resource* omm_postbuild_info_res{};
+  ID3D12Resource* omm_postbuild_info_res_cpu{};
   
   const omm::Cpu::BakeResultDesc* desc = bakeOrLoadOmmForMask(5);
   printf("[BuildDummyDXR12OMM] arrayDataSize=%u, descArrayHistorgramCount=%u, indexHistogramCount=%u\n",
@@ -2026,6 +2028,11 @@ void MyFramework::BuildDummyDXR12OMM(ID3D12Resource* vertex_buffer, uint32_t str
   }
   CreateBufferForCPUSideData(desc->indexBuffer, sizeOfIndex * desc->indexCount, &omm_index_res);
   omm_index_res->SetName(L"omm_index_res");
+
+  CreateBufferForUAVAccess(256, &omm_postbuild_info_res);
+  omm_postbuild_info_res->SetName(L"omm_postbuild_info_res");
+  CreateBufferForCPUAccess(256, &omm_postbuild_info_res_cpu);
+  omm_postbuild_info_res_cpu->SetName(L"omm_postbuild_info_res_cpu");
 
   // OMM
 
@@ -2133,5 +2140,36 @@ void MyFramework::BuildDummyDXR12OMM(ID3D12Resource* vertex_buffer, uint32_t str
   // TLAS
   BuildTLAS(tlas_result_omm, *blas_result_omm);
   printf("[DummyDXR12OMM] built TLAS\n");
+
+  // Read PostBuild Info
+  {
+    CE(command_allocator->Reset());
+    CE(command_list->Reset(command_allocator, nullptr));
+
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC aspbid{};
+    aspbid.InfoType = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_CURRENT_SIZE;
+    D3D12_GPU_VIRTUAL_ADDRESS blas_va = (*blas_result_omm)->GetGPUVirtualAddress();
+    aspbid.DestBuffer = omm_postbuild_info_res->GetGPUVirtualAddress();
+    command_list->EmitRaytracingAccelerationStructurePostbuildInfo(&aspbid, 1, &blas_va);
+
+    D3D12_RESOURCE_BARRIER postBarrier{};
+    postBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    postBarrier.UAV.pResource = omm_postbuild_info_res;
+
+    command_list->ResourceBarrier(1, &postBarrier);
+    command_list->ResourceBarrier(1, &keep(CD3DX12_RESOURCE_BARRIER::Transition(omm_postbuild_info_res, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE)));
+    command_list->CopyResource(omm_postbuild_info_res_cpu, omm_postbuild_info_res);
+    command_list->Close();
+    command_queue->ExecuteCommandLists(1, (ID3D12CommandList* const*)(&command_list));
+
+    WaitForPreviousFrame();
+
+    void* mapped;
+    uint64_t blas_cur_size{};
+    omm_postbuild_info_res_cpu->Map(0, nullptr, &mapped);
+    memcpy(&blas_cur_size, mapped, sizeof(uint64_t));
+    omm_postbuild_info_res_cpu->Unmap(0, nullptr);
+    printf("OMM BLAS curr size: %llu\n", blas_cur_size);
+  }
 #endif
 }

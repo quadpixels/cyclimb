@@ -1223,7 +1223,7 @@ void MyFrameworkVk::CreateRtOutputResource(uint32_t w, uint32_t h, VkImage& imag
 }
 
 void MyFrameworkVk::TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
-  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+  VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
   VkImageMemoryBarrier barrier{};
   barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
   barrier.oldLayout = oldLayout;
@@ -1269,10 +1269,10 @@ void MyFrameworkVk::TransitionImageLayout(VkImage image, VkFormat format, VkImag
   vkCmdPipelineBarrier(commandBuffer,
     sourceStage, destinationStage,
     0, 0, nullptr, 0, nullptr, 1, &barrier);
-  endSingleTimeCommands(commandBuffer);
+  EndSingleTimeCommands(commandBuffer);
 }
 
-VkCommandBuffer MyFrameworkVk::beginSingleTimeCommands() {
+VkCommandBuffer MyFrameworkVk::BeginSingleTimeCommands() {
   VkCommandBufferAllocateInfo allocInfo{};
   allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
   allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -1291,7 +1291,7 @@ VkCommandBuffer MyFrameworkVk::beginSingleTimeCommands() {
   return commandBuffer;
 }
 
-void MyFrameworkVk::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
+void MyFrameworkVk::EndSingleTimeCommands(VkCommandBuffer commandBuffer) {
   vkEndCommandBuffer(commandBuffer);
 
   VkSubmitInfo submitInfo{};
@@ -1442,7 +1442,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
     buildDesc.triangleArray.deviceAddress = omminfo->arrayDescsAddress;
     buildDesc.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
 
-    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+    VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
     PFN_vkCmdBuildMicromapsEXT funcCmdBuildMicromaps =
       (PFN_vkCmdBuildMicromapsEXT)vkGetInstanceProcAddr(
         instance, "vkCmdBuildMicromapsEXT");
@@ -1457,7 +1457,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
     barrier.size = preBuildInfo.buildScratchSize;
     vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
       0, 0, nullptr, 1, &barrier, 0, nullptr);
-    endSingleTimeCommands(commandBuffer);
+    EndSingleTimeCommands(commandBuffer);
 
     // FillOmmTrianglesDesc
     ommBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
@@ -1526,7 +1526,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
   }
   asbgi.dstAccelerationStructure = as;
 
-  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+  VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
   VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
   buildRangeInfo.firstVertex = 0;
   buildRangeInfo.primitiveCount = maxVertex / 3;
@@ -1547,7 +1547,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
     0, 1, &barrier,
     0, nullptr,
     0, nullptr);
-  endSingleTimeCommands(commandBuffer);
+  EndSingleTimeCommands(commandBuffer);
 
   vkDestroyBuffer(device, blasScratchBuffer, nullptr);
   vkFreeMemory(device, blasScratchMemory, nullptr);
@@ -1707,7 +1707,7 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas,
   buildInstInfo.dstAccelerationStructure = outTlas;
   VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
 
-  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+  VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
   PFN_vkCmdBuildAccelerationStructuresKHR funcCmdBuildAccelerationStructuresKHR =
     (PFN_vkCmdBuildAccelerationStructuresKHR)vkGetInstanceProcAddr(
       instance, "vkCmdBuildAccelerationStructuresKHR");
@@ -1723,7 +1723,7 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas,
     0, 1, &barrier,
     0, nullptr,
     0, nullptr);
-  endSingleTimeCommands(commandBuffer);
+  EndSingleTimeCommands(commandBuffer);
 
   vkFreeMemory(device, tlasInstancesMemory, nullptr);
   vkFreeMemory(device, tlasScratchMemory, nullptr);
@@ -1783,7 +1783,7 @@ void MyFrameworkVk::setObjectName(uint64_t handle, VkObjectType type, const char
 }
 
 void MyFrameworkVk::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
-  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+  VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
 
   VkBufferImageCopy region{};
   region.bufferOffset = 0;
@@ -1802,7 +1802,7 @@ void MyFrameworkVk::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t w
 
   vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-  endSingleTimeCommands(commandBuffer);
+  EndSingleTimeCommands(commandBuffer);
 }
 
 VkImageView MyFrameworkVk::createImageView(VkImage image, VkFormat format) {
