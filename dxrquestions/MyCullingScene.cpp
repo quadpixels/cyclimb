@@ -1,6 +1,7 @@
 #include "MyScene.h"
 #include <source_location>
 #include <wchar.h>
+#include <variant>
 
 #ifndef NDEBUG
 #include "x64\Debug\CompiledShaders\culling_mode_shaders.hlsl.h"
@@ -44,7 +45,28 @@ static const uint32_t INST_FLAG_MASKS[] = {
   0x8
 };
 
-static const int NUM_MENU_CHOICES = _countof(RAY_FLAG_LABELS) + _countof(INST_FLAG_LABELS);
+static const wchar_t* RAY_ORIGIN_DIR_LABELS[] = {
+  L"Ray origin Z",
+  L"Ray dir",
+  L"Ray tmin",
+  L"Ray tmax"
+};
+
+static const std::vector<std::vector<std::wstring>> RAY_ORIGIN_DIR_CHOICES = {
+  { L"1", L"1.001", L"0", L"0.999"},
+  { L"-Z", L"(0,0,0)" },
+  { L"0.01", L"1", L"0"},
+  { L"10000", L"+inf", L"0", L"0.1", L"1"}
+};
+
+static const std::vector<std::vector<std::variant<float, glm::vec3>>> RAY_ORIGIN_DIR_VALUES = {
+  { 1.0f, 1.001f, 0.0f, 0.999f },
+  { glm::vec3(0,0,-1), glm::vec3(0,0,0) },
+  { 0.01f, 1.0f, 0.0f },
+  { 1e4f, std::numeric_limits<float>::infinity(), 0.0f, 0.1f, 1.0f }
+};
+
+static const int NUM_MENU_CHOICES = _countof(RAY_FLAG_LABELS) + _countof(INST_FLAG_LABELS) + _countof(RAY_ORIGIN_DIR_LABELS);
 
 #ifndef CE
 #define CE(x) { \
@@ -221,6 +243,12 @@ void MyCullingScene::BuildOrRebuildAS() {
 }
 
 MyCullingScene::MyCullingScene(MyFramework* f) : MyScene(f) {
+  h_perscene_cb.origin_z = std::get<float>(RAY_ORIGIN_DIR_VALUES[0][0]);
+  h_perscene_cb.raydir = std::get<glm::vec3>(RAY_ORIGIN_DIR_VALUES[1][0]);
+  h_perscene_cb.tmin = std::get<float>(RAY_ORIGIN_DIR_VALUES[2][0]);
+  h_perscene_cb.tmax = std::get<float>(RAY_ORIGIN_DIR_VALUES[3][0]);
+
+  ray_origin_dir_choices.resize(RAY_ORIGIN_DIR_CHOICES.size());
   text_pass = new TextPass(framework->GetDevice(), framework->GetCommandQueue(), framework->GetGraphicsCommandList(), framework->GetCommandAllocator());
   text_pass->AllocateConstantBuffers(2048);
   text_pass->InitD3D12(nullptr);
@@ -358,6 +386,20 @@ void MyCullingScene::Render() {
       y += 16.0f;
     }
 
+    y += 24.0f;
+
+    for (uint32_t i = 0; i < _countof(RAY_ORIGIN_DIR_LABELS); i++) {
+      textcolor = glm::vec3(0.3);
+      std::wstring s = RAY_ORIGIN_DIR_LABELS[i];
+      int ch = ray_origin_dir_choices[i];
+      s += L" = " + RAY_ORIGIN_DIR_CHOICES[i][ch];
+      text_pass->AddText(s.c_str(), 12.0f, y, 1.0f, textcolor, glm::mat4(1));
+      if (choice_idx == i + _countof(RAY_FLAG_LABELS) + _countof(INST_FLAG_LABELS)) {
+        text_pass->AddText(L">", 4.0f, y, 1.0f, glm::vec3(0, 1, 1), glm::mat4(1));
+      }
+      y += 16.0f;
+    }
+
     float the_y = MyFramework::WIN_H * 0.65f;
     if (has_nvapi) {
       the_y += MyFramework::WIN_H * 0.3f;
@@ -484,8 +526,9 @@ void MyCullingScene::do_ChangeOption(int delta) {
       h_perscene_cb.ray_flag |= m;
     }
   }
-  else if (choice_idx <= NUM_MENU_CHOICES) {
-    uint32_t m = INST_FLAG_MASKS[choice_idx - _countof(RAY_FLAG_LABELS)];
+  else if (choice_idx < _countof(RAY_FLAG_LABELS) + _countof(INST_FLAG_LABELS)) {
+    const int ofst = choice_idx - _countof(RAY_FLAG_LABELS);
+    uint32_t m = INST_FLAG_MASKS[ofst];
     if (delta < 0) {
       inst_flag &= (~m);
     }
@@ -493,6 +536,37 @@ void MyCullingScene::do_ChangeOption(int delta) {
       inst_flag |= m;
     }
     is_as_dirty = true;
+  }
+  else if (choice_idx < _countof(RAY_FLAG_LABELS) + _countof(INST_FLAG_LABELS) + RAY_ORIGIN_DIR_CHOICES.size()) {
+    const int ofst = choice_idx - _countof(RAY_FLAG_LABELS) - _countof(INST_FLAG_LABELS);
+    int* ch = &(ray_origin_dir_choices.at(ofst));
+    const std::vector<std::wstring>* opts = &(RAY_ORIGIN_DIR_CHOICES.at(ofst));
+    const auto choices = &(RAY_ORIGIN_DIR_VALUES.at(ofst));
+    (*ch) += delta;
+    if ((*ch) < 0) {
+      (*ch) = opts->size() - 1;
+    }
+    else if ((*ch) >= opts->size()) {
+      (*ch) = 0;
+    }
+    switch (ofst) {
+      case 0: {  // L"Ray origin Z",
+        h_perscene_cb.origin_z = std::get<float>(choices->at(*ch));
+        break;
+      }
+      case 1: {// L"Ray dir",
+        h_perscene_cb.raydir = std::get<glm::vec3>(choices->at(*ch));
+        break;
+      }
+      case 2: {// L"Ray tmin",
+        h_perscene_cb.tmin = std::get<float>(choices->at(*ch));
+        break;
+      }
+      case 3: {// L"Ray tmax"
+        h_perscene_cb.tmax = std::get<float>(choices->at(*ch));
+        break;
+      }
+    }
   }
 }
 

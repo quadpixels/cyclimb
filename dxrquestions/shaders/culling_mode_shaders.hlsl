@@ -15,6 +15,10 @@ struct MyPayload
 struct MyConstantBufferStruct
 {
     uint ray_flag;
+    float3 raydir;
+    float origin_z;
+    float tmin;
+    float tmax;
 };
 ConstantBuffer<MyConstantBufferStruct> MyConstantBuffer : register(b0);
 
@@ -32,10 +36,10 @@ void MyRayGenShader()
     RayDesc ray;
     float2 uv = (lerpValues - 0.5) * 2.0;
     uv.y *= -1.0;
-    ray.Origin = float3(uv, 1.0);
-    ray.Direction = float3(0, 0, -1.0);
-    ray.TMin = 0.01;
-    ray.TMax = 10000.0;
+    ray.Origin = float3(uv, MyConstantBuffer.origin_z);
+    ray.Direction = MyConstantBuffer.raydir;
+    ray.TMin = MyConstantBuffer.tmin;
+    ray.TMax = MyConstantBuffer.tmax;
 
     TraceRay(Scene,
     MyConstantBuffer.ray_flag,

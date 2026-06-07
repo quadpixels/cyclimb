@@ -79,6 +79,10 @@ class MyCullingScene : public MyScene {
 public:
   struct PerSceneCB {
     uint32_t ray_flag;
+    glm::vec3 raydir;
+    float origin_z;
+    float tmin;
+    float tmax;
   };
   uint32_t inst_flag{};
   MyCullingScene(MyFramework* f);
@@ -99,6 +103,7 @@ public:
   ID3D12DescriptorHeap* cbvsrvuav_heap, * cbvsrvuav_heap_cpu;
 
   int choice_idx{ -1 };
+  std::vector<int> ray_origin_dir_choices;
   bool is_as_dirty{ false };
   bool has_nvapi{ true };
   void do_ChangeChoice(int delta);

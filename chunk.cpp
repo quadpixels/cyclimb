@@ -4,6 +4,7 @@
 #include "camera.hpp"
 #include "scene.hpp"
 #include <string.h>
+#include "d3dx12.h"
 
 float    Chunk::l0 = 1.0f;
 int      Chunk::size = 32;
