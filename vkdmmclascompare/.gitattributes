@@ -1,0 +1,5 @@
+reefcrab_remeshed.gltf filter=lfs diff=lfs merge=lfs -text
+reefcrab.bary filter=lfs diff=lfs merge=lfs -text
+reefcrab_remeshed.bin filter=lfs diff=lfs merge=lfs -text
+murex_romosus.bary filter=lfs diff=lfs merge=lfs -text
+murex_romosus.obj filter=lfs diff=lfs merge=lfs -text
