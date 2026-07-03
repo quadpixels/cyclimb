@@ -2,6 +2,7 @@
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN
+#define VK_ENABLE_BETA_EXTENSIONS
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
@@ -29,11 +30,15 @@ public:
     const char* raygen_shader{};  // Byte code path
     const char* closest_hit_shader{};
     const char* miss_shader{};
+    const char* anyhit_shader{};
+    bool use_omm{};  // Sets VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT
+
+    VkPipelineLayout in_pipeline_layout{VK_NULL_HANDLE};  // Use this pipeline layout, otherwise create a sample one
   };
   struct MyRtPipeline {
     VkPipeline rtPipeline{};
     VkDescriptorSetLayout rtPipeDSL{};
-    VkPipelineLayout rtPipelineLayout{};
+    VkPipelineLayout rtPipelineLayout{VK_NULL_HANDLE};  // If no pipe is set in Info, create new one
 
     // Matches DX12's hit groups
     VkStridedDeviceAddressRegionKHR rtRgenRegion, rtMissRegion, rtHitRegion, rtCallRegion;
@@ -62,7 +67,8 @@ public:
   void InitWindow(const char* appName, uint32_t width, uint32_t height, GLFWkeyfun keyCallback);
   void InitDeviceAndCommandQ();
   void InitSwapchain();
-  void InitRenderPassAndFramebuffers();
+  void InitRenderPassAndFramebuffers(bool has_depth = false);
+  void InitImGui();
   void InitImGuiRenderPass();
   void CreateImGuiFramebuffers();
 
@@ -78,6 +84,9 @@ public:
 
   void CreateUAVTexture2D(VkImageView iv, VkDescriptorSet dstSet, uint32_t dstBinding);
   void CreateSRVAccelerationStructure(VkAccelerationStructureKHR as, VkDescriptorSet dstSet, uint32_t binding);
+  void CreateSRVCombinedImageSampler(VkImageView iv, VkSampler sampler, VkDescriptorSet dstSet, uint32_t binding);
+  void CreateUAVBuffer(VkBuffer buffer, uint32_t offset, uint32_t range, VkDescriptorSet dstSet, uint32_t binding);
+  void CreateCBVBuffer(VkBuffer buffer, uint32_t offset, uint32_t range, VkDescriptorSet dstSet, uint32_t binding);
   VkDescriptorPool CreateCBVSRVUAVPool(std::vector<std::pair<VkDescriptorType, uint32_t>> sizes, uint32_t maxSets);
   VkDescriptorSet CreateDescriptorSet(VkDescriptorSetLayout layout, VkDescriptorPool pool);
   void CreateRtOutputResource(uint32_t w, uint32_t h, VkImage& image, VkDeviceMemory& memory, VkImageView& imageView);
@@ -89,6 +98,7 @@ public:
   void BuildBLAS(VkAccelerationStructureKHR& as,
     VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
     VkBuffer vb, VkBuffer ib, uint32_t maxVertex,
+    uint32_t indexCount,
     uint32_t vertex_stride = sizeof(float)*3,
     MyOmmAttachmentInfo* omminfo = nullptr);
   void BuildTLAS(VkAccelerationStructureKHR& outTlas,
@@ -101,7 +111,8 @@ public:
   );
   void CreateBufferForCPUSideData(void* data, uint32_t len, VkBuffer& buf, VkDeviceMemory& mem);
 
-  void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+  void CmdTransitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
+  void TransitionImageLayout(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
   VkShaderModule CreateShaderModule(const std::vector<char>& code);
   void LoadImageFromFile(const char* fn, VkImage& image, VkImageView& image_view, VkDeviceMemory& imageMemory);
   VkSampler CreateTextureSampler();
@@ -123,6 +134,7 @@ private:
   bool do_checkDeviceExtensionSupport(VkPhysicalDevice device, std::vector<const char*> devexts);
   bool checkDeviceExtensionSupport(VkPhysicalDevice device);
   bool checkOmmExtensionSupport(VkPhysicalDevice device);
+  bool checkDmmExtensionSupport(VkPhysicalDevice device);
   VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
   VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
   VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
@@ -134,6 +146,9 @@ private:
   void setObjectName(uint64_t handle, VkObjectType type, const char* name);
   void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
   VkImageView createImageView(VkImage image, VkFormat format);
+  void createDepthResources();
+  VkFormat findDepthFormat();
+  VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
 
 public:
   GLFWwindow* window{};
@@ -159,7 +174,11 @@ public:
   VkSemaphore renderFinishedSemaphore;
   VkFence inFlightFence;
   QueueFamilyIndices queueFamilyIndices;
+  VkImage depthImage;
+  VkDeviceMemory depthImageMemory;
+  VkImageView depthImageView;
 
   VkRenderPass imguiRenderPass;
   std::vector<VkFramebuffer> imguiFramebuffers;
+  VkDescriptorPool imguiDescriptorPool;
 };

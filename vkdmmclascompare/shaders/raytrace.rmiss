@@ -4,7 +4,7 @@
 
 #include "raycommon.glsli"
 
-layout(location=0) rayPayloadEXT hitPayload payload;
+layout(location=0) rayPayloadInEXT hitPayload payload;
 
 void main() {
   payload.hitValue = vec3(0.5, 0.5, 1.0);

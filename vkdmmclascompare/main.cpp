@@ -62,14 +62,27 @@ static MyFrameworkVk::MyRtPipeline g_my_rt_pipeline;
 static VkImage rt_output_image;
 static VkDeviceMemory rt_output_image_memory;
 static VkImageView rt_output_image_view;
+static VkBuffer rt_perscene_cb_buffer;
+static VkDeviceMemory rt_perscene_cb_buffer_memory;
+
+// Blas, TLAS
+static VkAccelerationStructureKHR blas;
+static VkBuffer blas_result_buffer;
+static VkDeviceMemory blas_result_memory;
+static VkAccelerationStructureKHR tlas;
+static VkBuffer tlas_result_buffer;
+static VkDeviceMemory tlas_result_memory;
 
 static baryutils::BaryLevelsMap g_maps(bary::ValueLayout::eTriangleBirdCurve, 5);
 static std::vector<std::vector<float>> g_dmm_displacements;
 static std::vector<uint8_t> g_dmm_levels;
 
-
 struct PerSceneUniformBuffer {
   glm::mat4 M, V, P;
+};
+
+struct RtPersceneUniformBuffer {
+  glm::mat4 inv_view, inv_proj;
 };
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -383,7 +396,30 @@ void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     &g_my_rt_pipeline.rtHitRegion,
     &g_my_rt_pipeline.rtCallRegion, WIDTH, HEIGHT, 1);
 
-  g_framework->CmdTransitionImageLayout(commandBuffer, rt_output_image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  //g_framework->CmdTransitionImageLayout(commandBuffer, rt_output_image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  VkImageMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+  barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = rt_output_image;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+  vkCmdPipelineBarrier(
+    commandBuffer,
+    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+    VK_PIPELINE_STAGE_TRANSFER_BIT,
+    0,
+    0, nullptr,
+    0, nullptr,
+    1, &barrier);
   g_framework->CmdTransitionImageLayout(commandBuffer, g_framework->swapChainImages[imageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
   VkImageBlit blit{};
@@ -440,6 +476,7 @@ void DrawFrame() {
   uint32_t imageIndex;
   vkWaitForFences(g_framework->device, 1, &(g_framework->inFlightFence), VK_TRUE, UINT64_MAX);
   vkResetFences(g_framework->device, 1, &(g_framework->inFlightFence));
+  vkResetCommandBuffer(g_framework->commandBuffer, 0);
 
   StartImGuiForFrame();
   vkAcquireNextImageKHR(g_framework->device, g_framework->swapChain, UINT64_MAX, g_framework->imageAvailableSemaphore[0], VK_NULL_HANDLE, &imageIndex);
@@ -1066,6 +1103,7 @@ int main(int argv, char** argc) {
   rt_descriptor_pool = g_framework->CreateCBVSRVUAVPool({
       { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
       { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
+      { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
       { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 },
     },
     1);
@@ -1094,6 +1132,11 @@ int main(int argv, char** argc) {
   rsli.in_pipeline_layout = rt_pipeline_layout;
   g_framework->CreateMyRtPipeline(&g_my_rt_pipeline, rsli);
 
+  // Blas
+  g_framework->BuildBLAS(blas, blas_result_buffer, blas_result_memory, vertex_buffer, index_buffer, model.positions.size(), g_num_indices, sizeof(glm::vec3), nullptr);
+  g_framework->BuildTLAS(tlas, { blas }, { blas_result_buffer }, tlas_result_buffer, tlas_result_memory);
+  g_framework->CreateSRVAccelerationStructure(tlas, rt_descriptor_set, 0);
+
   // CBV
   PerSceneUniformBuffer psub{};
   psub.M = glm::mat4(1.0f);
@@ -1106,6 +1149,17 @@ int main(int argv, char** argc) {
   vkMapMemory(g_framework->device, perscene_cb_buffer_memory, 0, sizeof(PerSceneUniformBuffer), 0, (void**)&data);
   memcpy(data, &psub, sizeof(psub));
   vkUnmapMemory(g_framework->device, perscene_cb_buffer_memory);
+
+  // RT CB and CBV
+  cb_size = sizeof(RtPersceneUniformBuffer);
+  g_framework->CreateBuffer(cb_size, usage, props, rt_perscene_cb_buffer, rt_perscene_cb_buffer_memory);
+  vkMapMemory(g_framework->device, rt_perscene_cb_buffer_memory, 0, cb_size, 0, &data);
+  RtPersceneUniformBuffer rtpsub{};
+  rtpsub.inv_proj = glm::inverse(psub.P);
+  rtpsub.inv_view = glm::inverse(psub.V);
+  memcpy(data, &rtpsub, cb_size);
+  vkUnmapMemory(g_framework->device, rt_perscene_cb_buffer_memory);
+  g_framework->CreateCBVBuffer(rt_perscene_cb_buffer, 0, cb_size, rt_descriptor_set, 2);
 
   while (!glfwWindowShouldClose(g_window) && !g_should_exit) {
     glfwPollEvents();

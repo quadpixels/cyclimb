@@ -27,6 +27,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "lssplayground", "lssplaygro
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vkptlastest", "vkptlastest\vkptlastest.vcxproj", "{459E8B0A-B986-44A5-9430-6DE8CCB63AC0}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "vkdmmclascompare", "vkdmmclascompare\vkdmmclascompare.vcxproj", "{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -131,6 +133,14 @@ Global
 		{459E8B0A-B986-44A5-9430-6DE8CCB63AC0}.Release|x64.Build.0 = Release|x64
 		{459E8B0A-B986-44A5-9430-6DE8CCB63AC0}.Release|x86.ActiveCfg = Release|Win32
 		{459E8B0A-B986-44A5-9430-6DE8CCB63AC0}.Release|x86.Build.0 = Release|Win32
+		{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}.Debug|x64.ActiveCfg = Debug|x64
+		{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}.Debug|x64.Build.0 = Debug|x64
+		{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}.Debug|x86.ActiveCfg = Debug|Win32
+		{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}.Debug|x86.Build.0 = Debug|Win32
+		{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}.Release|x64.ActiveCfg = Release|x64
+		{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}.Release|x64.Build.0 = Release|x64
+		{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}.Release|x86.ActiveCfg = Release|Win32
+		{5EDE54AB-8898-4BF3-84BD-A3EDF5120761}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
