@@ -54,10 +54,19 @@ static VkPipelineLayout rast_pipeline_layout;
 static VkPipeline rast_pipeline;
 size_t g_num_indices{};
 size_t g_num_naive_utris_indices{};
+static VkDescriptorSetLayout rt_descriptor_set_layout;
+static VkDescriptorPool rt_descriptor_pool;
+static VkDescriptorSet rt_descriptor_set;
+static VkPipelineLayout rt_pipeline_layout;
+static MyFrameworkVk::MyRtPipeline g_my_rt_pipeline;
+static VkImage rt_output_image;
+static VkDeviceMemory rt_output_image_memory;
+static VkImageView rt_output_image_view;
 
 static baryutils::BaryLevelsMap g_maps(bary::ValueLayout::eTriangleBirdCurve, 5);
 static std::vector<std::vector<float>> g_dmm_displacements;
 static std::vector<uint8_t> g_dmm_levels;
+
 
 struct PerSceneUniformBuffer {
   glm::mat4 M, V, P;
@@ -272,10 +281,12 @@ void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
   ImGui::Text("Viz mode");
 
   char buf[100];
-  snprintf(buf, sizeof(buf), "Base mesh rast, %u tris", g_num_indices / 3);
+  snprintf(buf, sizeof(buf), "Base mesh rast, %zu tris", g_num_indices / 3);
   ImGui::RadioButton(buf, &g_viz_mode, 0);
-  snprintf(buf, sizeof(buf), "Utris rast, %u tris", g_num_naive_utris_indices / 3);
+  snprintf(buf, sizeof(buf), "Utris rast, %zu tris", g_num_naive_utris_indices / 3);
   ImGui::RadioButton(buf, &g_viz_mode, 1);
+  snprintf(buf, sizeof(buf), "RT base mesh");
+  ImGui::RadioButton(buf, &g_viz_mode, 2);
 
   ImGui::End();
   ImGui::Render();
@@ -335,7 +346,73 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
 
   vkCmdEndRenderPass(commandBuffer);
 
+  renderPassInfo = {};
+  renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  renderPassInfo.renderPass = g_framework->imguiRenderPass;
+  renderPassInfo.framebuffer = g_framework->imguiFramebuffers[imageIndex];
+  renderPassInfo.renderArea.offset = { 0, 0 };
+  renderPassInfo.renderArea.extent = g_framework->swapChainExtent;
+  renderPassInfo.clearValueCount = 0;
+  renderPassInfo.pClearValues = nullptr;
+  vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
   RenderImGuiAndEndImGuiForFrame(commandBuffer);
+  vkCmdEndRenderPass(commandBuffer);
+
+  if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+    throw std::runtime_error("Could not end command buffer");
+  }
+}
+
+void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+  VkCommandBufferBeginInfo beginInfo{};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = 0;
+  beginInfo.pInheritanceInfo = nullptr;
+  if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to begin command buffer");
+  }
+
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, g_my_rt_pipeline.rtPipeline);
+  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline_layout, 0, 1, &rt_descriptor_set, 0, nullptr);
+  PFN_vkCmdTraceRaysKHR funcCmdTraceRaysKHR =
+    (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(
+      g_framework->instance, "vkCmdTraceRaysKHR");
+  funcCmdTraceRaysKHR(commandBuffer,
+    &g_my_rt_pipeline.rtRgenRegion,
+    &g_my_rt_pipeline.rtMissRegion,
+    &g_my_rt_pipeline.rtHitRegion,
+    &g_my_rt_pipeline.rtCallRegion, WIDTH, HEIGHT, 1);
+
+  g_framework->CmdTransitionImageLayout(commandBuffer, rt_output_image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  g_framework->CmdTransitionImageLayout(commandBuffer, g_framework->swapChainImages[imageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+  VkImageBlit blit{};
+  blit.srcOffsets[1] = { static_cast<int>(WIDTH), static_cast<int>(HEIGHT), 1 };
+  blit.dstOffsets[1] = { static_cast<int>(WIDTH), static_cast<int>(HEIGHT), 1 };
+  blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  blit.srcSubresource.layerCount = 1;
+  blit.dstSubresource.layerCount = 1;
+
+  vkCmdBlitImage(commandBuffer,
+    rt_output_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    g_framework->swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    1, &blit, VK_FILTER_LINEAR);
+
+  g_framework->CmdTransitionImageLayout(commandBuffer, g_framework->swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  g_framework->CmdTransitionImageLayout(commandBuffer, rt_output_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+
+  VkRenderPassBeginInfo renderPassInfo{};
+  renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  renderPassInfo.renderPass = g_framework->imguiRenderPass;
+  renderPassInfo.framebuffer = g_framework->imguiFramebuffers[imageIndex];
+  renderPassInfo.renderArea.offset = { 0, 0 };
+  renderPassInfo.renderArea.extent = g_framework->swapChainExtent;
+  renderPassInfo.clearValueCount = 0;
+  renderPassInfo.pClearValues = nullptr;
+  vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+  RenderImGuiAndEndImGuiForFrame(commandBuffer);
+  vkCmdEndRenderPass(commandBuffer);
 
   if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
     throw std::runtime_error("Could not end command buffer");
@@ -367,7 +444,16 @@ void DrawFrame() {
   StartImGuiForFrame();
   vkAcquireNextImageKHR(g_framework->device, g_framework->swapChain, UINT64_MAX, g_framework->imageAvailableSemaphore[0], VK_NULL_HANDLE, &imageIndex);
 
-  recordCommandBuffer(g_framework->commandBuffer, imageIndex);
+  switch (g_viz_mode) {
+    case 0: case 1: {
+      recordCommandBuffer(g_framework->commandBuffer, imageIndex);
+      break;
+    }
+    case 2: {
+      recordRtCommandBuffer(g_framework->commandBuffer, imageIndex);
+      break;
+    }
+  }
 
   VkSubmitInfo submitInfo{};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -689,6 +775,7 @@ int main(int argv, char** argc) {
   g_framework->CreateSyncObjects();
   g_framework->InitImGui();
   g_framework->InitImGuiRenderPass();
+  g_framework->CreateImGuiFramebuffers();
 
   // Create vertex buffer and index buffer
   VkBufferUsageFlags usage =
@@ -756,6 +843,7 @@ int main(int argv, char** argc) {
     },
     1
   );
+  // Create descriptor layout
   VkDescriptorSetLayoutBinding rast_dslb[2]{};
   rast_dslb[0].binding = 0;
   rast_dslb[0].descriptorCount = 1;
@@ -946,6 +1034,65 @@ int main(int argv, char** argc) {
   }
   vkDestroyShaderModule(g_framework->device, vs_module, nullptr);
   vkDestroyShaderModule(g_framework->device, fs_module, nullptr);
+
+  // RT Descriptor layout, Descriptor pool, Descriptor set
+  VkDescriptorSetLayoutBinding rt_dslb[3]{};
+  rt_dslb[0].binding = 0;
+  rt_dslb[0].descriptorCount = 1;
+  rt_dslb[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+  rt_dslb[0].pImmutableSamplers = nullptr;
+  rt_dslb[0].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  rt_dslb[1].binding = 1;
+  rt_dslb[1].descriptorCount = 1;
+  rt_dslb[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+  rt_dslb[1].pImmutableSamplers = nullptr;
+  rt_dslb[1].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  rt_dslb[2].binding = 2;
+  rt_dslb[2].descriptorCount = 1;
+  rt_dslb[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  rt_dslb[2].pImmutableSamplers = nullptr;
+  rt_dslb[2].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  VkDescriptorSetLayoutCreateInfo rslci{};
+  rslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  rslci.bindingCount = _countof(rt_dslb);
+  rslci.pBindings = rt_dslb;
+  if (vkCreateDescriptorSetLayout(g_framework->device, &rslci, nullptr, &rt_descriptor_set_layout) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create RT descriptor set layout");
+  }
+
+  rt_descriptor_pool = g_framework->CreateCBVSRVUAVPool({
+      { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
+      { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
+      { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 },
+    },
+    1);
+  rt_descriptor_set = g_framework->CreateDescriptorSet(rt_descriptor_set_layout, rt_descriptor_pool);
+
+  // RT Output Image
+  g_framework->CreateRtOutputResource(WIDTH, HEIGHT, rt_output_image, rt_output_image_memory, rt_output_image_view);
+  g_framework->CreateUAVTexture2D(rt_output_image_view, rt_descriptor_set, 1);
+
+  // RT Pipeline Layout
+  VkPipelineLayoutCreateInfo plci{};
+  plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.setLayoutCount = 1;
+  plci.pSetLayouts = &rt_descriptor_set_layout;
+  plci.pushConstantRangeCount = 0;
+  plci.pPushConstantRanges = nullptr;
+  if (vkCreatePipelineLayout(g_framework->device, &plci, nullptr, &rt_pipeline_layout) != VK_SUCCESS) {
+    throw std::runtime_error("Could not create rt pipeline layout");
+  }
+
+  // RT Pipeline
+  MyFrameworkVk::MyRtShaderListInfo rsli{};
+  rsli.closest_hit_shader = "shaders/rchit.spv";
+  rsli.raygen_shader = "shaders/rgen.spv";
+  rsli.miss_shader = "shaders/rmiss.spv";
+  rsli.in_pipeline_layout = rt_pipeline_layout;
+  g_framework->CreateMyRtPipeline(&g_my_rt_pipeline, rsli);
 
   // CBV
   PerSceneUniformBuffer psub{};
