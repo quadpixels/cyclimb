@@ -1,0 +1,15 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+struct TaskPayload {
+  uint drawId;
+};
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+taskPayloadSharedEXT TaskPayload taskOut;
+
+void main() {
+  taskOut.drawId = 0;
+  EmitMeshTasksEXT(1, 1, 1);
+}

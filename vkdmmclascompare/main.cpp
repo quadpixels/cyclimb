@@ -45,6 +45,7 @@ static VkDeviceMemory naive_utris_index_buffer_memory;
 static VkBuffer naive_utris_normals_buffer;
 static VkDeviceMemory naive_utris_normals_buffer_memory;
 
+// Naive rast pipeline
 static VkBuffer perscene_cb_buffer;
 static VkDeviceMemory perscene_cb_buffer_memory;
 static VkDescriptorPool rast_descriptor_pool;
@@ -54,6 +55,7 @@ static VkPipelineLayout rast_pipeline_layout;
 static VkPipeline rast_pipeline;
 size_t g_num_indices{}, g_num_vertices{};
 size_t g_num_naive_utris_indices{}, g_num_naive_utris_vertices{};
+// RT pipeline
 static VkDescriptorSetLayout rt_descriptor_set_layout;
 static VkDescriptorPool rt_descriptor_pool;
 static VkDescriptorSet rt_descriptor_set;
@@ -64,6 +66,9 @@ static VkDeviceMemory rt_output_image_memory;
 static VkImageView rt_output_image_view;
 static VkBuffer rt_perscene_cb_buffer;
 static VkDeviceMemory rt_perscene_cb_buffer_memory;
+// Mesh shading pipeline
+static VkPipelineLayout mesh_pipeline_layout;
+static VkPipeline mesh_pipeline;
 
 // Blas, TLAS
 static VkAccelerationStructureKHR blas;
@@ -310,6 +315,8 @@ void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
   ImGui::RadioButton(buf, &g_viz_mode, 2);
   snprintf(buf, sizeof(buf), "RT Utris, AS size %zu", naive_utris_blas_build_info.as_size);
   ImGui::RadioButton(buf, &g_viz_mode, 3);
+  snprintf(buf, sizeof(buf), "Mesh shading");
+  ImGui::RadioButton(buf, &g_viz_mode, 4);
 
   ImGui::End();
   ImGui::Render();
@@ -368,6 +375,8 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
   }
 
   vkCmdEndRenderPass(commandBuffer);
+
+  g_framework->CmdTransitionImageLayout(commandBuffer, g_framework->swapChainImages[imageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
   renderPassInfo = {};
   renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -477,6 +486,67 @@ void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
   }
 }
 
+void recordMeshShadingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+  VkCommandBufferBeginInfo beginInfo{};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = 0;
+  beginInfo.pInheritanceInfo = nullptr;
+  if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to begin command buffer");
+  }
+
+  VkRenderPassBeginInfo renderPassInfo{};
+  renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  renderPassInfo.renderPass = g_framework->renderPass;
+  renderPassInfo.framebuffer = g_framework->swapChainFramebuffers[imageIndex];
+  renderPassInfo.renderArea.offset = { 0, 0 };
+  renderPassInfo.renderArea.extent = g_framework->swapChainExtent;
+  VkClearValue clearColor = { {{0.3f, 0.3f, 0.3f, 1.0f }} };
+  VkClearValue clearDepth{};
+  renderPassInfo.clearValueCount = 2;
+  clearDepth.depthStencil = { 1.0f, 0 };
+  VkClearValue clearValues[] = { clearColor, clearDepth };
+  renderPassInfo.pClearValues = clearValues;
+  vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline);
+
+  VkViewport viewport{};
+  viewport.x = viewport.y = 0;
+  viewport.width = (float)(g_framework->swapChainExtent.width);
+  viewport.height = (float)(g_framework->swapChainExtent.height);
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+  vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+  VkRect2D scissor{};
+  scissor.offset = { 0, 0 };
+  scissor.extent = g_framework->swapChainExtent;
+  vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+  
+  PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXT = (PFN_vkCmdDrawMeshTasksEXT)vkGetDeviceProcAddr(g_framework->device, "vkCmdDrawMeshTasksEXT");
+  vkCmdDrawMeshTasksEXT(commandBuffer, 1, 1, 1);
+
+  vkCmdEndRenderPass(commandBuffer);
+
+  g_framework->CmdTransitionImageLayout(commandBuffer, g_framework->swapChainImages[imageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+  renderPassInfo = {};
+  renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  renderPassInfo.renderPass = g_framework->imguiRenderPass;
+  renderPassInfo.framebuffer = g_framework->imguiFramebuffers[imageIndex];
+  renderPassInfo.renderArea.offset = { 0, 0 };
+  renderPassInfo.renderArea.extent = g_framework->swapChainExtent;
+  renderPassInfo.clearValueCount = 0;
+  renderPassInfo.pClearValues = nullptr;
+  vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+  RenderImGuiAndEndImGuiForFrame(commandBuffer);
+  vkCmdEndRenderPass(commandBuffer);
+
+  if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+    throw std::runtime_error("Could not end command buffer");
+  }
+}
+
 
 void DrawFrame() {
   // Update UAV
@@ -510,6 +580,10 @@ void DrawFrame() {
     }
     case 2: case 3: {
       recordRtCommandBuffer(g_framework->commandBuffer, imageIndex);
+      break;
+    }
+    case 4: {
+      recordMeshShadingCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
   }
@@ -818,120 +892,7 @@ MyModelStuff PopulateDisplacedMicroTriangles(
   return ret;
 }
 
-int main(int argv, char** argc) {
-  printf("Hey.\n");
-  MyModelStuff model = LoadModel("murex_romosus.obj");
-  LoadBary("murex_romosus.bary");
-  MyModelStuff naive_utris = PopulateDisplacedMicroTriangles(model, g_dmm_displacements, g_dmm_levels);
-  g_framework = new MyFrameworkVk();
-  g_framework->InitWindow("VK DMM CLAS BLAS Comparison", WIDTH, HEIGHT, KeyCallback);
-  g_window = g_framework->window;
-  g_num_indices = model.indices.size();
-  g_num_vertices = model.positions.size();
-
-  // InitVulkan
-  g_framework->InitDeviceAndCommandQ();
-  g_framework->InitSwapchain();
-  g_framework->InitRenderPassAndFramebuffers(true);
-  g_framework->CreateSyncObjects();
-  g_framework->InitImGui();
-  g_framework->InitImGuiRenderPass();
-  g_framework->CreateImGuiFramebuffers();
-
-  // Create vertex buffer and index buffer
-  VkBufferUsageFlags usage =
-    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
-    | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-    | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-    | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-    | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-    | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
-    | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-  VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-    | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-  size_t vb_size = sizeof(glm::vec3) * model.positions.size();
-  g_framework->CreateBuffer(vb_size, usage, props,
-    vertex_buffer, vertex_buffer_memory
-  );
-  size_t ib_size = sizeof(uint32_t) * model.indices.size();
-  g_framework->CreateBuffer(ib_size, usage | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, props,
-    index_buffer, index_buffer_memory
-  );
-  size_t normals_size = sizeof(glm::vec3) * g_num_indices / 3;
-  g_framework->CreateBuffer(normals_size, usage, props,
-    normals_buffer, normals_memory
-  );
-
-  size_t naive_utris_vb_size = sizeof(glm::vec3) * naive_utris.positions.size();
-  g_framework->CreateBuffer(naive_utris_vb_size, usage, props,
-    naive_utris_vertex_buffer, naive_utris_vertex_buffer_memory
-  );
-  size_t naive_utris_ib_size = sizeof(uint32_t) * naive_utris.indices.size();
-  g_framework->CreateBuffer(naive_utris_ib_size, usage | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, props,
-    naive_utris_index_buffer, naive_utris_index_buffer_memory
-  );
-  size_t naive_utris_normals_size = sizeof(glm::vec3) * g_num_naive_utris_indices / 3;
-  g_framework->CreateBuffer(naive_utris_normals_size, usage, props,
-    naive_utris_normals_buffer, naive_utris_normals_buffer_memory
-  );
-
-  void* data;
-  vkMapMemory(g_framework->device, vertex_buffer_memory, 0, vb_size, 0, &data);
-  memcpy(data, model.positions.data(), vb_size);
-  vkUnmapMemory(g_framework->device, vertex_buffer_memory);
-  vkMapMemory(g_framework->device, index_buffer_memory, 0, ib_size, 0, &data);
-  memcpy(data, model.indices.data(), ib_size);
-  vkUnmapMemory(g_framework->device, index_buffer_memory);
-  vkMapMemory(g_framework->device, normals_memory, 0, normals_size, 0, &data);
-  memcpy(data, model.normals.data(), normals_size);
-  vkUnmapMemory(g_framework->device, normals_memory);
-
-  vkMapMemory(g_framework->device, naive_utris_vertex_buffer_memory, 0, naive_utris_vb_size, 0, &data);
-  memcpy(data, naive_utris.positions.data(), naive_utris_vb_size);
-  vkUnmapMemory(g_framework->device, naive_utris_vertex_buffer_memory);
-  vkMapMemory(g_framework->device, naive_utris_index_buffer_memory, 0, naive_utris_ib_size, 0, &data);
-  memcpy(data, naive_utris.indices.data(), naive_utris_ib_size);
-  vkUnmapMemory(g_framework->device, naive_utris_index_buffer_memory);
-  vkMapMemory(g_framework->device, naive_utris_normals_buffer_memory, 0, naive_utris_normals_size, 0, &data);
-  memcpy(data, naive_utris.normals.data(), naive_utris_normals_size);
-  vkUnmapMemory(g_framework->device, naive_utris_normals_buffer_memory);
-
-  // Create descriptor pool
-  rast_descriptor_pool = g_framework->CreateCBVSRVUAVPool(
-    {
-      { VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 },
-      { VkDescriptorType::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 }
-    },
-    1
-  );
-  // Create descriptor layout
-  VkDescriptorSetLayoutBinding rast_dslb[2]{};
-  rast_dslb[0].binding = 0;
-  rast_dslb[0].descriptorCount = 1;
-  rast_dslb[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  rast_dslb[0].pImmutableSamplers = nullptr;
-  rast_dslb[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-  rast_dslb[1].binding = 1;
-  rast_dslb[1].descriptorCount = 1;
-  rast_dslb[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-  rast_dslb[1].pImmutableSamplers = nullptr;
-  rast_dslb[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-  VkDescriptorSetLayoutCreateInfo rast_dslci{};
-  rast_dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  rast_dslci.bindingCount = _countof(rast_dslb);
-  rast_dslci.pBindings = rast_dslb;
-  if (vkCreateDescriptorSetLayout(g_framework->device, &rast_dslci, nullptr, &rast_descriptor_set_layout) != VK_SUCCESS) {
-    throw std::runtime_error("Failed to create rast descriptor set layout");
-  }
-  rast_descriptor_set = g_framework->CreateDescriptorSet(rast_descriptor_set_layout, rast_descriptor_pool);
-
-  size_t cb_size = sizeof(PerSceneUniformBuffer);
-  g_framework->CreateBuffer(cb_size, usage, props, perscene_cb_buffer, perscene_cb_buffer_memory);
-  g_framework->CreateCBVBuffer(perscene_cb_buffer, 0, cb_size, rast_descriptor_set, 0);
-  g_framework->CreateUAVBuffer(normals_buffer, 0, normals_size, rast_descriptor_set, 1);
-
+void CreateRastPipeline() {
   // Pipeline
   std::vector<char> vs_code = g_framework->ReadFile("shaders/vert.spv");
   std::vector<char> fs_code = g_framework->ReadFile("shaders/frag.spv");
@@ -1095,6 +1056,271 @@ int main(int argv, char** argc) {
   }
   vkDestroyShaderModule(g_framework->device, vs_module, nullptr);
   vkDestroyShaderModule(g_framework->device, fs_module, nullptr);
+}
+
+void CreateMeshPipeline() {
+  std::vector<char> as_code = g_framework->ReadFile("shaders/meshshading_task.spv");
+  std::vector<char> ms_code = g_framework->ReadFile("shaders/meshshading_mesh.spv");
+  std::vector<char> fs_code = g_framework->ReadFile("shaders/meshshading_frag.spv");
+
+  VkShaderModule as_module = g_framework->CreateShaderModule(as_code);
+  VkShaderModule ms_module = g_framework->CreateShaderModule(ms_code);
+  VkShaderModule fs_module = g_framework->CreateShaderModule(fs_code);
+
+  VkPipelineShaderStageCreateInfo pssci[2]{};
+  /*pssci[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  pssci[0].stage = VK_SHADER_STAGE_TASK_BIT_EXT;
+  pssci[0].module = as_module;
+  pssci[0].pName = "main";*/
+
+  pssci[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  pssci[0].stage = VK_SHADER_STAGE_MESH_BIT_EXT;
+  pssci[0].module = ms_module;
+  pssci[0].pName = "main";
+
+  pssci[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  pssci[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pssci[1].module = fs_module;
+  pssci[1].pName = "main";
+
+  std::vector<VkDynamicState> dynamicStates = {
+  VK_DYNAMIC_STATE_VIEWPORT,
+  VK_DYNAMIC_STATE_SCISSOR
+  };
+  VkPipelineDynamicStateCreateInfo dynamicState{};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = (uint32_t)(dynamicStates.size());
+  dynamicState.pDynamicStates = dynamicStates.data();
+
+  VkViewport viewport{};
+  viewport.x = 0;
+  viewport.y = 0;
+  viewport.width = float(g_framework->swapChainExtent.width);
+  viewport.height = float(g_framework->swapChainExtent.height);
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+
+  VkRect2D scissor{};
+  scissor.offset = { 0, 0 };
+  scissor.extent = g_framework->swapChainExtent;
+
+  VkPipelineViewportStateCreateInfo viewportState{};
+  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1;
+  viewportState.pViewports = &viewport;
+  viewportState.scissorCount = 1;
+  viewportState.pScissors = &scissor;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.depthClampEnable = VK_FALSE;
+  rasterizer.rasterizerDiscardEnable = VK_FALSE;
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+  rasterizer.depthBiasEnable = VK_FALSE;
+  rasterizer.depthBiasConstantFactor = 0.0f;
+  rasterizer.depthBiasClamp = 0.0f;
+  rasterizer.depthBiasSlopeFactor = 0.0f;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{};
+  multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisampling.sampleShadingEnable = VK_FALSE;
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+  multisampling.minSampleShading = 1.0f;
+  multisampling.pSampleMask = nullptr;
+  multisampling.alphaToCoverageEnable = VK_FALSE;
+  multisampling.alphaToOneEnable = VK_FALSE;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+  colorBlendAttachment.colorWriteMask =
+    VK_COLOR_COMPONENT_A_BIT |
+    VK_COLOR_COMPONENT_R_BIT |
+    VK_COLOR_COMPONENT_G_BIT |
+    VK_COLOR_COMPONENT_B_BIT;
+  colorBlendAttachment.blendEnable = VK_FALSE;
+  colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+  colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+  colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+  colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+  VkPipelineColorBlendStateCreateInfo colorBlending{};
+  colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlending.logicOpEnable = VK_FALSE;
+  colorBlending.logicOp = VK_LOGIC_OP_COPY;
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments = &colorBlendAttachment;
+  colorBlending.blendConstants[0] = 0;
+  colorBlending.blendConstants[1] = 0;
+  colorBlending.blendConstants[2] = 0;
+  colorBlending.blendConstants[3] = 0;
+
+  VkPipelineLayoutCreateInfo plci{};
+  plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  plci.setLayoutCount = 0;
+  plci.pSetLayouts = nullptr;
+  plci.pushConstantRangeCount = 0;
+  plci.pPushConstantRanges = nullptr;
+  vkCreatePipelineLayout(g_framework->device, &plci, nullptr, &mesh_pipeline_layout);
+
+  VkPipelineDepthStencilStateCreateInfo depthStencil{};
+  depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  depthStencil.depthTestEnable = VK_TRUE;
+  depthStencil.depthWriteEnable = VK_TRUE;
+  depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+  depthStencil.depthBoundsTestEnable = VK_FALSE;
+  depthStencil.minDepthBounds = 0.0f; // Optional
+  depthStencil.maxDepthBounds = 1.0f; // Optional
+  depthStencil.stencilTestEnable = VK_FALSE;
+  depthStencil.front = {}; // Optional
+  depthStencil.back = {}; // Optional
+
+  VkGraphicsPipelineCreateInfo pipelineInfo{};
+  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.stageCount = _countof(pssci);
+  pipelineInfo.pStages = pssci;
+  pipelineInfo.pVertexInputState = nullptr;
+  pipelineInfo.pInputAssemblyState = nullptr;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisampling;
+  pipelineInfo.pColorBlendState = &colorBlending;
+  pipelineInfo.pDynamicState = &dynamicState;
+  pipelineInfo.layout = mesh_pipeline_layout;
+  pipelineInfo.renderPass = g_framework->renderPass;
+  pipelineInfo.subpass = 0;
+  pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+  pipelineInfo.basePipelineIndex = -1;
+  pipelineInfo.pDepthStencilState = &depthStencil;
+
+  if (vkCreateGraphicsPipelines(g_framework->device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &mesh_pipeline) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create graphics pipeline");
+  }
+
+  vkDestroyShaderModule(g_framework->device, as_module, nullptr);
+  vkDestroyShaderModule(g_framework->device, ms_module, nullptr);
+  vkDestroyShaderModule(g_framework->device, fs_module, nullptr);
+}
+
+int main(int argv, char** argc) {
+  printf("Hey.\n");
+  MyModelStuff model = LoadModel("murex_romosus.obj");
+  LoadBary("murex_romosus.bary");
+  MyModelStuff naive_utris = PopulateDisplacedMicroTriangles(model, g_dmm_displacements, g_dmm_levels);
+  g_framework = new MyFrameworkVk();
+  g_framework->InitWindow("VK DMM CLAS BLAS Comparison", WIDTH, HEIGHT, KeyCallback);
+  g_window = g_framework->window;
+  g_num_indices = model.indices.size();
+  g_num_vertices = model.positions.size();
+
+  // InitVulkan
+  g_framework->InitDeviceAndCommandQ();
+  g_framework->InitSwapchain();
+  g_framework->InitRenderPassAndFramebuffers(true);
+  g_framework->CreateSyncObjects();
+  g_framework->InitImGui();
+  g_framework->InitImGuiRenderPass();
+  g_framework->CreateImGuiFramebuffers();
+
+  // Create vertex buffer and index buffer
+  VkBufferUsageFlags usage =
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+    | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+    | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+    | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+    | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+    | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+    | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+  VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+    | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+  size_t vb_size = sizeof(glm::vec3) * model.positions.size();
+  g_framework->CreateBuffer(vb_size, usage, props,
+    vertex_buffer, vertex_buffer_memory
+  );
+  size_t ib_size = sizeof(uint32_t) * model.indices.size();
+  g_framework->CreateBuffer(ib_size, usage | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, props,
+    index_buffer, index_buffer_memory
+  );
+  size_t normals_size = sizeof(glm::vec3) * g_num_indices / 3;
+  g_framework->CreateBuffer(normals_size, usage, props,
+    normals_buffer, normals_memory
+  );
+
+  size_t naive_utris_vb_size = sizeof(glm::vec3) * naive_utris.positions.size();
+  g_framework->CreateBuffer(naive_utris_vb_size, usage, props,
+    naive_utris_vertex_buffer, naive_utris_vertex_buffer_memory
+  );
+  size_t naive_utris_ib_size = sizeof(uint32_t) * naive_utris.indices.size();
+  g_framework->CreateBuffer(naive_utris_ib_size, usage | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, props,
+    naive_utris_index_buffer, naive_utris_index_buffer_memory
+  );
+  size_t naive_utris_normals_size = sizeof(glm::vec3) * g_num_naive_utris_indices / 3;
+  g_framework->CreateBuffer(naive_utris_normals_size, usage, props,
+    naive_utris_normals_buffer, naive_utris_normals_buffer_memory
+  );
+
+  void* data;
+  vkMapMemory(g_framework->device, vertex_buffer_memory, 0, vb_size, 0, &data);
+  memcpy(data, model.positions.data(), vb_size);
+  vkUnmapMemory(g_framework->device, vertex_buffer_memory);
+  vkMapMemory(g_framework->device, index_buffer_memory, 0, ib_size, 0, &data);
+  memcpy(data, model.indices.data(), ib_size);
+  vkUnmapMemory(g_framework->device, index_buffer_memory);
+  vkMapMemory(g_framework->device, normals_memory, 0, normals_size, 0, &data);
+  memcpy(data, model.normals.data(), normals_size);
+  vkUnmapMemory(g_framework->device, normals_memory);
+
+  vkMapMemory(g_framework->device, naive_utris_vertex_buffer_memory, 0, naive_utris_vb_size, 0, &data);
+  memcpy(data, naive_utris.positions.data(), naive_utris_vb_size);
+  vkUnmapMemory(g_framework->device, naive_utris_vertex_buffer_memory);
+  vkMapMemory(g_framework->device, naive_utris_index_buffer_memory, 0, naive_utris_ib_size, 0, &data);
+  memcpy(data, naive_utris.indices.data(), naive_utris_ib_size);
+  vkUnmapMemory(g_framework->device, naive_utris_index_buffer_memory);
+  vkMapMemory(g_framework->device, naive_utris_normals_buffer_memory, 0, naive_utris_normals_size, 0, &data);
+  memcpy(data, naive_utris.normals.data(), naive_utris_normals_size);
+  vkUnmapMemory(g_framework->device, naive_utris_normals_buffer_memory);
+
+  // Create descriptor pool
+  rast_descriptor_pool = g_framework->CreateCBVSRVUAVPool(
+    {
+      { VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 },
+      { VkDescriptorType::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 }
+    },
+    1
+  );
+  // Create descriptor layout
+  VkDescriptorSetLayoutBinding rast_dslb[2]{};
+  rast_dslb[0].binding = 0;
+  rast_dslb[0].descriptorCount = 1;
+  rast_dslb[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  rast_dslb[0].pImmutableSamplers = nullptr;
+  rast_dslb[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+  rast_dslb[1].binding = 1;
+  rast_dslb[1].descriptorCount = 1;
+  rast_dslb[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  rast_dslb[1].pImmutableSamplers = nullptr;
+  rast_dslb[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo rast_dslci{};
+  rast_dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  rast_dslci.bindingCount = _countof(rast_dslb);
+  rast_dslci.pBindings = rast_dslb;
+  if (vkCreateDescriptorSetLayout(g_framework->device, &rast_dslci, nullptr, &rast_descriptor_set_layout) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create rast descriptor set layout");
+  }
+  rast_descriptor_set = g_framework->CreateDescriptorSet(rast_descriptor_set_layout, rast_descriptor_pool);
+
+  size_t cb_size = sizeof(PerSceneUniformBuffer);
+  g_framework->CreateBuffer(cb_size, usage, props, perscene_cb_buffer, perscene_cb_buffer_memory);
+  g_framework->CreateCBVBuffer(perscene_cb_buffer, 0, cb_size, rast_descriptor_set, 0);
+  g_framework->CreateUAVBuffer(normals_buffer, 0, normals_size, rast_descriptor_set, 1);
+
+  CreateRastPipeline();
+  CreateMeshPipeline();
 
   // RT Descriptor layout, Descriptor pool, Descriptor set
   VkDescriptorSetLayoutBinding rt_dslb[5]{};
