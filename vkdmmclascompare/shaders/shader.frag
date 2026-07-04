@@ -17,7 +17,7 @@ vec3 GetNormal(uint nidx) {
 void main() {
     vec3 n = GetNormal(gl_PrimitiveID);
     vec3 c = vec3(1, 1, 1);
-    float dp = dot(n, vec3(0, 1, 0));
+    float dp = dot(n, normalize(vec3(1, 2, 3)));
     c = c * (dp * 0.5 + 0.5);
     outColor = vec4(c, 1);
 }

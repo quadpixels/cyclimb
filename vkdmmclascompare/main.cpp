@@ -52,8 +52,8 @@ static VkDescriptorSetLayout rast_descriptor_set_layout;
 static VkDescriptorSet rast_descriptor_set;
 static VkPipelineLayout rast_pipeline_layout;
 static VkPipeline rast_pipeline;
-size_t g_num_indices{};
-size_t g_num_naive_utris_indices{};
+size_t g_num_indices{}, g_num_vertices{};
+size_t g_num_naive_utris_indices{}, g_num_naive_utris_vertices{};
 static VkDescriptorSetLayout rt_descriptor_set_layout;
 static VkDescriptorPool rt_descriptor_pool;
 static VkDescriptorSet rt_descriptor_set;
@@ -69,9 +69,17 @@ static VkDeviceMemory rt_perscene_cb_buffer_memory;
 static VkAccelerationStructureKHR blas;
 static VkBuffer blas_result_buffer;
 static VkDeviceMemory blas_result_memory;
+MyFrameworkVk::MyASBuildInfo blas_build_info;
 static VkAccelerationStructureKHR tlas;
 static VkBuffer tlas_result_buffer;
 static VkDeviceMemory tlas_result_memory;
+static VkAccelerationStructureKHR naive_utris_blas;
+static VkBuffer naive_utris_blas_result_buffer;
+static VkDeviceMemory naive_utris_blas_result_memory;
+MyFrameworkVk::MyASBuildInfo naive_utris_blas_build_info;
+static VkAccelerationStructureKHR naive_utris_tlas;
+static VkBuffer naive_utris_tlas_result_buffer;
+static VkDeviceMemory naive_utris_tlas_result_memory;
 
 static baryutils::BaryLevelsMap g_maps(bary::ValueLayout::eTriangleBirdCurve, 5);
 static std::vector<std::vector<float>> g_dmm_displacements;
@@ -294,12 +302,14 @@ void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
   ImGui::Text("Viz mode");
 
   char buf[100];
-  snprintf(buf, sizeof(buf), "Base mesh rast, %zu tris", g_num_indices / 3);
+  snprintf(buf, sizeof(buf), "Rast base mesh, %zu tris", g_num_indices / 3);
   ImGui::RadioButton(buf, &g_viz_mode, 0);
-  snprintf(buf, sizeof(buf), "Utris rast, %zu tris", g_num_naive_utris_indices / 3);
+  snprintf(buf, sizeof(buf), "Rast Utris, %zu tris", g_num_naive_utris_indices / 3);
   ImGui::RadioButton(buf, &g_viz_mode, 1);
-  snprintf(buf, sizeof(buf), "RT base mesh");
+  snprintf(buf, sizeof(buf), "RT base mesh, AS size %zu", blas_build_info.as_size);
   ImGui::RadioButton(buf, &g_viz_mode, 2);
+  snprintf(buf, sizeof(buf), "RT Utris, AS size %zu", naive_utris_blas_build_info.as_size);
+  ImGui::RadioButton(buf, &g_viz_mode, 3);
 
   ImGui::End();
   ImGui::Render();
@@ -377,6 +387,18 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
 }
 
 void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+  // Set descriptors
+  if (g_viz_mode == 2) {
+    g_framework->CreateSRVAccelerationStructure(tlas, rt_descriptor_set, 0);
+    g_framework->CreateUAVBuffer(vertex_buffer, 0, sizeof(glm::vec3) * g_num_vertices, rt_descriptor_set, 3);
+    g_framework->CreateUAVBuffer(index_buffer, 0, sizeof(uint32_t) * g_num_indices, rt_descriptor_set, 4);
+  }
+  else if (g_viz_mode == 3) {
+    g_framework->CreateSRVAccelerationStructure(naive_utris_tlas, rt_descriptor_set, 0);
+    g_framework->CreateUAVBuffer(naive_utris_vertex_buffer, 0, sizeof(glm::vec3) * g_num_naive_utris_vertices, rt_descriptor_set, 3);
+    g_framework->CreateUAVBuffer(naive_utris_index_buffer, 0, sizeof(uint32_t) * g_num_naive_utris_indices, rt_descriptor_set, 4);
+  }
+
   VkCommandBufferBeginInfo beginInfo{};
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   beginInfo.flags = 0;
@@ -486,7 +508,7 @@ void DrawFrame() {
       recordCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
-    case 2: {
+    case 2: case 3: {
       recordRtCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
@@ -791,6 +813,7 @@ MyModelStuff PopulateDisplacedMicroTriangles(
   printf("When naively populating the geometry, there are %u triangles\n",
     ret.indices.size() / 3);
   g_num_naive_utris_indices = ret.indices.size();
+  g_num_naive_utris_vertices = ret.positions.size();
   ret.CalculateNormals();
   return ret;
 }
@@ -804,6 +827,7 @@ int main(int argv, char** argc) {
   g_framework->InitWindow("VK DMM CLAS BLAS Comparison", WIDTH, HEIGHT, KeyCallback);
   g_window = g_framework->window;
   g_num_indices = model.indices.size();
+  g_num_vertices = model.positions.size();
 
   // InitVulkan
   g_framework->InitDeviceAndCommandQ();
@@ -1073,7 +1097,7 @@ int main(int argv, char** argc) {
   vkDestroyShaderModule(g_framework->device, fs_module, nullptr);
 
   // RT Descriptor layout, Descriptor pool, Descriptor set
-  VkDescriptorSetLayoutBinding rt_dslb[3]{};
+  VkDescriptorSetLayoutBinding rt_dslb[5]{};
   rt_dslb[0].binding = 0;
   rt_dslb[0].descriptorCount = 1;
   rt_dslb[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -1092,6 +1116,18 @@ int main(int argv, char** argc) {
   rt_dslb[2].pImmutableSamplers = nullptr;
   rt_dslb[2].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+  rt_dslb[3].binding = 3;  // Vertices data
+  rt_dslb[3].descriptorCount = 1;
+  rt_dslb[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  rt_dslb[3].pImmutableSamplers = nullptr;
+  rt_dslb[3].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+  rt_dslb[4].binding = 4;  // Indices data
+  rt_dslb[4].descriptorCount = 1;
+  rt_dslb[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  rt_dslb[4].pImmutableSamplers = nullptr;
+  rt_dslb[4].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
   VkDescriptorSetLayoutCreateInfo rslci{};
   rslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   rslci.bindingCount = _countof(rt_dslb);
@@ -1104,7 +1140,7 @@ int main(int argv, char** argc) {
       { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
       { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
       { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
-      { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 },
+      { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 },
     },
     1);
   rt_descriptor_set = g_framework->CreateDescriptorSet(rt_descriptor_set_layout, rt_descriptor_pool);
@@ -1133,9 +1169,12 @@ int main(int argv, char** argc) {
   g_framework->CreateMyRtPipeline(&g_my_rt_pipeline, rsli);
 
   // Blas
-  g_framework->BuildBLAS(blas, blas_result_buffer, blas_result_memory, vertex_buffer, index_buffer, model.positions.size(), g_num_indices, sizeof(glm::vec3), nullptr);
+  g_framework->BuildBLAS(blas, blas_result_buffer, blas_result_memory, vertex_buffer, index_buffer, model.positions.size(), g_num_indices, sizeof(glm::vec3), nullptr, &blas_build_info);
   g_framework->BuildTLAS(tlas, { blas }, { blas_result_buffer }, tlas_result_buffer, tlas_result_memory);
-  g_framework->CreateSRVAccelerationStructure(tlas, rt_descriptor_set, 0);
+  g_framework->BuildBLAS(naive_utris_blas, naive_utris_blas_result_buffer, naive_utris_blas_result_memory,
+    naive_utris_vertex_buffer, naive_utris_index_buffer,
+    naive_utris.positions.size(), g_num_naive_utris_indices, sizeof(glm::vec3), nullptr, &naive_utris_blas_build_info);
+  g_framework->BuildTLAS(naive_utris_tlas, { naive_utris_blas }, { naive_utris_blas_result_buffer }, naive_utris_tlas_result_buffer, naive_utris_tlas_result_memory);
 
   // CBV
   PerSceneUniformBuffer psub{};
