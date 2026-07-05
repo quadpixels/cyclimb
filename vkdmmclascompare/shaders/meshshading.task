@@ -7,9 +7,10 @@ struct TaskPayload {
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-taskPayloadSharedEXT TaskPayload taskOut;
+taskPayloadSharedEXT TaskPayload payload;
 
 void main() {
-  taskOut.drawId = 0;
-  EmitMeshTasksEXT(1, 1, 1);
+  uint nthds = gl_WorkGroupSize.x * gl_NumWorkGroups.x;
+  uint tidx = gl_LocalInvocationID.x + gl_WorkGroupSize.x * gl_WorkGroupID.x;
+  EmitMeshTasksEXT(299, 1, 1);
 }

@@ -67,6 +67,9 @@ static VkImageView rt_output_image_view;
 static VkBuffer rt_perscene_cb_buffer;
 static VkDeviceMemory rt_perscene_cb_buffer_memory;
 // Mesh shading pipeline
+static VkDescriptorSetLayout mesh_descriptor_set_layout;
+static VkDescriptorPool mesh_descriptor_pool;
+static VkDescriptorSet mesh_descriptor_set;
 static VkPipelineLayout mesh_pipeline_layout;
 static VkPipeline mesh_pipeline;
 
@@ -114,7 +117,8 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 struct MyModelStuff {
   std::vector<glm::vec3> positions;
   std::vector<uint32_t>  indices;
-  std::vector<glm::vec3> normals;
+  std::vector<glm::vec3> normals; // per-face
+  std::vector<glm::vec3> per_vertex_normals;  // per-vertex
   void Print(uint32_t count) {
     printf("First %u elts\n", count);
     printf("pos:");
@@ -257,6 +261,16 @@ MyModelStuff LoadModel(const char* filename) {
           throw std::runtime_error("Bad vertex line: " + line);
 
         ret.positions.push_back(p);
+      }
+      else if (is_directive(line, "vn")) {
+        std::istringstream ss(line);
+        std::string tag;
+        glm::vec3 p;
+
+        ss >> tag >> p.x >> p.y >> p.z;
+        if (!ss)
+          throw std::runtime_error("Bad vn line: " + line);
+        ret.per_vertex_normals.push_back(p);
       }
       else if (is_directive(line, "f")) {
         std::istringstream ss(line);
@@ -487,6 +501,10 @@ void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
 }
 
 void recordMeshShadingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+  g_framework->CreateCBVBuffer(perscene_cb_buffer, 0, sizeof(PerSceneUniformBuffer), mesh_descriptor_set, 0);
+  g_framework->CreateUAVBuffer(vertex_buffer, 0, sizeof(glm::vec3) * g_num_vertices, mesh_descriptor_set, 1);
+  g_framework->CreateUAVBuffer(index_buffer, 0, sizeof(uint32_t) * g_num_indices, mesh_descriptor_set, 2);
+
   VkCommandBufferBeginInfo beginInfo{};
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
   beginInfo.flags = 0;
@@ -509,6 +527,7 @@ void recordMeshShadingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imag
   renderPassInfo.pClearValues = clearValues;
   vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
   vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline);
+  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline_layout, 0, 1, &mesh_descriptor_set, 0, nullptr);
 
   VkViewport viewport{};
   viewport.x = viewport.y = 0;
@@ -837,8 +856,9 @@ MyModelStuff PopulateDisplacedMicroTriangles(
     glm::vec3 v1 = base_mesh.positions[i1];
     glm::vec3 v2 = base_mesh.positions[i2];
 
-    glm::vec3 n0 = base_mesh.normals[i / 3];
-    glm::vec3 n1 = n0, n2 = n0;
+    glm::vec3 n0 = base_mesh.per_vertex_normals[i0];
+    glm::vec3 n1 = base_mesh.per_vertex_normals[i1];
+    glm::vec3 n2 = base_mesh.per_vertex_normals[i2];
 
     uint8_t subdivision_level = dmm_levels[i / 3];
     baryutils::BaryLevelsMap::Level level = g_maps.getLevel(subdivision_level);
@@ -1058,6 +1078,45 @@ void CreateRastPipeline() {
   vkDestroyShaderModule(g_framework->device, fs_module, nullptr);
 }
 
+void CreateMeshDescriptorSetStuff() {
+  // Mesh Descriptor pool
+  mesh_descriptor_pool = g_framework->CreateCBVSRVUAVPool(
+    {
+      { VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 },
+      { VkDescriptorType::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+    },
+    1
+  );
+
+  VkDescriptorSetLayoutBinding mesh_dslb[3]{};
+  mesh_dslb[0].binding = 0;
+  mesh_dslb[0].descriptorCount = 1;
+  mesh_dslb[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  mesh_dslb[0].pImmutableSamplers = nullptr;
+  mesh_dslb[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT;
+
+  mesh_dslb[1].binding = 1;
+  mesh_dslb[1].descriptorCount = 1;
+  mesh_dslb[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  mesh_dslb[1].pImmutableSamplers = nullptr;
+  mesh_dslb[1].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT;
+
+  mesh_dslb[2].binding = 2;
+  mesh_dslb[2].descriptorCount = 1;
+  mesh_dslb[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  mesh_dslb[2].pImmutableSamplers = nullptr;
+  mesh_dslb[2].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT;
+
+  VkDescriptorSetLayoutCreateInfo mesh_dslci{};
+  mesh_dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  mesh_dslci.bindingCount = _countof(mesh_dslb);
+  mesh_dslci.pBindings = mesh_dslb;
+  if (vkCreateDescriptorSetLayout(g_framework->device, &mesh_dslci, nullptr, &mesh_descriptor_set_layout) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create rast descriptor set layout");
+  }
+  mesh_descriptor_set = g_framework->CreateDescriptorSet(mesh_descriptor_set_layout, mesh_descriptor_pool);
+}
+
 void CreateMeshPipeline() {
   std::vector<char> as_code = g_framework->ReadFile("shaders/meshshading_task.spv");
   std::vector<char> ms_code = g_framework->ReadFile("shaders/meshshading_mesh.spv");
@@ -1067,25 +1126,25 @@ void CreateMeshPipeline() {
   VkShaderModule ms_module = g_framework->CreateShaderModule(ms_code);
   VkShaderModule fs_module = g_framework->CreateShaderModule(fs_code);
 
-  VkPipelineShaderStageCreateInfo pssci[2]{};
-  /*pssci[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  VkPipelineShaderStageCreateInfo pssci[3]{};
+  pssci[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   pssci[0].stage = VK_SHADER_STAGE_TASK_BIT_EXT;
   pssci[0].module = as_module;
-  pssci[0].pName = "main";*/
-
-  pssci[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  pssci[0].stage = VK_SHADER_STAGE_MESH_BIT_EXT;
-  pssci[0].module = ms_module;
   pssci[0].pName = "main";
 
   pssci[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  pssci[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-  pssci[1].module = fs_module;
+  pssci[1].stage = VK_SHADER_STAGE_MESH_BIT_EXT;
+  pssci[1].module = ms_module;
   pssci[1].pName = "main";
 
+  pssci[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  pssci[2].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pssci[2].module = fs_module;
+  pssci[2].pName = "main";
+
   std::vector<VkDynamicState> dynamicStates = {
-  VK_DYNAMIC_STATE_VIEWPORT,
-  VK_DYNAMIC_STATE_SCISSOR
+    VK_DYNAMIC_STATE_VIEWPORT,
+    VK_DYNAMIC_STATE_SCISSOR
   };
   VkPipelineDynamicStateCreateInfo dynamicState{};
   dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -1160,8 +1219,8 @@ void CreateMeshPipeline() {
 
   VkPipelineLayoutCreateInfo plci{};
   plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  plci.setLayoutCount = 0;
-  plci.pSetLayouts = nullptr;
+  plci.setLayoutCount = 1;
+  plci.pSetLayouts = &mesh_descriptor_set_layout;
   plci.pushConstantRangeCount = 0;
   plci.pPushConstantRanges = nullptr;
   vkCreatePipelineLayout(g_framework->device, &plci, nullptr, &mesh_pipeline_layout);
@@ -1320,6 +1379,7 @@ int main(int argv, char** argc) {
   g_framework->CreateUAVBuffer(normals_buffer, 0, normals_size, rast_descriptor_set, 1);
 
   CreateRastPipeline();
+  CreateMeshDescriptorSetStuff();
   CreateMeshPipeline();
 
   // RT Descriptor layout, Descriptor pool, Descriptor set
