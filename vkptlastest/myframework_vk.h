@@ -63,6 +63,10 @@ public:
     VkMicromapEXT outOmmArray;
   };
 
+  struct MyASBuildInfo {
+    size_t as_size;
+  };
+
   // Shared by all scenes.
   void InitWindow(const char* appName, uint32_t width, uint32_t height, GLFWkeyfun keyCallback);
   void InitDeviceAndCommandQ();
@@ -100,7 +104,8 @@ public:
     VkBuffer vb, VkBuffer ib, uint32_t maxVertex,
     uint32_t indexCount,
     uint32_t vertex_stride = sizeof(float)*3,
-    MyOmmAttachmentInfo* omminfo = nullptr);
+    MyOmmAttachmentInfo* omminfo = nullptr,
+    MyASBuildInfo* buildinfo = nullptr);
   void BuildTLAS(VkAccelerationStructureKHR& outTlas,
     const VkAccelerationStructureKHR& blas0, const VkBuffer& blas0Buffer,
     VkBuffer& outTlasResultBuffer, VkDeviceMemory& outTlasResultMemory
@@ -178,7 +183,7 @@ public:
   VkDeviceMemory depthImageMemory;
   VkImageView depthImageView;
 
-  VkRenderPass imguiRenderPass;
+  VkRenderPass imguiRenderPass{};
   std::vector<VkFramebuffer> imguiFramebuffers;
   VkDescriptorPool imguiDescriptorPool;
 };

@@ -48,6 +48,8 @@ std::vector<const char*> deviceExtensions = {
   VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME,
   VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
   VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
+  VK_EXT_MESH_SHADER_EXTENSION_NAME,
+  VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
 };
 
 std::vector<const char*> ommExtensions = {
@@ -476,9 +478,16 @@ void MyFrameworkVk::createLogicalDevice() {
   createInfo.enabledExtensionCount = uint32_t(deviceExtensions.size());
   createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
+  VkPhysicalDeviceMeshShaderFeaturesEXT meshShadingFeatures{};
+  meshShadingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+  meshShadingFeatures.multiviewMeshShader = VK_FALSE;
+  meshShadingFeatures.taskShader = VK_TRUE;
+  meshShadingFeatures.meshShader = VK_TRUE;
+
   // Feature train/chain
   VkPhysicalDeviceRayTracingValidationFeaturesNV rtValidationFeatures{};
   rtValidationFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_VALIDATION_FEATURES_NV;
+  rtValidationFeatures.pNext = &meshShadingFeatures;
 
   // Use RT validation and RT by default
   VkPhysicalDeviceOpacityMicromapFeaturesEXT ommFeatures{};
@@ -792,7 +801,12 @@ void MyFrameworkVk::InitImGui() {
   init_info.MinImageCount = 2;
   init_info.ImageCount = swapChainImages.size();
   init_info.UseDynamicRendering = false;
-  init_info.PipelineInfoMain.RenderPass = renderPass;
+
+  if (imguiRenderPass == VK_NULL_HANDLE) {
+    InitImGuiRenderPass();
+  }
+
+  init_info.PipelineInfoMain.RenderPass = imguiRenderPass;
   init_info.PipelineInfoMain.Subpass = 0;
 
   bool ret = ImGui_ImplVulkan_Init(&init_info);
@@ -1526,6 +1540,26 @@ void MyFrameworkVk::CmdTransitionImageLayout(VkCommandBuffer commandBuffer, VkIm
         }
         break;
       }
+      case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR: {
+        switch (newLayout) {
+          case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            break;
+          }
+          case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;  // Do not wait for any particular stage.
+            destinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;  // Complete transition before writing color attachment.
+            break;
+          }
+          default: assert(0 && "Unimplemented");
+        }
+        break;
+      }
     }
   }
 
@@ -1604,7 +1638,8 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
   VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
   VkBuffer vb, VkBuffer ib, uint32_t maxVertex, uint32_t indexCount,
   uint32_t vertex_stride,
-  MyOmmAttachmentInfo* omminfo
+  MyOmmAttachmentInfo* omminfo,
+  MyASBuildInfo* mybuildinfo
   ) {
   VkDeviceAddress vbDeviceAddr = getBufferDeviceAddress(vb);
   VkDeviceAddress ibDeviceAddr = getBufferDeviceAddress(ib);
@@ -1778,6 +1813,10 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
     outBlasResultBuffer,
     outBlasResultMemory);
 
+  if (mybuildinfo) {
+    mybuildinfo->as_size = asBuildSizeInfo.accelerationStructureSize;
+  }
+  
   asbgi.scratchData.deviceAddress = getBufferDeviceAddress(blasScratchBuffer);
 
   VkAccelerationStructureCreateInfoKHR blasCreateInfo{};
