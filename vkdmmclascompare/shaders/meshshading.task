@@ -5,6 +5,13 @@ struct TaskPayload {
   uint drawId;
 };
 
+layout(binding=0) uniform PerSceneDataMesh {
+    mat4 M;
+    mat4 V;
+    mat4 P;
+    uint is_base_mesh;
+};
+
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 taskPayloadSharedEXT TaskPayload payload;
@@ -12,5 +19,9 @@ taskPayloadSharedEXT TaskPayload payload;
 void main() {
   uint nthds = gl_WorkGroupSize.x * gl_NumWorkGroups.x;
   uint tidx = gl_LocalInvocationID.x + gl_WorkGroupSize.x * gl_WorkGroupID.x;
-  EmitMeshTasksEXT(299, 1, 1);
+  if (is_base_mesh == 1) {
+    EmitMeshTasksEXT(299, 1, 1);
+  } else {
+    EmitMeshTasksEXT(19090 * 16, 1, 1);
+  }
 }

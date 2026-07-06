@@ -9,11 +9,13 @@ taskPayloadSharedEXT TaskPayload payload;
 
 layout(local_size_x = 64) in;
 layout(triangles, max_vertices = 192, max_primitives = 64) out;
+layout(location = 0) out vec3 out_normal[];
 
-layout(binding=0) uniform PerSceneData {
+layout(binding=0) uniform PerSceneDataMesh {
     mat4 M;
     mat4 V;
     mat4 P;
+    uint is_base_mesh;
 };
 
 layout(binding=1) readonly buffer VertexBuf {
@@ -22,7 +24,30 @@ layout(binding=1) readonly buffer VertexBuf {
 layout(binding=2) readonly buffer IndexBuf {
 	uint idxes[];
 };
-
+layout(binding=3) readonly buffer DmmDisplacements {
+    float dmm_displacements[];
+};
+layout(binding=4) readonly buffer DmmLevels {
+    uint dmm_levels[];
+};
+layout(binding=5) readonly buffer DmmDisplacementOffsets {
+    uint dmm_displacement_offsets[];
+};
+layout(binding=6) readonly buffer BaryLevelsMapTriangles {
+    uint bary_levels_tris[];
+};
+layout(binding=7) readonly buffer BaryLevelsMapTrianglesOffsets {
+    uint bary_levels_tris_offsets[];
+};
+layout(binding=8) readonly buffer BaryWUVs {
+    float barywuvs[];
+};
+layout(binding=9) readonly buffer BaryWUVOffsets {
+    uint barywuv_offsets[];
+};
+layout(binding=10) readonly buffer NormalsBuf {
+    float normals[];
+};
 
 vec3 GetVertex(uint idx) {
 	uint index = idxes[idx];
@@ -31,9 +56,20 @@ vec3 GetVertex(uint idx) {
 				verts[index * 3 + 2]);
 }
 
-void main() {
-    SetMeshOutputsEXT(192, 64);
+vec3 GetBaryWUVs(uint idx) {
+    return vec3(barywuvs[idx*3    ],
+                barywuvs[idx*3 + 1],
+                barywuvs[idx*3 + 2]);
+}
 
+vec3 GetBaseVertexNormal(uint idx) {
+    return vec3(normals[idx*3],
+                normals[idx*3 + 1],
+                normals[idx*3 + 2]);
+}
+
+void BaseMeshMain() {
+    SetMeshOutputsEXT(192, 64);
     uint thd_idx = gl_LocalInvocationID.x + gl_WorkGroupSize.x * gl_WorkGroupID.x;
     uint pidx = thd_idx;
 
@@ -48,5 +84,103 @@ void main() {
     gl_MeshVerticesEXT[oidx + 1].gl_Position = P * (V * (M * vec4(v1, 1)));
     gl_MeshVerticesEXT[oidx + 2].gl_Position = P * (V * (M * vec4(v2, 1)));
 
+    out_normal[oidx] = normalize(cross(v1-v0, v2-v0));
+    out_normal[oidx + 1] = normalize(cross(v1-v0, v2-v0));
+    out_normal[oidx + 2] = normalize(cross(v1-v0, v2-v0));
+
     gl_PrimitiveTriangleIndicesEXT[gl_LocalInvocationID.x] = uvec3(oidx, oidx+1, oidx+2);
+}
+
+void DisplacedMicroMeshMain() {
+    const uint MaxMicrosPerWG = 64u;
+    const uint MaxBlocksPerTri = 16u; // level 5: 1024 / 64 = 16
+
+    uint globalWG = gl_WorkGroupID.x;
+    uint orig_tri_idx = globalWG / MaxBlocksPerTri;
+    uint block_idx    = globalWG % MaxBlocksPerTri;
+
+    uint sdlvl = dmm_levels[orig_tri_idx];
+    uint microTriCount = 1u << (2u * sdlvl);
+
+    uint firstMicro = block_idx * MaxMicrosPerWG;
+    uint remaining = firstMicro < microTriCount ? microTriCount - firstMicro : 0u;
+    uint ntris = min(MaxMicrosPerWG, remaining);
+
+    SetMeshOutputsEXT(ntris * 3u, ntris);
+
+    uint local = gl_LocalInvocationID.x;
+    if (local >= ntris) return;
+
+    uint utri_idx = firstMicro + local;
+
+    vec3 v0 = GetVertex(orig_tri_idx * 3u);
+    vec3 v1 = GetVertex(orig_tri_idx * 3u + 1u);
+    vec3 v2 = GetVertex(orig_tri_idx * 3u + 2u);
+
+    vec3 n0 = GetBaseVertexNormal(orig_tri_idx * 3u);
+    vec3 n1 = GetBaseVertexNormal(orig_tri_idx * 3u + 1);
+    vec3 n2 = GetBaseVertexNormal(orig_tri_idx * 3u + 2);
+
+    uint tri_ofst = bary_levels_tris_offsets[sdlvl];
+    uvec3 tri;
+    tri.x = bary_levels_tris[(tri_ofst + utri_idx) * 3];
+    tri.y = bary_levels_tris[(tri_ofst + utri_idx) * 3 + 1];
+    tri.z = bary_levels_tris[(tri_ofst + utri_idx) * 3 + 2];
+
+    uint wuv_ofst = barywuv_offsets[sdlvl];
+
+    vec3 wuv0 = GetBaryWUVs(wuv_ofst + tri.x);
+    vec3 wuv1 = GetBaryWUVs(wuv_ofst + tri.y);
+    vec3 wuv2 = GetBaryWUVs(wuv_ofst + tri.z);
+
+    vec3 micro_v0 = v0 * wuv0.x + v1 * wuv0.y + v2 * wuv0.z;
+    vec3 micro_v1 = v0 * wuv1.x + v1 * wuv1.y + v2 * wuv1.z;
+    vec3 micro_v2 = v0 * wuv2.x + v1 * wuv2.y + v2 * wuv2.z;
+
+    vec3 baseN = cross(v1 - v0, v2 - v0);
+
+    vec3 micro_n0 = n0 * wuv0.x + n1 * wuv0.y + n2 * wuv0.z;
+    vec3 micro_n1 = n0 * wuv1.x + n1 * wuv1.y + n2 * wuv1.z;
+    vec3 micro_n2 = n0 * wuv2.x + n1 * wuv2.y + n2 * wuv2.z;
+
+    uint oidx = gl_LocalInvocationID.x * 3u;
+
+    // Displace
+    uint disp_ofst = dmm_displacement_offsets[orig_tri_idx];
+    float mag0 = dmm_displacements[disp_ofst + tri.x];
+    float mag1 = dmm_displacements[disp_ofst + tri.y];
+    float mag2 = dmm_displacements[disp_ofst + tri.z];
+
+    vec3 displaced_micro_v0 = micro_v0 + micro_n0 * mag0;  // Just for debugging
+    vec3 displaced_micro_v1 = micro_v1 + micro_n1 * mag1;  // Just for debugging
+    vec3 displaced_micro_v2 = micro_v2 + micro_n2 * mag2;  // Just for debugging
+
+    vec3 microN = cross(displaced_micro_v1 - displaced_micro_v0,
+                        displaced_micro_v2 - displaced_micro_v0);
+
+    if (dot(microN, baseN) < 0.0) {
+        vec3 tmp = displaced_micro_v1;
+        displaced_micro_v1 = displaced_micro_v2;
+        displaced_micro_v2 = tmp;
+        microN = -microN;
+    }
+
+    gl_MeshVerticesEXT[oidx    ].gl_Position = P * V * M * vec4(displaced_micro_v0, 1.0);
+    gl_MeshVerticesEXT[oidx + 1].gl_Position = P * V * M * vec4(displaced_micro_v1, 1.0);
+    gl_MeshVerticesEXT[oidx + 2].gl_Position = P * V * M * vec4(displaced_micro_v2, 1.0);
+
+    vec3 n = normalize(microN);
+    out_normal[oidx    ] = n;
+    out_normal[oidx + 1] = n;
+    out_normal[oidx + 2] = n;
+
+    gl_PrimitiveTriangleIndicesEXT[local] = uvec3(oidx, oidx + 1u, oidx + 2u);
+}
+
+void main() {
+    if (is_base_mesh == 1) {
+        BaseMeshMain();
+    } else {
+        DisplacedMicroMeshMain();
+    }
 }

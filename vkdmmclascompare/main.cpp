@@ -72,6 +72,24 @@ static VkDescriptorPool mesh_descriptor_pool;
 static VkDescriptorSet mesh_descriptor_set;
 static VkPipelineLayout mesh_pipeline_layout;
 static VkPipeline mesh_pipeline;
+static VkBuffer mesh_perscene_cb_buffer;
+static VkDeviceMemory mesh_perscene_cb_buffer_memory;
+static VkBuffer mesh_dmm_displacements_buffer;
+static VkDeviceMemory mesh_dmm_displacements_buffer_memory;
+static VkBuffer mesh_dmm_displacements_offsets_buffer;
+static VkDeviceMemory mesh_dmm_displacements_offsets_buffer_memory;
+static VkBuffer mesh_dmm_levels_buffer;
+static VkDeviceMemory mesh_dmm_levels_buffer_memory;
+static VkBuffer mesh_bary_levels_map_triangles_buffer;
+static VkDeviceMemory mesh_bary_levels_map_triangles_buffer_memory;
+static VkBuffer mesh_bary_levels_map_triangles_offsets_buffer;
+static VkDeviceMemory mesh_bary_levels_map_triangles_offsets_buffer_memory;
+static VkBuffer mesh_bary_wuvs_buffer;
+static VkDeviceMemory mesh_bary_wuvs_buffer_memory;
+static VkBuffer mesh_bary_wuvs_offsets_buffer;
+static VkDeviceMemory mesh_bary_wuvs_offsets_buffer_memory;
+static VkBuffer mesh_per_vertex_normals_buffer;
+static VkDeviceMemory mesh_per_vertex_normals_buffer_memory;
 
 // Blas, TLAS
 static VkAccelerationStructureKHR blas;
@@ -95,6 +113,11 @@ static std::vector<uint8_t> g_dmm_levels;
 
 struct PerSceneUniformBuffer {
   glm::mat4 M, V, P;
+};
+
+struct MeshSceneUniformBuffer {
+  glm::mat4 M, V, P;
+  uint32_t is_base_mesh;
 };
 
 struct RtPersceneUniformBuffer {
@@ -146,6 +169,9 @@ struct MyModelStuff {
     }
   }
 };
+
+MyModelStuff naive_utris;
+MyModelStuff base_model;
 
 static bool is_directive(const std::string& line, const char* key)
 {
@@ -329,8 +355,10 @@ void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
   ImGui::RadioButton(buf, &g_viz_mode, 2);
   snprintf(buf, sizeof(buf), "RT Utris, AS size %zu", naive_utris_blas_build_info.as_size);
   ImGui::RadioButton(buf, &g_viz_mode, 3);
-  snprintf(buf, sizeof(buf), "Mesh shading");
+  snprintf(buf, sizeof(buf), "Mesh shading base mesh");
   ImGui::RadioButton(buf, &g_viz_mode, 4);
+  snprintf(buf, sizeof(buf), "Mesh shading Utris");
+  ImGui::RadioButton(buf, &g_viz_mode, 5);
 
   ImGui::End();
   ImGui::Render();
@@ -501,7 +529,22 @@ void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
 }
 
 void recordMeshShadingCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
-  g_framework->CreateCBVBuffer(perscene_cb_buffer, 0, sizeof(PerSceneUniformBuffer), mesh_descriptor_set, 0);
+  MeshSceneUniformBuffer msub{};
+  msub.M = glm::mat4(1.0f);
+  msub.V = glm::lookAt(
+    glm::vec3(0, 0, 200),
+    glm::vec3(0, 0, 0),
+    glm::vec3(0, -1, 0));
+  msub.P = glm::perspectiveFovRH_ZO(3.1415926f / 4,
+    WIDTH * 1.0f, HEIGHT * 1.0f, 0.1f, 10000.0f);
+  msub.is_base_mesh = (g_viz_mode == 4) ? 1 : 0;
+
+  void* data;
+  vkMapMemory(g_framework->device, mesh_perscene_cb_buffer_memory, 0, sizeof(MeshSceneUniformBuffer), 0, (void**)&data);
+  memcpy(data, &msub, sizeof(msub));
+  vkUnmapMemory(g_framework->device, mesh_perscene_cb_buffer_memory);
+
+  g_framework->CreateCBVBuffer(mesh_perscene_cb_buffer, 0, sizeof(MeshSceneUniformBuffer), mesh_descriptor_set, 0);
   g_framework->CreateUAVBuffer(vertex_buffer, 0, sizeof(glm::vec3) * g_num_vertices, mesh_descriptor_set, 1);
   g_framework->CreateUAVBuffer(index_buffer, 0, sizeof(uint32_t) * g_num_indices, mesh_descriptor_set, 2);
 
@@ -601,7 +644,7 @@ void DrawFrame() {
       recordRtCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
-    case 4: {
+    case 4: case 5: {
       recordMeshShadingCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
@@ -740,8 +783,7 @@ int LoadBary(const std::string& fn) {
     const bary::Triangle& baryTri = basic.triangles[triIdx];
     float minDisp = getBaryMinMaxValue(basic.triangleMinMaxsInfo->elementFormat, basic.triangleMinMaxs, triIdx * 2 + 0) * valueScale + valueBias;
     float maxDisp = getBaryMinMaxValue(basic.triangleMinMaxsInfo->elementFormat, basic.triangleMinMaxs, triIdx * 2 + 1) * valueScale + valueBias;
-    printf("tri[%u], level=%u, valuesOffset=%u, minDisp=%g, maxDisp=%g\n",
-      triIdx, baryTri.subdivLevel, baryTri.valuesOffset, minDisp, maxDisp);
+    //printf("tri[%u], level=%u, valuesOffset=%u, minDisp=%g, maxDisp=%g\n", triIdx, baryTri.subdivLevel, baryTri.valuesOffset, minDisp, maxDisp);
 
     const uint32_t vc = VERTICES_COUNT_PER_LEVEL[baryTri.subdivLevel];
     assert(basic.valuesInfo->valueFormat == bary::Format::eR11_unorm_packed_align32);
@@ -1082,18 +1124,18 @@ void CreateMeshDescriptorSetStuff() {
   // Mesh Descriptor pool
   mesh_descriptor_pool = g_framework->CreateCBVSRVUAVPool(
     {
-      { VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 },
+      { VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9 },
       { VkDescriptorType::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
     },
     1
   );
 
-  VkDescriptorSetLayoutBinding mesh_dslb[3]{};
+  VkDescriptorSetLayoutBinding mesh_dslb[11]{};
   mesh_dslb[0].binding = 0;
   mesh_dslb[0].descriptorCount = 1;
   mesh_dslb[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   mesh_dslb[0].pImmutableSamplers = nullptr;
-  mesh_dslb[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT;
+  mesh_dslb[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_TASK_BIT_EXT;
 
   mesh_dslb[1].binding = 1;
   mesh_dslb[1].descriptorCount = 1;
@@ -1106,6 +1148,30 @@ void CreateMeshDescriptorSetStuff() {
   mesh_dslb[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   mesh_dslb[2].pImmutableSamplers = nullptr;
   mesh_dslb[2].stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT;
+
+  mesh_dslb[3] = mesh_dslb[2];
+  mesh_dslb[3].binding = 3;
+
+  mesh_dslb[4] = mesh_dslb[3];
+  mesh_dslb[4].binding = 4;
+
+  mesh_dslb[5] = mesh_dslb[4];
+  mesh_dslb[5].binding = 5;
+
+  mesh_dslb[6] = mesh_dslb[5];
+  mesh_dslb[6].binding = 6;
+
+  mesh_dslb[7] = mesh_dslb[6];
+  mesh_dslb[7].binding = 7;
+
+  mesh_dslb[8] = mesh_dslb[7];
+  mesh_dslb[8].binding = 8;
+
+  mesh_dslb[9] = mesh_dslb[8];
+  mesh_dslb[9].binding = 9;
+
+  mesh_dslb[10] = mesh_dslb[9];
+  mesh_dslb[10].binding = 10;
 
   VkDescriptorSetLayoutCreateInfo mesh_dslci{};
   mesh_dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1262,18 +1328,79 @@ void CreateMeshPipeline() {
   vkDestroyShaderModule(g_framework->device, as_module, nullptr);
   vkDestroyShaderModule(g_framework->device, ms_module, nullptr);
   vkDestroyShaderModule(g_framework->device, fs_module, nullptr);
+
+  // Copy stuff
+  std::vector<float> dmm_displacements_all;
+  std::vector<uint32_t> dmm_displacements_offsets;
+  for (const auto& d : g_dmm_displacements) {
+    dmm_displacements_offsets.push_back(dmm_displacements_all.size());
+    for (const auto f : d) {
+      dmm_displacements_all.push_back(f);
+    }
+  }
+
+  g_framework->CreateBufferForCPUSideData(dmm_displacements_all.data(), sizeof(float) * dmm_displacements_all.size(), mesh_dmm_displacements_buffer, mesh_dmm_displacements_buffer_memory);
+  g_framework->CreateBufferForCPUSideData(dmm_displacements_offsets.data(), sizeof(uint32_t) * dmm_displacements_offsets.size(), mesh_dmm_displacements_offsets_buffer, mesh_dmm_displacements_offsets_buffer_memory);
+
+  std::vector<uint32_t> dmm_levels_u32;
+  for (uint32_t l : g_dmm_levels) {
+    dmm_levels_u32.push_back(l);
+  }
+  g_framework->CreateBufferForCPUSideData(dmm_levels_u32.data(), sizeof(uint32_t) * dmm_levels_u32.size(), mesh_dmm_levels_buffer, mesh_dmm_levels_buffer_memory);
+
+  std::vector<glm::uvec3> bary_levels_map_tris;
+  std::vector<uint32_t> bary_levels_map_tris_offsets;
+  for (uint32_t l = 0; l <= 5; l++) {
+    baryutils::BaryLevelsMap::Level level = g_maps.getLevel(l);
+    bary_levels_map_tris_offsets.push_back(bary_levels_map_tris.size());
+    for (const auto& tri : level.triangles) {
+      glm::uvec3 tri1(tri.a, tri.b, tri.c);
+      bary_levels_map_tris.push_back(tri1);
+    }
+  }
+  g_framework->CreateBufferForCPUSideData(bary_levels_map_tris.data(), sizeof(glm::uvec3) * bary_levels_map_tris.size(), mesh_bary_levels_map_triangles_buffer, mesh_bary_levels_map_triangles_buffer_memory);
+  g_framework->CreateBufferForCPUSideData(bary_levels_map_tris_offsets.data(), sizeof(uint32_t) * bary_levels_map_tris_offsets.size(), mesh_bary_levels_map_triangles_offsets_buffer, mesh_bary_levels_map_triangles_offsets_buffer_memory);
+
+  std::vector<glm::vec3> bary_wuvs;
+  std::vector<uint32_t> bary_wuvs_offsets;
+  for (uint32_t l = 0; l <= 5; l++) {
+    baryutils::BaryLevelsMap::Level level = g_maps.getLevel(l);
+    bary_wuvs_offsets.push_back(bary_wuvs.size());
+    for (baryutils::BaryWUV_uint16 coord : level.coordinates) {
+      float          mul = 1.0f / float(1 << l);
+      glm::vec3 wuv;
+      wuv.x = float(coord.w) * mul;
+      wuv.y = float(coord.u) * mul;
+      wuv.z = float(coord.v) * mul;
+      bary_wuvs.push_back(wuv);
+    }
+  }
+  g_framework->CreateBufferForCPUSideData(bary_wuvs.data(), sizeof(glm::vec3) * bary_wuvs.size(), mesh_bary_wuvs_buffer, mesh_bary_wuvs_buffer_memory);
+  g_framework->CreateBufferForCPUSideData(bary_wuvs_offsets.data(), sizeof(uint32_t) * bary_wuvs_offsets.size(), mesh_bary_wuvs_offsets_buffer, mesh_bary_wuvs_offsets_buffer_memory);
+
+  g_framework->CreateBufferForCPUSideData(base_model.per_vertex_normals.data(), sizeof(glm::vec3) * base_model.per_vertex_normals.size(), mesh_per_vertex_normals_buffer, mesh_per_vertex_normals_buffer_memory);
+
+  // Set UAVs.
+  g_framework->CreateUAVBuffer(mesh_dmm_displacements_buffer, 0, sizeof(float) * dmm_displacements_all.size(), mesh_descriptor_set, 3);
+  g_framework->CreateUAVBuffer(mesh_dmm_displacements_offsets_buffer, 0, sizeof(uint32_t) * dmm_displacements_offsets.size(), mesh_descriptor_set, 5);
+  g_framework->CreateUAVBuffer(mesh_dmm_levels_buffer, 0, sizeof(uint32_t) * dmm_levels_u32.size(), mesh_descriptor_set, 4);
+  g_framework->CreateUAVBuffer(mesh_bary_levels_map_triangles_buffer, 0, sizeof(glm::uvec3) * bary_levels_map_tris.size(), mesh_descriptor_set, 6);
+  g_framework->CreateUAVBuffer(mesh_bary_levels_map_triangles_offsets_buffer, 0, sizeof(uint32_t) * bary_levels_map_tris_offsets.size(), mesh_descriptor_set, 7);
+  g_framework->CreateUAVBuffer(mesh_bary_wuvs_buffer, 0, sizeof(glm::vec3) * bary_wuvs.size(), mesh_descriptor_set, 8);
+  g_framework->CreateUAVBuffer(mesh_bary_wuvs_offsets_buffer, 0, sizeof(uint32_t) * bary_wuvs_offsets.size(), mesh_descriptor_set, 9);
+  g_framework->CreateUAVBuffer(mesh_per_vertex_normals_buffer, 0, sizeof(glm::vec3) * base_model.per_vertex_normals.size(), mesh_descriptor_set, 10);
 }
 
 int main(int argv, char** argc) {
   printf("Hey.\n");
-  MyModelStuff model = LoadModel("murex_romosus.obj");
+  base_model = LoadModel("murex_romosus.obj");
   LoadBary("murex_romosus.bary");
-  MyModelStuff naive_utris = PopulateDisplacedMicroTriangles(model, g_dmm_displacements, g_dmm_levels);
+  naive_utris = PopulateDisplacedMicroTriangles(base_model, g_dmm_displacements, g_dmm_levels);
   g_framework = new MyFrameworkVk();
   g_framework->InitWindow("VK DMM CLAS BLAS Comparison", WIDTH, HEIGHT, KeyCallback);
   g_window = g_framework->window;
-  g_num_indices = model.indices.size();
-  g_num_vertices = model.positions.size();
+  g_num_indices = base_model.indices.size();
+  g_num_vertices = base_model.positions.size();
 
   // InitVulkan
   g_framework->InitDeviceAndCommandQ();
@@ -1295,11 +1422,11 @@ int main(int argv, char** argc) {
     | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
   VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
     | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-  size_t vb_size = sizeof(glm::vec3) * model.positions.size();
+  size_t vb_size = sizeof(glm::vec3) * base_model.positions.size();
   g_framework->CreateBuffer(vb_size, usage, props,
     vertex_buffer, vertex_buffer_memory
   );
-  size_t ib_size = sizeof(uint32_t) * model.indices.size();
+  size_t ib_size = sizeof(uint32_t) * base_model.indices.size();
   g_framework->CreateBuffer(ib_size, usage | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, props,
     index_buffer, index_buffer_memory
   );
@@ -1323,13 +1450,13 @@ int main(int argv, char** argc) {
 
   void* data;
   vkMapMemory(g_framework->device, vertex_buffer_memory, 0, vb_size, 0, &data);
-  memcpy(data, model.positions.data(), vb_size);
+  memcpy(data, base_model.positions.data(), vb_size);
   vkUnmapMemory(g_framework->device, vertex_buffer_memory);
   vkMapMemory(g_framework->device, index_buffer_memory, 0, ib_size, 0, &data);
-  memcpy(data, model.indices.data(), ib_size);
+  memcpy(data, base_model.indices.data(), ib_size);
   vkUnmapMemory(g_framework->device, index_buffer_memory);
   vkMapMemory(g_framework->device, normals_memory, 0, normals_size, 0, &data);
-  memcpy(data, model.normals.data(), normals_size);
+  memcpy(data, base_model.normals.data(), normals_size);
   vkUnmapMemory(g_framework->device, normals_memory);
 
   vkMapMemory(g_framework->device, naive_utris_vertex_buffer_memory, 0, naive_utris_vb_size, 0, &data);
@@ -1375,6 +1502,7 @@ int main(int argv, char** argc) {
 
   size_t cb_size = sizeof(PerSceneUniformBuffer);
   g_framework->CreateBuffer(cb_size, usage, props, perscene_cb_buffer, perscene_cb_buffer_memory);
+  g_framework->CreateBuffer(sizeof(MeshSceneUniformBuffer), usage, props, mesh_perscene_cb_buffer, mesh_perscene_cb_buffer_memory);
   g_framework->CreateCBVBuffer(perscene_cb_buffer, 0, cb_size, rast_descriptor_set, 0);
   g_framework->CreateUAVBuffer(normals_buffer, 0, normals_size, rast_descriptor_set, 1);
 
@@ -1455,7 +1583,7 @@ int main(int argv, char** argc) {
   g_framework->CreateMyRtPipeline(&g_my_rt_pipeline, rsli);
 
   // Blas
-  g_framework->BuildBLAS(blas, blas_result_buffer, blas_result_memory, vertex_buffer, index_buffer, model.positions.size(), g_num_indices, sizeof(glm::vec3), nullptr, &blas_build_info);
+  g_framework->BuildBLAS(blas, blas_result_buffer, blas_result_memory, vertex_buffer, index_buffer, base_model.positions.size(), g_num_indices, sizeof(glm::vec3), nullptr, &blas_build_info);
   g_framework->BuildTLAS(tlas, { blas }, { blas_result_buffer }, tlas_result_buffer, tlas_result_memory);
   g_framework->BuildBLAS(naive_utris_blas, naive_utris_blas_result_buffer, naive_utris_blas_result_memory,
     naive_utris_vertex_buffer, naive_utris_index_buffer,
