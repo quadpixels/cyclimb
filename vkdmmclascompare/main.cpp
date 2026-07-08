@@ -1,5 +1,7 @@
 #include <stdio.h>
 
+#include <memory>
+
 #include "../vkptlastest/myframework_vk.h"
 
 #include <glm/glm.hpp>
@@ -106,10 +108,52 @@ MyFrameworkVk::MyASBuildInfo naive_utris_blas_build_info;
 static VkAccelerationStructureKHR naive_utris_tlas;
 static VkBuffer naive_utris_tlas_result_buffer;
 static VkDeviceMemory naive_utris_tlas_result_memory;
+static VkAccelerationStructureKHR dmm_blas;
+static VkBuffer dmm_blas_result_buffer;
+static VkDeviceMemory dmm_blas_result_memory;
+MyFrameworkVk::MyASBuildInfo dmm_blas_build_info;
+static VkAccelerationStructureKHR dmm_tlas;
+static VkBuffer dmm_tlas_result_buffer;
+static VkDeviceMemory dmm_tlas_result_memory;
+MyFrameworkVk::MyDmmAttachmentInfo dmm_attachment_info;
 
 static baryutils::BaryLevelsMap g_maps(bary::ValueLayout::eTriangleBirdCurve, 5);
 static std::vector<std::vector<float>> g_dmm_displacements;
 static std::vector<uint8_t> g_dmm_levels;
+
+// DMM Data for RT
+// g_micromap is in dmm_attachment_info
+VkBuffer g_micromap_buf;
+VkDeviceMemory g_micromap_memory;
+// f16vec4 needed for this thing
+VkBuffer g_dmm_displacement_vector_buffer;
+VkDeviceMemory g_dmm_displacement_vector_memory;
+VkBuffer g_dmm_displacement_bias_and_scale_buffer;
+VkDeviceMemory g_dmm_displacement_bias_and_scale_memory;
+VkBuffer g_dmm_tri_idx_buffer;
+VkDeviceMemory g_dmm_tri_idx_memory;
+static MyFrameworkVk::MyRtPipeline g_my_rt_dmm_pipeline;
+
+#include "glm/detail/type_half.hpp"
+#include <stddef.h>
+class float16_t
+{
+private:
+  glm::detail::hdata h = 0;
+
+public:
+  float16_t() {}
+  float16_t(float f) { h = glm::detail::toFloat16(f); }
+  operator float() const { return glm::detail::toFloat32(h); }
+};
+
+struct f16vec4
+{
+  float16_t x;
+  float16_t y;
+  float16_t z;
+  float16_t w;
+};
 
 struct PerSceneUniformBuffer {
   glm::mat4 M, V, P;
@@ -123,6 +167,19 @@ struct MeshSceneUniformBuffer {
 struct RtPersceneUniformBuffer {
   glm::mat4 inv_view, inv_proj;
 };
+
+struct BaryDisplacementAttribute
+{
+  // displacement
+  // The BARY representation of uncompressed data
+  std::unique_ptr<baryutils::BaryBasicData> uncompressed = nullptr;
+
+  // The BARY representation of compressed data
+  std::unique_ptr<baryutils::BaryBasicData> compressed = nullptr;
+  std::unique_ptr<baryutils::BaryMiscData>  compressedMisc = nullptr;
+};
+
+static BaryDisplacementAttribute g_bary_displacement_attrs;
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
   if (action == GLFW_PRESS) {
@@ -353,6 +410,12 @@ void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
   ImGui::RadioButton(buf, &g_viz_mode, 1);
   snprintf(buf, sizeof(buf), "RT base mesh, AS size %zu", blas_build_info.as_size);
   ImGui::RadioButton(buf, &g_viz_mode, 2);
+
+  if (g_framework->hasDMM) {
+    snprintf(buf, sizeof(buf), "RT DMM base mesh, AS size %zu", dmm_blas_build_info.as_size);
+    ImGui::RadioButton(buf, &g_viz_mode, 6);
+  }
+
   snprintf(buf, sizeof(buf), "RT Utris, AS size %zu", naive_utris_blas_build_info.as_size);
   ImGui::RadioButton(buf, &g_viz_mode, 3);
   snprintf(buf, sizeof(buf), "Mesh shading base mesh");
@@ -449,6 +512,11 @@ void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     g_framework->CreateUAVBuffer(naive_utris_vertex_buffer, 0, sizeof(glm::vec3) * g_num_naive_utris_vertices, rt_descriptor_set, 3);
     g_framework->CreateUAVBuffer(naive_utris_index_buffer, 0, sizeof(uint32_t) * g_num_naive_utris_indices, rt_descriptor_set, 4);
   }
+  else if (g_viz_mode == 6) {
+    g_framework->CreateSRVAccelerationStructure(dmm_tlas, rt_descriptor_set, 0);
+    g_framework->CreateUAVBuffer(vertex_buffer, 0, sizeof(glm::vec3) * g_num_vertices, rt_descriptor_set, 3);
+    g_framework->CreateUAVBuffer(index_buffer, 0, sizeof(uint32_t) * g_num_indices, rt_descriptor_set, 4);
+  }
 
   VkCommandBufferBeginInfo beginInfo{};
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -458,16 +526,22 @@ void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     throw std::runtime_error("Failed to begin command buffer");
   }
 
-  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, g_my_rt_pipeline.rtPipeline);
+  MyFrameworkVk::MyRtPipeline* rtpipeline{};
+  if (g_viz_mode == 6) {
+    rtpipeline = &g_my_rt_dmm_pipeline;
+  } else {
+    rtpipeline = &g_my_rt_pipeline;
+  }
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtpipeline->rtPipeline);
   vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline_layout, 0, 1, &rt_descriptor_set, 0, nullptr);
   PFN_vkCmdTraceRaysKHR funcCmdTraceRaysKHR =
     (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(
       g_framework->instance, "vkCmdTraceRaysKHR");
   funcCmdTraceRaysKHR(commandBuffer,
-    &g_my_rt_pipeline.rtRgenRegion,
-    &g_my_rt_pipeline.rtMissRegion,
-    &g_my_rt_pipeline.rtHitRegion,
-    &g_my_rt_pipeline.rtCallRegion, WIDTH, HEIGHT, 1);
+    &(rtpipeline->rtRgenRegion),
+    &(rtpipeline->rtMissRegion),
+    &(rtpipeline->rtHitRegion),
+    &(rtpipeline->rtCallRegion), WIDTH, HEIGHT, 1);
 
   //g_framework->CmdTransitionImageLayout(commandBuffer, rt_output_image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   VkImageMemoryBarrier barrier{};
@@ -640,7 +714,7 @@ void DrawFrame() {
       recordCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
-    case 2: case 3: {
+    case 2: case 3: case 6: {
       recordRtCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
@@ -1124,7 +1198,7 @@ void CreateMeshDescriptorSetStuff() {
   // Mesh Descriptor pool
   mesh_descriptor_pool = g_framework->CreateCBVSRVUAVPool(
     {
-      { VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9 },
+      { VkDescriptorType::VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10 },
       { VkDescriptorType::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
     },
     1
@@ -1391,6 +1465,319 @@ void CreateMeshPipeline() {
   g_framework->CreateUAVBuffer(mesh_per_vertex_normals_buffer, 0, sizeof(glm::vec3) * base_model.per_vertex_normals.size(), mesh_descriptor_set, 10);
 }
 
+static void fillDummyTriangleMinMaxs(baryutils::BaryBasicData& baryData)
+{
+  baryData.triangleMinMaxsInfo.elementCount = uint32_t(2 * baryData.triangles.size());
+  baryData.triangleMinMaxsInfo.elementByteAlignment = 4;
+
+  switch (baryData.valuesInfo.valueFormat)
+  {
+  case bary::Format::eDispC1_r11_unorm_block:
+  case bary::Format::eR11_unorm_pack16:
+  case bary::Format::eR11_unorm_packed_align32:
+    baryData.triangleMinMaxsInfo.elementByteSize = uint32_t(sizeof(uint16_t));
+    baryData.triangleMinMaxsInfo.elementFormat = bary::Format::eR11_unorm_pack16;
+    baryData.triangleMinMaxs.resize(baryData.triangleMinMaxsInfo.elementByteSize * baryData.triangleMinMaxsInfo.elementCount);
+    {
+      uint16_t* minMaxs = reinterpret_cast<uint16_t*>(baryData.triangleMinMaxs.data());
+      for (size_t i = 0; i < baryData.triangles.size(); i++)
+      {
+        minMaxs[i * 2 + 0] = 0;
+        minMaxs[i * 2 + 1] = 0x7FF;
+      }
+    }
+    break;
+  case bary::Format::eR16_unorm:
+    baryData.triangleMinMaxsInfo.elementByteSize = uint32_t(sizeof(uint16_t));
+    baryData.triangleMinMaxsInfo.elementFormat = bary::Format::eR16_unorm;
+    baryData.triangleMinMaxs.resize(baryData.triangleMinMaxsInfo.elementByteSize * baryData.triangleMinMaxsInfo.elementCount);
+    {
+      uint16_t* minMaxs = reinterpret_cast<uint16_t*>(baryData.triangleMinMaxs.data());
+      for (size_t i = 0; i < baryData.triangles.size(); i++)
+      {
+        minMaxs[i * 2 + 0] = 0;
+        minMaxs[i * 2 + 1] = 0xFFFF;
+      }
+    }
+    break;
+  case bary::Format::eR8_unorm:
+    baryData.triangleMinMaxsInfo.elementByteSize = uint32_t(sizeof(uint8_t));
+    baryData.triangleMinMaxsInfo.elementFormat = bary::Format::eR8_unorm;
+    baryData.triangleMinMaxs.resize(baryData.triangleMinMaxsInfo.elementByteSize * baryData.triangleMinMaxsInfo.elementCount);
+    {
+      uint8_t* minMaxs = reinterpret_cast<uint8_t*>(baryData.triangleMinMaxs.data());
+      for (size_t i = 0; i < baryData.triangles.size(); i++)
+      {
+        minMaxs[i * 2 + 0] = 0;
+        minMaxs[i * 2 + 1] = 0xFF;
+      }
+    }
+    break;
+  case bary::Format::eR32_sfloat:
+    baryData.triangleMinMaxsInfo.elementByteSize = uint32_t(sizeof(float));
+    baryData.triangleMinMaxsInfo.elementFormat = bary::Format::eR32_sfloat;
+    baryData.triangleMinMaxs.resize(baryData.triangleMinMaxsInfo.elementByteSize * baryData.triangleMinMaxsInfo.elementCount);
+    {
+      float* minMaxs = reinterpret_cast<float*>(baryData.triangleMinMaxs.data());
+      for (size_t i = 0; i < baryData.triangles.size(); i++)
+      {
+        minMaxs[i * 2 + 0] = 0.0f;
+        minMaxs[i * 2 + 1] = 1.0f;
+      }
+    }
+    break;
+  }
+}
+
+void LoadCompressedBaryForRT(const char* fn) {
+  baryutils::BaryFileOpenOptions openOptions{};
+  baryutils::BaryFile            baryFile{};
+  bary::Result res = baryFile.open(fn, &openOptions);
+  if (res != bary::Result::eSuccess) {
+    printf("[LoadCompressedBaryForRT] Load fail. %d\n", static_cast<int>(res));
+    exit(0);
+  }
+
+  res = baryFile.validate(bary::ValueSemanticType::eDisplacement);
+  if (res != bary::Result::eSuccess) {
+    printf("[LoadCompressedBaryForRT] Verify fail. %d\n", static_cast<int>(res));
+  }
+
+  bary::Format format = baryFile.m_content.basic.valuesInfo->valueFormat;
+  printf("value format is %d\n", format);
+  switch (format) {
+    case bary::Format::eDispC1_r11_unorm_block: {
+      g_bary_displacement_attrs.compressed = std::make_unique<baryutils::BaryBasicData>();
+      g_bary_displacement_attrs.compressed->setData(baryFile.m_content.basic);
+      // check if mips in file, if so load
+      if (baryFile.getMisc().groupUncompressedMipsCount &&
+          baryFile.getMisc().triangleUncompressedMipsCount &&
+          baryFile.getMisc().uncompressedMipsInfo)
+      {
+        g_bary_displacement_attrs.compressedMisc = std::make_unique<baryutils::BaryMiscData>();
+        g_bary_displacement_attrs.compressedMisc->setData(baryFile.m_content.misc);
+      }
+
+      if (g_bary_displacement_attrs.compressed->triangleMinMaxs.empty())
+      {
+        fillDummyTriangleMinMaxs(*g_bary_displacement_attrs.compressed);
+      }
+      break;
+    }
+    default: {
+      printf("Don't know how to deal with this format ya. %d\n", format);
+      break;
+    }
+  }
+}
+
+uint32_t AlignUp(uint32_t x, uint32_t step) {
+  return step * ((x - 1) / step + 1);
+}
+
+void BuildCompressedBaryForRT() {
+  VkResult result = VK_ERROR_UNKNOWN;
+  
+  // Assume only 1 displacement set
+  if (!g_bary_displacement_attrs.compressed) {
+    printf("[BuildCompressedBaryForRT] Oh! either bary is not compressed or bary is empty.\n");
+    return;
+  }
+
+  // Just one group
+  std::vector<VkMicromapUsageEXT> *usages = &(dmm_attachment_info.usageCounts);
+
+  bary::BasicView baryDescr = g_bary_displacement_attrs.compressed->getView();
+  assert(baryDescr.groupHistogramRangesCount == 1 && "Oh! Don't know how to deal with >1 groups.");
+  usages->resize(baryDescr.groupHistogramRanges[0].entryCount);
+  const bary::HistogramEntry* histoEntries = 
+    baryDescr.histogramEntries + baryDescr.groupHistogramRanges[0].entryFirst;
+  const bary::Group& baryGroup = baryDescr.groups[0];
+  for (uint32_t i = 0; i < usages->size(); i++) {
+    usages->at(i).count = histoEntries[i].count;
+    usages->at(i).format = histoEntries[i].blockFormat;
+    usages->at(i).subdivisionLevel = histoEntries[i].subdivLevel;
+  }
+
+  // Just one build group
+  uint32_t displacementID = 0;
+  uint32_t displacementGroupID = 0;
+  uint32_t inputAlignment{ 256 };
+  uint32_t prim_offset = AlignUp(
+    baryDescr.valuesInfo->valueByteSize * baryGroup.valueCount,
+    inputAlignment
+  );
+  VkDeviceSize inputSize = prim_offset + (sizeof(VkMicromapTriangleEXT) * baryGroup.triangleCount);
+
+  VkMicromapBuildInfoEXT buildInfo{};
+  buildInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
+  buildInfo.type = VK_MICROMAP_TYPE_DISPLACEMENT_MICROMAP_NV;
+  buildInfo.flags = 0;
+  buildInfo.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+  buildInfo.dstMicromap = VK_NULL_HANDLE;
+  buildInfo.usageCountsCount = usages->size();
+  buildInfo.pUsageCounts = usages->data();
+  buildInfo.data.deviceAddress = 0;
+  buildInfo.triangleArray.deviceAddress = 0;
+  buildInfo.triangleArrayStride = 0;
+
+  VkMicromapBuildSizesInfoEXT sizeInfo{};
+  sizeInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT;
+  if (g_framework->hasDMM) {
+    PFN_vkGetMicromapBuildSizesEXT funcGetMicromapBuildSizes =
+      (PFN_vkGetMicromapBuildSizesEXT)vkGetInstanceProcAddr(
+        g_framework->instance, "vkGetMicromapBuildSizesEXT");
+    funcGetMicromapBuildSizes(g_framework->device,
+      VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &sizeInfo);
+    printf("[BuildCompressedBaryForRT] MicroMap size: %llu\n", sizeInfo.micromapSize);
+
+    g_framework->CreateBuffer(sizeInfo.micromapSize,
+      VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT
+      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+      g_micromap_buf, g_micromap_memory);
+
+    VkMicromapCreateInfoEXT mci{};
+    mci.sType = VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT;
+    mci.createFlags = 0;
+    mci.buffer = g_micromap_buf;
+    mci.offset = 0;
+    mci.size = sizeInfo.micromapSize;
+    mci.type = VK_MICROMAP_TYPE_DISPLACEMENT_MICROMAP_NV;
+    mci.deviceAddress = 0;
+
+    auto func_vkCreateMicromap = (PFN_vkCreateMicromapEXT)vkGetInstanceProcAddr(
+      g_framework->instance, "vkCreateMicromapEXT");
+    if (func_vkCreateMicromap(g_framework->device, &mci, nullptr, &(dmm_attachment_info.dmmMicromap)) != VK_SUCCESS) {
+      printf("[BuildCompressedBaryForRT] Failed to create VkMicromap\n");
+      exit(0);
+    }
+
+    VkBuffer dmmScratchBuffer{};
+    VkDeviceMemory dmmScratchMemory{};
+    g_framework->CreateBuffer(sizeInfo.buildScratchSize,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+      0,
+      dmmScratchBuffer, dmmScratchMemory);
+
+    // Organize input buffer
+    VkBuffer dmmInputBuffer{};
+    VkDeviceMemory dmmInputMemory{};
+    g_framework->CreateBuffer(inputSize,
+      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+      | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+      dmmInputBuffer, dmmInputMemory);
+    char* mapped;
+    vkMapMemory(g_framework->device, dmmInputMemory, 0, inputSize, 0, (void**)&mapped);
+    memcpy(mapped,
+      baryDescr.values + baryGroup.valueFirst * baryDescr.valuesInfo->valueByteSize,
+      baryDescr.valuesInfo->valueByteSize * baryGroup.valueCount);
+    memcpy(mapped + prim_offset,
+      baryDescr.triangles + baryGroup.triangleFirst,
+      sizeof(VkMicromapTriangleEXT) * baryGroup.triangleCount);
+    vkUnmapMemory(g_framework->device, dmmInputMemory);
+    VkDeviceAddress dmm_input_addr = g_framework->GetBufferDeviceAddress(dmmInputBuffer);
+
+    // Build it
+    VkMicromapBuildInfoEXT buildInfo{};
+    buildInfo.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
+    buildInfo.type = VK_MICROMAP_TYPE_DISPLACEMENT_MICROMAP_NV;
+    buildInfo.flags = 0;
+    buildInfo.mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT;
+    buildInfo.dstMicromap = dmm_attachment_info.dmmMicromap;
+    buildInfo.usageCountsCount = usages->size();
+    buildInfo.pUsageCounts = usages->data();
+    buildInfo.scratchData.deviceAddress = g_framework->GetBufferDeviceAddress(dmmScratchBuffer);
+    buildInfo.data.deviceAddress = dmm_input_addr;
+    buildInfo.triangleArray.deviceAddress = dmm_input_addr + prim_offset;
+    buildInfo.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
+
+    VkCommandBuffer commandBuffer = g_framework->BeginSingleTimeCommands();
+    PFN_vkCmdBuildMicromapsEXT funcCmdBuildMicromaps =
+      (PFN_vkCmdBuildMicromapsEXT)vkGetInstanceProcAddr(
+        g_framework->instance, "vkCmdBuildMicromapsEXT");
+    funcCmdBuildMicromaps(commandBuffer, 1, &buildInfo);
+    g_framework->EndSingleTimeCommands(commandBuffer);
+
+    vkDestroyBuffer(g_framework->device, dmmScratchBuffer, nullptr);
+    vkFreeMemory(g_framework->device, dmmScratchMemory, nullptr);
+    vkDestroyBuffer(g_framework->device, dmmInputBuffer, nullptr);
+    vkFreeMemory(g_framework->device, dmmInputMemory, nullptr);
+
+    // Load displacement directions
+    uint32_t ddsize = base_model.per_vertex_normals.size() * sizeof(f16vec4);
+    g_framework->CreateBuffer(ddsize,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+      g_dmm_displacement_vector_buffer, g_dmm_displacement_vector_memory);
+    {
+      vkMapMemory(g_framework->device, g_dmm_displacement_vector_memory, 0, ddsize, 0, (void**)&mapped);
+      f16vec4* ptr = reinterpret_cast<f16vec4*>(mapped);
+      for (uint32_t i = 0; i < base_model.per_vertex_normals.size(); i++) {
+        glm::vec3 nrm = base_model.per_vertex_normals[i];
+        ptr[i] = { float16_t(nrm.x), float16_t(nrm.y), float16_t(nrm.z), 0 };
+      }
+      vkUnmapMemory(g_framework->device, g_dmm_displacement_vector_memory);
+
+      dmm_attachment_info.displacementVectorBufferAddress = g_framework->GetBufferDeviceAddress(g_dmm_displacement_vector_buffer);
+      dmm_attachment_info.displacementVectorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+      dmm_attachment_info.displacementVectorStride = 8;
+    }
+
+    // Load displacement bias and scale
+    uint32_t bssize = base_model.per_vertex_normals.size() * sizeof(float) * 2;
+    g_framework->CreateBuffer(bssize,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+      g_dmm_displacement_bias_and_scale_buffer, g_dmm_displacement_bias_and_scale_memory);
+    {
+      vkMapMemory(g_framework->device, g_dmm_displacement_bias_and_scale_memory, 0, bssize, 0, (void**)&mapped);
+      float* ptr = reinterpret_cast<float*>(mapped);
+      for (uint32_t i = 0; i < base_model.per_vertex_normals.size(); i++) {
+        ptr[i*2] = 0.0f;
+        ptr[i*2 + 1] = 1.0f;
+      }
+      vkUnmapMemory(g_framework->device, g_dmm_displacement_bias_and_scale_memory);
+
+      dmm_attachment_info.displacementBiasAndScaleBufferAddress = g_framework->GetBufferDeviceAddress(g_dmm_displacement_bias_and_scale_buffer);
+      dmm_attachment_info.displacementBiasAndScaleFormat = VK_FORMAT_R32G32_SFLOAT;
+      dmm_attachment_info.displacementBiasAndScaleStride = 8;
+    }
+
+    // Manually come up with an index buffer (Tri --> micromap)
+    uint32_t ibsize = base_model.indices.size() / 3 * sizeof(uint32_t);
+    g_framework->CreateBuffer(ibsize,
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+      | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+      g_dmm_tri_idx_buffer, g_dmm_tri_idx_memory);
+    {
+      vkMapMemory(g_framework->device, g_dmm_tri_idx_memory, 0, bssize, 0, (void**)&mapped);
+      uint32_t* ptr = reinterpret_cast<uint32_t*>(mapped);
+      for (uint32_t i = 0; i < base_model.indices.size() / 3; i++) {
+        ptr[i] = i;
+      }
+      vkUnmapMemory(g_framework->device, g_dmm_tri_idx_memory);
+      dmm_attachment_info.indexBufferAddress = g_framework->GetBufferDeviceAddress(g_dmm_tri_idx_buffer);
+    }
+  }
+}
+
 int main(int argv, char** argc) {
   printf("Hey.\n");
   base_model = LoadModel("murex_romosus.obj");
@@ -1402,6 +1789,8 @@ int main(int argv, char** argc) {
   g_num_indices = base_model.indices.size();
   g_num_vertices = base_model.positions.size();
 
+  LoadCompressedBaryForRT("umesh_Murex_Romosus_compressed.bary");
+
   // InitVulkan
   g_framework->InitDeviceAndCommandQ();
   g_framework->InitSwapchain();
@@ -1410,6 +1799,8 @@ int main(int argv, char** argc) {
   g_framework->InitImGui();
   g_framework->InitImGuiRenderPass();
   g_framework->CreateImGuiFramebuffers();
+
+  BuildCompressedBaryForRT();
 
   // Create vertex buffer and index buffer
   VkBufferUsageFlags usage =
@@ -1580,7 +1971,14 @@ int main(int argv, char** argc) {
   rsli.raygen_shader = "shaders/rgen.spv";
   rsli.miss_shader = "shaders/rmiss.spv";
   rsli.in_pipeline_layout = rt_pipeline_layout;
+  rsli.use_dmm = (g_framework->hasDMM);
   g_framework->CreateMyRtPipeline(&g_my_rt_pipeline, rsli);
+
+  if (g_framework->hasDMM) {
+    MyFrameworkVk::MyRtShaderListInfo rsli_dmm = rsli;
+    rsli_dmm.closest_hit_shader = "shaders/rchit_dmm.spv";
+    g_framework->CreateMyRtPipeline(&g_my_rt_dmm_pipeline, rsli_dmm);
+  }
 
   // Blas
   g_framework->BuildBLAS(blas, blas_result_buffer, blas_result_memory, vertex_buffer, index_buffer, base_model.positions.size(), g_num_indices, sizeof(glm::vec3), nullptr, &blas_build_info);
@@ -1589,6 +1987,10 @@ int main(int argv, char** argc) {
     naive_utris_vertex_buffer, naive_utris_index_buffer,
     naive_utris.positions.size(), g_num_naive_utris_indices, sizeof(glm::vec3), nullptr, &naive_utris_blas_build_info);
   g_framework->BuildTLAS(naive_utris_tlas, { naive_utris_blas }, { naive_utris_blas_result_buffer }, naive_utris_tlas_result_buffer, naive_utris_tlas_result_memory);
+  if (g_framework->hasDMM) {
+    g_framework->BuildBLASWithDMM(dmm_blas, dmm_blas_result_buffer, dmm_blas_result_memory, vertex_buffer, index_buffer, base_model.positions.size(), g_num_indices, sizeof(glm::vec3), &dmm_attachment_info, &dmm_blas_build_info);
+    g_framework->BuildTLAS(dmm_tlas, { dmm_blas }, { dmm_blas_result_buffer }, dmm_tlas_result_buffer, dmm_tlas_result_memory);
+  }
 
   // CBV
   PerSceneUniformBuffer psub{};

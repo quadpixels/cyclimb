@@ -45,9 +45,8 @@ std::vector<const char*> deviceExtensions = {
   VK_KHR_SPIRV_1_4_EXTENSION_NAME,
   VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
   VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-  VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME,
   VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-  VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
+  //VK_NV_RAY_TRACING_VALIDATION_EXTENSION_NAME,
   VK_EXT_MESH_SHADER_EXTENSION_NAME,
   VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
 };
@@ -326,6 +325,7 @@ bool MyFrameworkVk::isDeviceSuitable(VkPhysicalDevice device) {
 
     if (checkDmmExtensionSupport(device)) {
       printf("Device supports DMM.\n");
+      hasDMM = true;
     }
     else {
       printf("Device does not support DMM.\n");
@@ -475,6 +475,14 @@ void MyFrameworkVk::createLogicalDevice() {
   else {
     createInfo.enabledLayerCount = 0;
   }
+
+  if (hasOMM) {
+    deviceExtensions.insert(deviceExtensions.end(), ommExtensions.begin(), ommExtensions.end());
+  }
+  if (hasDMM) {
+    deviceExtensions.insert(deviceExtensions.end(), dmmExtensions.begin(), dmmExtensions.end());
+  }
+
   createInfo.enabledExtensionCount = uint32_t(deviceExtensions.size());
   createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
@@ -501,9 +509,20 @@ void MyFrameworkVk::createLogicalDevice() {
   VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{};
   rayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
   if (hasOMM) {
-    rayTracingPipelineFeatures.pNext = &dmmFeatures;
+    if (hasDMM) {
+      rayTracingPipelineFeatures.pNext = &dmmFeatures;
+    }
+    else {
+      rayTracingPipelineFeatures.pNext = &rtValidationFeatures;
+    }
   } else{
-    rayTracingPipelineFeatures.pNext = &rtValidationFeatures;
+    if (hasDMM) {
+      rayTracingPipelineFeatures.pNext = &dmmFeatures;
+      dmmFeatures.pNext = &rtValidationFeatures;
+    }
+    else {
+      rayTracingPipelineFeatures.pNext = &rtValidationFeatures;
+    }
   }
 
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{};
@@ -527,7 +546,7 @@ void MyFrameworkVk::createLogicalDevice() {
   assert(bufferDeviceAddressFeatures.bufferDeviceAddress);
   //assert(accelerationStructureFeatures.accelerationStructureHostCommands);  // Does not support AS build on the host?
   assert(accelerationStructureFeatures.accelerationStructure);
-  assert(rtValidationFeatures.rayTracingValidation);
+  //assert(rtValidationFeatures.rayTracingValidation);
 
   // RT and buffer device address
   createInfo.pNext = &deviceFeatures2;
@@ -1072,6 +1091,8 @@ void MyFrameworkVk::CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline, MyRtShaderL
   }
   if (info.use_omm)
     rtPipelineCreateInfo.flags = VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT;
+  if (info.use_dmm)
+    rtPipelineCreateInfo.flags = VK_PIPELINE_CREATE_RAY_TRACING_DISPLACEMENT_MICROMAP_BIT_NV;
 
   PFN_vkCreateRayTracingPipelinesKHR funcCreateRayTracingPipelines =
     (PFN_vkCreateRayTracingPipelinesKHR)vkGetInstanceProcAddr(
@@ -1112,7 +1133,7 @@ void MyFrameworkVk::CreateMyRtPipeline(MyRtPipeline* my_rt_pipeline, MyRtShaderL
   }
   vkUnmapMemory(device, my_rt_pipeline->sbtMemory);
 
-  VkDeviceAddress sbtDeviceAddress = getBufferDeviceAddress(my_rt_pipeline->sbtBuffer);
+  VkDeviceAddress sbtDeviceAddress = GetBufferDeviceAddress(my_rt_pipeline->sbtBuffer);
 
   if (info.raygen_shader) {
     my_rt_pipeline->rtRgenRegion.deviceAddress = sbtDeviceAddress;
@@ -1179,7 +1200,7 @@ void MyFrameworkVk::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Vk
   vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
-VkDeviceAddress MyFrameworkVk::getBufferDeviceAddress(const VkBuffer& buf) {
+VkDeviceAddress MyFrameworkVk::GetBufferDeviceAddress(const VkBuffer& buf) {
   VkBufferDeviceAddressInfo addrInfo{};
   addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
   addrInfo.buffer = buf;
@@ -1601,8 +1622,17 @@ void MyFrameworkVk::EndSingleTimeCommands(VkCommandBuffer commandBuffer) {
   submitInfo.commandBufferCount = 1;
   submitInfo.pCommandBuffers = &commandBuffer;
 
-  vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-  vkQueueWaitIdle(graphicsQueue);
+  VkResult r = vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+  if (r != VK_SUCCESS) {
+    printf("vkQueueSubmit failed: %d\n", r);
+    abort();
+  }
+
+  r = vkQueueWaitIdle(graphicsQueue);
+  if (r != VK_SUCCESS) {
+    printf("vkQueueWaitIdle failed: %d\n", r);
+    abort();
+  }
 
   vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
@@ -1632,17 +1662,42 @@ void MyFrameworkVk::ImageMemoryBarrier(VkCommandBuffer commandBuffer,
     0, 0, nullptr, 0, nullptr, 1, &barrier);
 }
 
-// Vert: vec3
-// Idx:  uint32
-void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as, 
+void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
   VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
   VkBuffer vb, VkBuffer ib, uint32_t maxVertex, uint32_t indexCount,
   uint32_t vertex_stride,
   MyOmmAttachmentInfo* omminfo,
   MyASBuildInfo* mybuildinfo
+) {
+  do_BuildBLAS(as, outBlasResultBuffer, outBlasResultMemory,
+    vb, ib, maxVertex, indexCount,
+    vertex_stride, omminfo, nullptr, mybuildinfo);
+}
+
+void MyFrameworkVk::BuildBLASWithDMM(VkAccelerationStructureKHR& as,
+  VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
+  VkBuffer vb, VkBuffer ib, uint32_t maxVertex,
+  uint32_t indexCount,
+  uint32_t vertex_stride,
+  MyDmmAttachmentInfo* dmminfo,
+  MyASBuildInfo* buildinfo) {
+  do_BuildBLAS(as, outBlasResultBuffer, outBlasResultMemory,
+    vb, ib, maxVertex, indexCount,
+    vertex_stride, nullptr, dmminfo, buildinfo);
+}
+
+// Vert: vec3
+// Idx:  uint32
+void MyFrameworkVk::do_BuildBLAS(VkAccelerationStructureKHR& as, 
+  VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
+  VkBuffer vb, VkBuffer ib, uint32_t maxVertex, uint32_t indexCount,
+  uint32_t vertex_stride,
+  MyOmmAttachmentInfo* omminfo,
+  MyDmmAttachmentInfo* dmminfo,
+  MyASBuildInfo* mybuildinfo
   ) {
-  VkDeviceAddress vbDeviceAddr = getBufferDeviceAddress(vb);
-  VkDeviceAddress ibDeviceAddr = getBufferDeviceAddress(ib);
+  VkDeviceAddress vbDeviceAddr = GetBufferDeviceAddress(vb);
+  VkDeviceAddress ibDeviceAddr = GetBufferDeviceAddress(ib);
 
   VkAccelerationStructureGeometryTrianglesDataKHR asgtd{};
   asgtd.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
@@ -1680,6 +1735,8 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
   // OMM-related
   VkAccelerationStructureTrianglesOpacityMicromapEXT ommBlasDesc{};
   VkMicromapBuildInfoEXT buildDesc{};
+  VkAccelerationStructureTrianglesDisplacementMicromapNV dmmBlasDesc{};
+
   buildDesc.sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT;
   if (omminfo) {
     buildDesc.pNext = nullptr;
@@ -1741,7 +1798,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
     buildDesc.usageCountsCount = omminfo->usageCounts.size();
     buildDesc.pUsageCounts = omminfo->usageCounts.data();
     buildDesc.data.deviceAddress = omminfo->arrayBufferAddress;
-    buildDesc.scratchData.deviceAddress = getBufferDeviceAddress(ommScratchBuffer);
+    buildDesc.scratchData.deviceAddress = GetBufferDeviceAddress(ommScratchBuffer);
     buildDesc.triangleArray.deviceAddress = omminfo->arrayDescsAddress;
     buildDesc.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
 
@@ -1777,6 +1834,28 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
 
     vkDestroyBuffer(device, ommScratchBuffer, nullptr);
     vkFreeMemory(device, ommScratchMemory, nullptr);
+  }
+  if (dmminfo) {
+    dmmBlasDesc.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_DISPLACEMENT_MICROMAP_NV;
+    dmmBlasDesc.micromap = dmminfo->dmmMicromap;
+    dmmBlasDesc.usageCountsCount = dmminfo->usageCounts.size();
+    dmmBlasDesc.pUsageCounts = dmminfo->usageCounts.data();
+    dmmBlasDesc.indexType = VK_INDEX_TYPE_UINT32;
+    dmmBlasDesc.indexBuffer.deviceAddress = dmminfo->indexBufferAddress;
+    dmmBlasDesc.indexStride = sizeof(uint32_t);
+    // Todo: edge flags
+    dmmBlasDesc.displacementVectorBuffer.deviceAddress = dmminfo->displacementVectorBufferAddress;
+    dmmBlasDesc.displacementVectorStride = dmminfo->displacementVectorStride;
+    dmmBlasDesc.displacementVectorFormat = dmminfo->displacementVectorFormat;
+    dmmBlasDesc.displacementBiasAndScaleBuffer.deviceAddress = dmminfo->displacementBiasAndScaleBufferAddress;
+    dmmBlasDesc.displacementBiasAndScaleStride = dmminfo->displacementBiasAndScaleStride;
+    dmmBlasDesc.displacementBiasAndScaleFormat = dmminfo->displacementBiasAndScaleFormat;
+    if (omminfo) {
+      ommBlasDesc.pNext = &dmmBlasDesc;
+    }
+    else {
+      asg.geometry.triangles.pNext = &dmmBlasDesc;
+    }
   }
 
   uint32_t primCount{ asbri.primitiveCount };
@@ -1817,7 +1896,7 @@ void MyFrameworkVk::BuildBLAS(VkAccelerationStructureKHR& as,
     mybuildinfo->as_size = asBuildSizeInfo.accelerationStructureSize;
   }
   
-  asbgi.scratchData.deviceAddress = getBufferDeviceAddress(blasScratchBuffer);
+  asbgi.scratchData.deviceAddress = GetBufferDeviceAddress(blasScratchBuffer);
 
   VkAccelerationStructureCreateInfoKHR blasCreateInfo{};
   blasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
@@ -1906,7 +1985,7 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas,
   // Get BLASes' address
   std::vector<VkDeviceAddress> blas_addresses(N);
   for (uint32_t i = 0; i < N; i++) {
-    VkDeviceAddress blas_result_device_addr = getBufferDeviceAddress(blas_buffers[i]);
+    VkDeviceAddress blas_result_device_addr = GetBufferDeviceAddress(blas_buffers[i]);
     VkDeviceAddress blas_as_addr{};
 
     VkAccelerationStructureDeviceAddressInfoKHR blasAddrInfo{};
@@ -1944,7 +2023,7 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas,
   instData.flags = 0;// VK_GEOMETRY_OPAQUE_BIT_KHR;
   instData.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
   instData.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-  instData.geometry.instances.data.deviceAddress = getBufferDeviceAddress(tlasInstancesBuffer);
+  instData.geometry.instances.data.deviceAddress = GetBufferDeviceAddress(tlasInstancesBuffer);
 
   // TLAS Inst Info
   VkAccelerationStructureBuildGeometryInfoKHR buildInstInfo{};
@@ -2010,7 +2089,7 @@ void MyFrameworkVk::BuildTLAS(VkAccelerationStructureKHR& outTlas,
   buildRangeInfo.primitiveCount = N;  // instance count
   buildRangeInfo.primitiveOffset = 0;
   buildRangeInfo.transformOffset = 0;
-  buildInstInfo.scratchData.deviceAddress = getBufferDeviceAddress(tlasScratchBuffer);
+  buildInstInfo.scratchData.deviceAddress = GetBufferDeviceAddress(tlasScratchBuffer);
   buildInstInfo.dstAccelerationStructure = outTlas;
   VkAccelerationStructureBuildRangeInfoKHR* const buildRangeInfos[] = { &buildRangeInfo };
 

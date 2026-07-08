@@ -85,5 +85,8 @@
     <CustomBuild Include="shaders\meshshading.frag">
       <Filter>Resource Files</Filter>
     </CustomBuild>
+    <CustomBuild Include="shaders\raytrace_dmm.rchit">
+      <Filter>Resource Files</Filter>
+    </CustomBuild>
   </ItemGroup>
 </Project>

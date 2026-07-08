@@ -32,6 +32,7 @@ public:
     const char* miss_shader{};
     const char* anyhit_shader{};
     bool use_omm{};  // Sets VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT
+    bool use_dmm{};  // Sets VK_PIPELINE_CREATE_RAY_TRACING_DISPLACEMENT_MICROMAP_BIT_EXT
 
     VkPipelineLayout in_pipeline_layout{VK_NULL_HANDLE};  // Use this pipeline layout, otherwise create a sample one
   };
@@ -59,8 +60,22 @@ public:
     std::vector<VkMicromapUsageEXT> usageCounts;
     std::vector<VkMicromapUsageEXT> indexHistograms;
 
-    // Output
     VkMicromapEXT outOmmArray;
+  };
+
+  struct MyDmmAttachmentInfo {
+    VkDeviceAddress displacementVectorBufferAddress;
+    uint32_t displacementVectorStride;
+    VkFormat displacementVectorFormat;
+    VkDeviceAddress displacementBiasAndScaleBufferAddress;
+    uint32_t displacementBiasAndScaleStride;
+    VkFormat displacementBiasAndScaleFormat;
+
+    VkDeviceAddress indexBufferAddress;
+    uint32_t num_idxes;
+
+    std::vector<VkMicromapUsageEXT> usageCounts;
+    VkMicromapEXT dmmMicromap;
   };
 
   struct MyASBuildInfo {
@@ -106,6 +121,13 @@ public:
     uint32_t vertex_stride = sizeof(float)*3,
     MyOmmAttachmentInfo* omminfo = nullptr,
     MyASBuildInfo* buildinfo = nullptr);
+  void BuildBLASWithDMM(VkAccelerationStructureKHR& as,
+    VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
+    VkBuffer vb, VkBuffer ib, uint32_t maxVertex,
+    uint32_t indexCount,
+    uint32_t vertex_stride = sizeof(float) * 3,
+    MyDmmAttachmentInfo* dmminfo = nullptr,
+    MyASBuildInfo* buildinfo = nullptr);
   void BuildTLAS(VkAccelerationStructureKHR& outTlas,
     const VkAccelerationStructureKHR& blas0, const VkBuffer& blas0Buffer,
     VkBuffer& outTlasResultBuffer, VkDeviceMemory& outTlasResultMemory
@@ -125,6 +147,7 @@ public:
   void CreateSyncObjects();
   VkCommandBuffer BeginSingleTimeCommands();
   void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
+  VkDeviceAddress GetBufferDeviceAddress(const VkBuffer& buf);
 
 private:
   void createInstance();
@@ -145,7 +168,6 @@ private:
   VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
   void createCommandPool();
   void createCommandBuffer();
-  VkDeviceAddress getBufferDeviceAddress(const VkBuffer& buf);
   uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
   void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
   void setObjectName(uint64_t handle, VkObjectType type, const char* name);
@@ -154,6 +176,14 @@ private:
   void createDepthResources();
   VkFormat findDepthFormat();
   VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
+  void do_BuildBLAS(VkAccelerationStructureKHR& as,
+    VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
+    VkBuffer vb, VkBuffer ib, uint32_t maxVertex,
+    uint32_t indexCount,
+    uint32_t vertex_stride = sizeof(float) * 3,
+    MyOmmAttachmentInfo* omminfo = nullptr,
+    MyDmmAttachmentInfo* dmminfo = nullptr,
+    MyASBuildInfo* buildinfo = nullptr);
 
 public:
   GLFWwindow* window{};
@@ -163,6 +193,7 @@ public:
   VkSurfaceKHR surface;
   VkPhysicalDevice physicalDevice;
   bool hasOMM{ false };
+  bool hasDMM{ false };
   VkDevice device;
   VkQueue graphicsQueue, presentQueue;
   uint32_t width, height;
