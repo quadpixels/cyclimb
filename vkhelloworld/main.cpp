@@ -327,7 +327,10 @@ private:
     createGraphicsPipeline();
     g_framework->CreateImGuiFramebuffers();
     imguiFramebuffers = g_framework->imguiFramebuffers;
-    createSyncObjects();
+    g_framework->CreateSyncObjects();
+    inFlightFence = g_framework->inFlightFence;
+    imageAvailableSemaphore = g_framework->imageAvailableSemaphore[0];
+    renderFinishedSemaphore = g_framework->renderFinishedSemaphore;
     createAS();
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
       g_framework->CreateRtOutputResource(WIDTH, HEIGHT, rtOutputImages[i], rtOutputImageMemories[i], rtOutputImageViews[i]);
@@ -336,7 +339,6 @@ private:
     createRtDescriptorPool();
     createRtDescriptorSets();
     createRtPipeline();
-    createRtSBT();
   }
 
   void initImGui() {
@@ -1245,34 +1247,8 @@ private:
         instance, "vkCmdTraceRaysKHR");
     funcCmdTraceRaysKHR(commandBuffer, &rtRgenRegion, &rtMissRegion, &rtHitRegion, &rtCallRegion, WIDTH, HEIGHT, 1);
 
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barrier.image = rtOutputImages[imageIndex];
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    vkCmdPipelineBarrier(commandBuffer,
-      VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-      VK_PIPELINE_STAGE_TRANSFER_BIT,
-      0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.image = swapChainImages[imageIndex];
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(commandBuffer,
-      VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-      VK_PIPELINE_STAGE_TRANSFER_BIT,
-      0, 0, nullptr, 0, nullptr, 1, &barrier);
+    g_framework->CmdTransitionImageLayout(commandBuffer, rtOutputImages[imageIndex], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    g_framework->CmdTransitionImageLayout(commandBuffer, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
     VkImageBlit blit{};
     blit.srcOffsets[1] = { WIDTH, HEIGHT, 1 };
@@ -1287,26 +1263,8 @@ private:
       swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       1, &blit, VK_FILTER_LINEAR);
 
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask =
-      VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-      VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    vkCmdPipelineBarrier(commandBuffer,
-      VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.dstAccessMask = 0;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrier.image = rtOutputImages[imageIndex];
-    vkCmdPipelineBarrier(commandBuffer,
-      VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-      0, 0, nullptr, 0, nullptr, 1, &barrier);
+    g_framework->CmdTransitionImageLayout(commandBuffer, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    g_framework->CmdTransitionImageLayout(commandBuffer, rtOutputImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
 
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -1319,6 +1277,8 @@ private:
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     renderImGuiAndEndImGuiForFrame();
     vkCmdEndRenderPass(commandBuffer);
+
+    // Imgui render pass automatiacally transitions i
 
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
       throw std::runtime_error("Could not end RT command buffer");
@@ -1396,89 +1356,41 @@ private:
 
   }
 
-  void createSyncObjects() {
-    VkSemaphoreCreateInfo semaphoreInfo{};
-    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to create semaphore");
-    }
-    setObjectName((uint64_t)imageAvailableSemaphore, VK_OBJECT_TYPE_SEMAPHORE, "Image Available Semaphore");
-
-    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to create semaphore");
-    }
-    setObjectName((uint64_t)renderFinishedSemaphore, VK_OBJECT_TYPE_SEMAPHORE, "Render Finished Semaphore");
-
-    VkFenceCreateInfo fenceInfo{};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    if (vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to create fence");
-    }
-  }
-
   void createVertexBuffer() {
-    VkBufferCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    createInfo.size = sizeof(Vertex) * g_vertices.size();
-    createInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+    VkBufferUsageFlags usage =
+      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
       | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-      | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
       | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
       | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &createInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create vertex buffer");
-    }
 
-    VkMemoryRequirements memReq{};
-    vkGetBufferMemoryRequirements(device, vertexBuffer, &memReq);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memReq.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+    size_t vb_size = sizeof(Vertex) * g_vertices.size();
+    g_framework->CreateBuffer(vb_size,
+      usage,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
-    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-    allocInfo.pNext = &allocFlagsInfo;
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for vertex buffer");
-    }
-
-    vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      vertexBuffer, vertexBufferMemory);
 
     void* data;
-    vkMapMemory(device, vertexBufferMemory, 0, createInfo.size, 0, &data);
+    vkMapMemory(device, vertexBufferMemory, 0, vb_size, 0, &data);
     memcpy(data, g_vertices.data(), sizeof(Vertex) * g_vertices.size());
     vkUnmapMemory(device, vertexBufferMemory);
 
     // Index Buffer
-    createInfo.size = sizeof(uint32_t) * 3;
-    if (vkCreateBuffer(device, &createInfo, nullptr, &indexBuffer0) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create index buffer 0");
-    }
-    if (vkCreateBuffer(device, &createInfo, nullptr, &indexBuffer1) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create index buffer 0");
-    }
-    vkGetBufferMemoryRequirements(device, indexBuffer0, &memReq);
-    allocInfo.allocationSize = memReq.size;
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &indexBuffer0Memory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for index buffer");
-    }
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &indexBuffer1Memory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for index buffer");
-    }
-    vkBindBufferMemory(device, indexBuffer0, indexBuffer0Memory, 0);
-    vkBindBufferMemory(device, indexBuffer1, indexBuffer1Memory, 0);
+    g_framework->CreateBuffer(sizeof(uint32_t) * 3,
+      usage,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      indexBuffer0, indexBuffer0Memory);
+
+    g_framework->CreateBuffer(sizeof(uint32_t) * 3,
+      usage,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      indexBuffer1, indexBuffer1Memory);
+
     std::vector<uint32_t> indices;
     for (uint32_t i = 0; i < 3; i++) {
       indices.push_back(i);
@@ -1944,7 +1856,7 @@ private:
   }
 
   void createRtPipeline() {
-    // Layout
+    // 1. Layout
     VkPipelineLayoutCreateInfo rtPipelineLayoutInfo{};
     rtPipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     rtPipelineLayoutInfo.setLayoutCount = 2;
@@ -1959,187 +1871,23 @@ private:
       throw std::runtime_error("Could not create rt pipeline layout");
     }
 
-    VkPipelineShaderStageCreateInfo stages[4]{};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].pName = "main";
-    stages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[2].pName = "main";
-    stages[3].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[3].pName = "main";
+    // 2. Pipeline (needs Layout)
+    MyFrameworkVk::MyRtShaderListInfo rsli{};
+    rsli.raygen_shader = "shaders/rgen.spv";
+    rsli.closest_hit_shader = "shaders/rchit.spv";
+    rsli.anyhit_shader = "shaders/rahit.spv";
+    rsli.miss_shader = "shaders/rmiss.spv";
+    rsli.use_omm = true;
+    rsli.in_pipeline_layout = rtPipelineLayout;
+    MyFrameworkVk::MyRtPipeline rtpipe;
+    g_framework->CreateMyRtPipeline(&rtpipe, rsli);
+    rtPipeline = rtpipe.rtPipeline;
 
-    // RayGen
-    std::vector<char> raygenShaderCode = readFile("shaders/rgen.spv");
-    VkShaderModule raygenShaderModule = createShaderModule(raygenShaderCode);
-    stages[0].module = raygenShaderModule;
-    stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    std::vector<char> rchitShaderCode = readFile("shaders/rchit.spv");
-    VkShaderModule rchitShaderModule = createShaderModule(rchitShaderCode);
-    stages[1].module = rchitShaderModule;
-    stages[1].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-    std::vector<char> rmissShaderCode = readFile("shaders/rmiss.spv");
-    VkShaderModule rmissShaderModule = createShaderModule(rmissShaderCode);
-    stages[2].module = rmissShaderModule;
-    stages[2].stage = VK_SHADER_STAGE_MISS_BIT_KHR;
-    std::vector<char> rahitShaderCode = readFile("shaders/rahit.spv");
-    VkShaderModule rahitShaderModule = createShaderModule(rahitShaderCode);
-    stages[3].module = rahitShaderModule;
-    stages[3].stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+    rtRgenRegion = rtpipe.rtRgenRegion;
+    rtHitRegion = rtpipe.rtHitRegion;
+    rtMissRegion = rtpipe.rtMissRegion;
 
-    // Shader Group / HitGroup?
-    VkRayTracingShaderGroupCreateInfoKHR shaderGroupInfos[3]{};
-    shaderGroupInfos[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-    shaderGroupInfos[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-    shaderGroupInfos[0].anyHitShader = VK_SHADER_UNUSED_KHR;
-    shaderGroupInfos[0].closestHitShader = VK_SHADER_UNUSED_KHR;
-    shaderGroupInfos[0].generalShader = 0;  // Raygen
-    shaderGroupInfos[0].intersectionShader = VK_SHADER_UNUSED_KHR;
-
-    shaderGroupInfos[1] = shaderGroupInfos[0];
-    shaderGroupInfos[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-    shaderGroupInfos[1].generalShader = VK_SHADER_UNUSED_KHR;
-    shaderGroupInfos[1].closestHitShader = 1;
-    shaderGroupInfos[1].anyHitShader = 3;
-
-    shaderGroupInfos[2] = shaderGroupInfos[1];
-    shaderGroupInfos[2].anyHitShader = VK_SHADER_UNUSED_KHR;
-    shaderGroupInfos[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-    shaderGroupInfos[2].generalShader = 2;  // Miss
-    shaderGroupInfos[2].closestHitShader = VK_SHADER_UNUSED_KHR;
-
-    VkRayTracingPipelineCreateInfoKHR rtPipelineCreateInfo{};
-    rtPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    rtPipelineCreateInfo.flags = 0;
-    rtPipelineCreateInfo.stageCount = _countof(stages);
-    rtPipelineCreateInfo.pStages = stages;
-    rtPipelineCreateInfo.groupCount = _countof(shaderGroupInfos);
-    rtPipelineCreateInfo.pGroups = shaderGroupInfos;
-    rtPipelineCreateInfo.maxPipelineRayRecursionDepth = 1;
-    rtPipelineCreateInfo.pLibraryInfo = nullptr;
-    rtPipelineCreateInfo.pLibraryInterface = nullptr;
-    rtPipelineCreateInfo.pDynamicState = nullptr;
-    rtPipelineCreateInfo.layout = rtPipelineLayout;
-    rtPipelineCreateInfo.flags = VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT;
-
-    PFN_vkCreateRayTracingPipelinesKHR funcCreateRayTracingPipelines =
-      (PFN_vkCreateRayTracingPipelinesKHR)vkGetInstanceProcAddr(
-        instance, "vkCreateRayTracingPipelinesKHR");
-    assert(funcCreateRayTracingPipelines);
-    if (funcCreateRayTracingPipelines(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtPipelineCreateInfo, nullptr, &rtPipeline) != VK_SUCCESS) {
-      throw std::runtime_error("Could not create RT pipeline");
-    }
-
-    vkDestroyShaderModule(device, raygenShaderModule, nullptr);
-    vkDestroyShaderModule(device, rmissShaderModule, nullptr);
-    vkDestroyShaderModule(device, rchitShaderModule, nullptr);
-    vkDestroyShaderModule(device, rahitShaderModule, nullptr);
-  }
-
-  void createRtSBT() {
-    const size_t sbtSize = 32;  // arbitrarily chosen
-    const size_t sbtAlignment = 64;
-    const size_t numSBTs = 3;   // Rgen, closest-hit, miss
-
-    VkBufferCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    createInfo.size = sbtAlignment * numSBTs;
-    createInfo.usage =
-      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-      | VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
-      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-      | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    if (vkCreateBuffer(device, &createInfo, nullptr, &sbtBuffer) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to create SBT buffer");
-    }
-
-    VkMemoryRequirements memReq{};
-    vkGetBufferMemoryRequirements(device, sbtBuffer, &memReq);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = std::max(memReq.size, sbtSize);
-    allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-      | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    VkMemoryAllocateFlagsInfo allocFlagsInfo{};
-    allocFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-    allocFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-    allocInfo.pNext = &allocFlagsInfo;
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &sbtMemory) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate memory for SBT");
-    }
-    vkBindBufferMemory(device, sbtBuffer, sbtMemory, 0);
-
-    VkBufferDeviceAddressInfo sbtDevAddrInfo{};
-    sbtDevAddrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-    sbtDevAddrInfo.buffer = sbtBuffer;
-    VkDeviceAddress sbtDeviceAddress = vkGetBufferDeviceAddress(device, &sbtDevAddrInfo);
-
-    char shaderGroupHandle[sbtSize * numSBTs]{};
-    PFN_vkGetRayTracingShaderGroupHandlesKHR funcGetRayTracingShaderGroupHandlesKHR =
-      (PFN_vkGetRayTracingShaderGroupHandlesKHR)vkGetInstanceProcAddr(
-        instance, "vkGetRayTracingShaderGroupHandlesKHR");
-    if (funcGetRayTracingShaderGroupHandlesKHR(device, rtPipeline, 0, numSBTs, sbtSize * numSBTs, shaderGroupHandle) != VK_SUCCESS) {
-      throw std::runtime_error("Could not get RT shader group handles");
-    }
-
-    uint8_t* mapped{};
-    vkMapMemory(device, sbtMemory, 0, sbtSize * numSBTs, 0, (void**)&mapped);
-    memcpy(mapped, shaderGroupHandle, sbtSize);  // rgen
-    memcpy(mapped + sbtAlignment, shaderGroupHandle + sbtSize, sbtSize);  // hit
-    memcpy(mapped + sbtAlignment * 2, shaderGroupHandle + sbtSize * 2, sbtSize);  // miss
-    vkUnmapMemory(device, sbtMemory);
-
-    // Stolen from ChatGPT
-    rtRgenRegion.deviceAddress = sbtDeviceAddress;
-    rtRgenRegion.size = sbtSize;
-    rtRgenRegion.stride = sbtSize;
-
-    rtHitRegion.deviceAddress = sbtDeviceAddress + sbtAlignment;
-    rtHitRegion.size = sbtSize;
-    rtHitRegion.stride = sbtSize;
-
-    rtMissRegion.deviceAddress = sbtDeviceAddress + sbtAlignment * 2;
-    rtMissRegion.size = sbtSize;
-    rtMissRegion.stride = sbtSize;
-  }
-
-  void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent.width = width;
-    imageInfo.extent.height = height;
-    imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = format;
-    imageInfo.tiling = tiling;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = usage;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateImage(device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
-      throw std::runtime_error("failed to create image!");
-    }
-
-    VkMemoryRequirements memRequirements;
-    vkGetImageMemoryRequirements(device, image, &memRequirements);
-
-    VkMemoryAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
-      throw std::runtime_error("failed to allocate image memory!");
-    }
-
-    vkBindImageMemory(device, image, imageMemory, 0);
+    return;
   }
 
   void createTextureImage() {
@@ -2191,65 +1939,20 @@ private:
   }
 
   void createDescriptorPool() {
-    VkDescriptorPoolSize poolSizes[2]{};
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[0].descriptorCount = 2;
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[1].descriptorCount = 1;
-    VkDescriptorPoolCreateInfo poolInfo{};
-
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = _countof(poolSizes);
-    poolInfo.pPoolSizes = poolSizes;
-    poolInfo.maxSets = 1;
-    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to create descriptor pool");
-    }
+    descriptorPool = g_framework->CreateCBVSRVUAVPool(
+      {
+        { VkDescriptorType::VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 },
+        { VkDescriptorType::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 }
+      },
+      1
+    );
   }
 
   void createDescriptorSets() {
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    std::vector<VkDescriptorSetLayout> layouts(1, descriptorSetLayout);
-    allocInfo.pSetLayouts = layouts.data();
-    if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets) != VK_SUCCESS) {
-      throw std::runtime_error("Failed to allocate descriptor sets");
-    }
-
-    // Update combined image and sampler to descriptor set
-    VkDescriptorImageInfo imageInfo[2]{};
-    imageInfo[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo[0].imageView = diffMapImageView[0];
-    imageInfo[0].sampler = textureSampler;
-    imageInfo[1] = imageInfo[0];
-    imageInfo[1].imageView = alphaMapImageView[0];
-
-    VkWriteDescriptorSet writeDesc[3]{};
-    writeDesc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writeDesc[0].dstSet = descriptorSets[0];
-    writeDesc[0].dstBinding = 0;
-    writeDesc[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writeDesc[0].descriptorCount = 1;
-    writeDesc[0].pImageInfo = &imageInfo[0];
-    writeDesc[1] = writeDesc[0];
-    writeDesc[1].dstBinding = 1;
-    writeDesc[1].pImageInfo = &imageInfo[1];
-
-    VkDescriptorBufferInfo dbi{};
-    dbi.buffer = vertexBuffer;
-    dbi.offset = 0;
-    dbi.range = sizeof(Vertex) * g_vertices.size();
-    writeDesc[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writeDesc[2].dstSet = descriptorSets[0];
-    writeDesc[2].dstBinding = 2;
-    writeDesc[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    writeDesc[2].descriptorCount = 1;
-    writeDesc[2].pBufferInfo = &dbi;
-
-    vkUpdateDescriptorSets(device, _countof(writeDesc), writeDesc, 0, nullptr);
+    descriptorSets[0] = g_framework->CreateDescriptorSet(descriptorSetLayout, descriptorPool);
+    g_framework->CreateSRVCombinedImageSampler(diffMapImageView[0], textureSampler, descriptorSets[0], 0);
+    g_framework->CreateSRVCombinedImageSampler(alphaMapImageView[0], textureSampler, descriptorSets[0], 1);
+    g_framework->CreateCBVBuffer(vertexBuffer, 0, sizeof(Vertex) * g_vertices.size(), descriptorSets[0], 2);
   }
 
   void initNvrhiOnce()
