@@ -189,6 +189,8 @@ public:
   GLFWwindow* window{};
   std::string appName;
   VkInstance instance;
+  std::string deviceName;
+  uint32_t driverVersion[3];
   VkDebugUtilsMessengerEXT debugMessenger;
   VkSurfaceKHR surface;
   VkPhysicalDevice physicalDevice;

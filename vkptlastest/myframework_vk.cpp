@@ -241,6 +241,11 @@ void MyFrameworkVk::pickPhysicalDevice() {
     printf("Device: %s ", props.deviceName);
     if (d == physicalDevice) {
       printf("  <----- Chosen");
+      deviceName = std::string(props.deviceName);
+      uint32_t v = props.driverVersion;
+      driverVersion[0] = VK_VERSION_MAJOR(v);
+      driverVersion[1] = VK_VERSION_MINOR(v);
+      driverVersion[2] = VK_VERSION_PATCH(v);
     }
     printf("\n");
   }

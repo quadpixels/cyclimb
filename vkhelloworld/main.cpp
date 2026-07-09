@@ -1686,9 +1686,9 @@ private:
     }
 
     g_framework->BuildBLAS(blas0, blasResultBuffer0, blasResultMemory0,
-      vertexBuffer, indexBuffer0, 3, sizeof(Vertex), p_ommas[0]);
+      vertexBuffer, indexBuffer0, 3, 3, sizeof(Vertex), p_ommas[0]);
     g_framework->BuildBLAS(blas1, blasResultBuffer1, blasResultMemory1,
-      vertexBuffer, indexBuffer1, 3, sizeof(Vertex), p_ommas[1]);
+      vertexBuffer, indexBuffer1, 3, 3, sizeof(Vertex), p_ommas[1]);
 
     VkBufferDeviceAddressInfo addrInfo{};
     addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;

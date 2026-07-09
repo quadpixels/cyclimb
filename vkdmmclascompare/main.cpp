@@ -1,3 +1,7 @@
+// Can work on:
+// RTX3060 and driver 532.112.0
+// 
+
 #include <stdio.h>
 
 #include <memory>
@@ -401,6 +405,10 @@ void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
   ImGui::SetNextWindowSize(ImVec2(360, 320), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(32, 32), ImGuiCond_Once);
   ImGui::Begin("DMM vs regular vs Cluster Test.");
+  ImGui::Text("Device: %s", g_framework->deviceName.c_str());
+  ImGui::Text("Driver: %u.%u.%u",
+    g_framework->driverVersion[0], g_framework->driverVersion[1], g_framework->driverVersion[2]);
+  ImGui::Separator();
   ImGui::Text("Viz mode");
 
   char buf[100];
