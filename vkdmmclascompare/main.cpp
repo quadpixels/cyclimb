@@ -1,4 +1,4 @@
-// Can work on:
+// DMM RT Can work on:
 // RTX3060 and driver 532.112.0
 // 
 
@@ -158,6 +158,16 @@ struct f16vec4
   float16_t z;
   float16_t w;
 };
+
+// Cluster
+VkAccelerationStructureKHR clustered_blas;
+VkBuffer clustered_blas_result_buffer;
+VkDeviceMemory clustered_blas_result_memory;
+VkAccelerationStructureKHR clustered_tlas;
+VkBuffer clustered_tlas_result_buffer;
+VkDeviceMemory clustered_tlas_result_memory;
+static MyFrameworkVk::MyRtPipeline g_my_rt_clas_pipeline;
+static MyFrameworkVk::MyASBuildInfo clustered_blas_build_info;
 
 struct PerSceneUniformBuffer {
   glm::mat4 M, V, P;
@@ -424,6 +434,13 @@ void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
     ImGui::RadioButton(buf, &g_viz_mode, 6);
   }
 
+  if (g_framework->hasCLAS) {
+    snprintf(buf, sizeof(buf), "RT CLAS, AS size %zu, Clusters %zu",
+      clustered_blas_build_info.as_size,
+      clustered_blas_build_info.clusters_size);
+    ImGui::RadioButton(buf, &g_viz_mode, 7);
+  }
+
   snprintf(buf, sizeof(buf), "RT Utris, AS size %zu", naive_utris_blas_build_info.as_size);
   ImGui::RadioButton(buf, &g_viz_mode, 3);
   snprintf(buf, sizeof(buf), "Mesh shading base mesh");
@@ -525,6 +542,9 @@ void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     g_framework->CreateUAVBuffer(vertex_buffer, 0, sizeof(glm::vec3) * g_num_vertices, rt_descriptor_set, 3);
     g_framework->CreateUAVBuffer(index_buffer, 0, sizeof(uint32_t) * g_num_indices, rt_descriptor_set, 4);
   }
+  else if (g_viz_mode == 7) {
+    g_framework->CreateSRVAccelerationStructure(clustered_tlas, rt_descriptor_set, 0);
+  }
 
   VkCommandBufferBeginInfo beginInfo{};
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -535,10 +555,19 @@ void recordRtCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
   }
 
   MyFrameworkVk::MyRtPipeline* rtpipeline{};
-  if (g_viz_mode == 6) {
-    rtpipeline = &g_my_rt_dmm_pipeline;
-  } else {
-    rtpipeline = &g_my_rt_pipeline;
+  switch (g_viz_mode) {
+    case 7: {
+      rtpipeline = &g_my_rt_clas_pipeline;
+      break;
+    }
+    case 6: {
+      rtpipeline = &g_my_rt_dmm_pipeline;
+      break;
+    }
+    default: {
+      rtpipeline = &g_my_rt_pipeline;
+      break;
+    }
   }
   vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtpipeline->rtPipeline);
   vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline_layout, 0, 1, &rt_descriptor_set, 0, nullptr);
@@ -722,7 +751,7 @@ void DrawFrame() {
       recordCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
-    case 2: case 3: case 6: {
+    case 2: case 3: case 6: case 7: {
       recordRtCommandBuffer(g_framework->commandBuffer, imageIndex);
       break;
     }
@@ -1033,6 +1062,40 @@ MyModelStuff PopulateDisplacedMicroTriangles(
   g_num_naive_utris_indices = ret.indices.size();
   g_num_naive_utris_vertices = ret.positions.size();
   ret.CalculateNormals();
+  return ret;
+}
+
+// Pack tris into clusters, and find uniq verts in the process
+std::vector<MyFrameworkVk::VertexAndIndex> PackTrianglesIntoClusters(const MyModelStuff& model, uint32_t ntri_per_cluster) {
+  std::vector<MyFrameworkVk::VertexAndIndex> ret;
+
+  MyFrameworkVk::VertexAndIndex curr_vi;
+  uint32_t nidxes = model.indices.size();
+  uint32_t iidx = 0;
+  while (iidx <= nidxes) {
+    if (curr_vi.indices.size() >= ntri_per_cluster * 3 || iidx == nidxes) {
+      ret.push_back(curr_vi);
+      curr_vi = MyFrameworkVk::VertexAndIndex();
+    }
+    if (iidx == nidxes) {
+      break;
+    }
+    uint32_t i0 = model.indices[iidx];
+    uint32_t i1 = model.indices[iidx + 1];
+    uint32_t i2 = model.indices[iidx + 2];
+    glm::vec3 v0 = model.positions[i0];
+    glm::vec3 v1 = model.positions[i1];
+    glm::vec3 v2 = model.positions[i2];
+
+    curr_vi.vertices.push_back(v0);
+    curr_vi.vertices.push_back(v1);
+    curr_vi.vertices.push_back(v2);
+    curr_vi.indices.push_back(curr_vi.indices.size());
+    curr_vi.indices.push_back(curr_vi.indices.size());
+    curr_vi.indices.push_back(curr_vi.indices.size());
+    iidx += 3;
+  }
+  printf("[PackTrianglesIntoClusters] %zu clusters.\n", ret.size());
   return ret;
 }
 
@@ -1579,7 +1642,7 @@ void LoadCompressedBaryForRT(const char* fn) {
   }
 }
 
-uint32_t AlignUp(uint32_t x, uint32_t step) {
+static uint32_t AlignUp(uint32_t x, uint32_t step) {
   return step * ((x - 1) / step + 1);
 }
 
@@ -1808,7 +1871,17 @@ int main(int argv, char** argc) {
   g_framework->InitImGuiRenderPass();
   g_framework->CreateImGuiFramebuffers();
 
-  BuildCompressedBaryForRT();
+  // DMM
+  if (g_framework->hasDMM) {
+    BuildCompressedBaryForRT();
+  }
+
+  // Cluster
+  if (g_framework->hasCLAS) {
+    std::vector<MyFrameworkVk::VertexAndIndex> clusters = PackTrianglesIntoClusters(naive_utris, 64);
+    g_framework->BuildClusteredBLAS(clustered_blas, clustered_blas_result_buffer, clustered_blas_result_memory, clusters, &clustered_blas_build_info);
+    g_framework->BuildTLAS(clustered_tlas, { clustered_blas }, { clustered_blas_result_buffer }, clustered_tlas_result_buffer, clustered_tlas_result_memory);
+  }
 
   // Create vertex buffer and index buffer
   VkBufferUsageFlags usage =
@@ -1986,6 +2059,13 @@ int main(int argv, char** argc) {
     MyFrameworkVk::MyRtShaderListInfo rsli_dmm = rsli;
     rsli_dmm.closest_hit_shader = "shaders/rchit_dmm.spv";
     g_framework->CreateMyRtPipeline(&g_my_rt_dmm_pipeline, rsli_dmm);
+  }
+
+  if (g_framework->hasCLAS) {
+    MyFrameworkVk::MyRtShaderListInfo rsli_clas = rsli;
+    rsli_clas.closest_hit_shader = "shaders/rchit_clas.spv";
+    rsli_clas.use_clas = true;
+    g_framework->CreateMyRtPipeline(&g_my_rt_clas_pipeline, rsli_clas);
   }
 
   // Blas

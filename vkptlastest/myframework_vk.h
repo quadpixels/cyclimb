@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include <glm/glm.hpp>
+
 class MyFrameworkVk {
 public:
   struct SwapChainSupportDetails {
@@ -33,6 +35,7 @@ public:
     const char* anyhit_shader{};
     bool use_omm{};  // Sets VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT
     bool use_dmm{};  // Sets VK_PIPELINE_CREATE_RAY_TRACING_DISPLACEMENT_MICROMAP_BIT_EXT
+    bool use_clas{};
 
     VkPipelineLayout in_pipeline_layout{VK_NULL_HANDLE};  // Use this pipeline layout, otherwise create a sample one
   };
@@ -78,8 +81,20 @@ public:
     VkMicromapEXT dmmMicromap;
   };
 
+  // Cluster
+  struct VertexAndIndex {
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+    std::vector<VkClusterAccelerationStructureGeometryIndexAndGeometryFlagsNV> geom_idx_and_flags;
+
+    uint32_t vert_offset;
+    uint32_t index_offset;
+    uint32_t gigf_offset;
+  };
+
   struct MyASBuildInfo {
-    size_t as_size;
+    size_t as_size{};
+    size_t clusters_size{};
   };
 
   // Shared by all scenes.
@@ -128,6 +143,11 @@ public:
     uint32_t vertex_stride = sizeof(float) * 3,
     MyDmmAttachmentInfo* dmminfo = nullptr,
     MyASBuildInfo* buildinfo = nullptr);
+  void BuildClusteredBLAS(
+    VkAccelerationStructureKHR& as,
+    VkBuffer& outBlasResultBuffer, VkDeviceMemory& outBlasResultMemory,
+    std::vector<VertexAndIndex>& clusters,  // Will modify offsets
+    MyASBuildInfo* buildinfo = nullptr);
   void BuildTLAS(VkAccelerationStructureKHR& outTlas,
     const VkAccelerationStructureKHR& blas0, const VkBuffer& blas0Buffer,
     VkBuffer& outTlasResultBuffer, VkDeviceMemory& outTlasResultMemory
@@ -163,6 +183,7 @@ private:
   bool checkDeviceExtensionSupport(VkPhysicalDevice device);
   bool checkOmmExtensionSupport(VkPhysicalDevice device);
   bool checkDmmExtensionSupport(VkPhysicalDevice device);
+  bool checkClasExtensionSupport(VkPhysicalDevice device);
   VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
   VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
   VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
@@ -196,6 +217,7 @@ public:
   VkPhysicalDevice physicalDevice;
   bool hasOMM{ false };
   bool hasDMM{ false };
+  bool hasCLAS{ false };
   VkDevice device;
   VkQueue graphicsQueue, presentQueue;
   uint32_t width, height;
