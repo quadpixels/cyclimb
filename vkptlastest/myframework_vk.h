@@ -95,6 +95,8 @@ public:
   struct MyASBuildInfo {
     size_t as_size{};
     size_t clusters_size{};
+    size_t dmm_displacement_bias_scale_size{};
+    size_t micromap_size{};
   };
 
   // Shared by all scenes.

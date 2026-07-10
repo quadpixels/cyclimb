@@ -1792,6 +1792,7 @@ void MyFrameworkVk::do_BuildBLAS(VkAccelerationStructureKHR& as,
       | VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT,
       0,
       ommBuffer, ommMemory);
+    mybuildinfo->micromap_size = preBuildInfo.micromapSize;
 
     VkBuffer ommScratchBuffer{};
     VkDeviceMemory ommScratchMemory{};

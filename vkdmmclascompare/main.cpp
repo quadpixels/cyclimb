@@ -412,7 +412,7 @@ void StartImGuiForFrame() {
 }
 
 void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
-  ImGui::SetNextWindowSize(ImVec2(360, 320), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(g_framework->hasDMM ? 640 : 432, 280), ImGuiCond_Once);
   ImGui::SetNextWindowPos(ImVec2(32, 32), ImGuiCond_Once);
   ImGui::Begin("DMM vs regular vs Cluster Test.");
   ImGui::Text("Device: %s", g_framework->deviceName.c_str());
@@ -430,7 +430,10 @@ void RenderImGuiAndEndImGuiForFrame(VkCommandBuffer commandBuffer) {
   ImGui::RadioButton(buf, &g_viz_mode, 2);
 
   if (g_framework->hasDMM) {
-    snprintf(buf, sizeof(buf), "RT DMM base mesh, AS size %zu", dmm_blas_build_info.as_size);
+    snprintf(buf, sizeof(buf), "RT DMM, AS size %zu, DispBiasScale %zu, micromap %zu",
+      dmm_blas_build_info.as_size,
+      dmm_blas_build_info.dmm_displacement_bias_scale_size,
+      dmm_blas_build_info.micromap_size);
     ImGui::RadioButton(buf, &g_viz_mode, 6);
   }
 
@@ -1701,6 +1704,7 @@ void BuildCompressedBaryForRT() {
     funcGetMicromapBuildSizes(g_framework->device,
       VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &sizeInfo);
     printf("[BuildCompressedBaryForRT] MicroMap size: %llu\n", sizeInfo.micromapSize);
+    dmm_blas_build_info.micromap_size = sizeInfo.micromapSize;
 
     g_framework->CreateBuffer(sizeInfo.micromapSize,
       VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT
@@ -1827,6 +1831,10 @@ void BuildCompressedBaryForRT() {
       dmm_attachment_info.displacementBiasAndScaleFormat = VK_FORMAT_R32G32_SFLOAT;
       dmm_attachment_info.displacementBiasAndScaleStride = 8;
     }
+
+    dmm_blas_build_info.dmm_displacement_bias_scale_size =
+      sizeof(f16vec4) * base_model.per_vertex_normals.size()
+      + sizeof(float) * 2 * base_model.per_vertex_normals.size();
 
     // Manually come up with an index buffer (Tri --> micromap)
     uint32_t ibsize = base_model.indices.size() / 3 * sizeof(uint32_t);
